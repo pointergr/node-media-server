@@ -7,8 +7,19 @@
 
 Εγκατάσταση πακέτων στο λειτουργικό
 ```bash
-sudo apt update
-sudo apt install caddy git ffmpeg
+apt update
+apt install caddy git ffmpeg ufw
+```
+
+Ενεργοποιούμε το firewall
+```bash
+ufw allow 22
+ufw allow 443
+ufw allow 8000
+ufw allow 1935
+ufw default deny incoming
+ufw default allow outgoing
+ufw enable
 ```
 
 Ρυθμιση Caddy (άλλαξε το xxxxxxx με το σωστό url)
@@ -27,7 +38,7 @@ curl https://get.volta.sh | bash
 
 Εγκατάσταση stream server
 ```bash
-git clone https://github.com/pointergr/node-media-server.git
+git clone git clone git@github.com:pointergr/node-media-server.git
 cd node-media-server
 npm install
 npm install pm2 -g
