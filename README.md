@@ -54,3 +54,7 @@ npm run generate-passwords xxxxxxx.streamings.gr
 pm2 start app.js --name stream
 ```
 
+Για επανεκίνηση του stream εκτελούμε
+```bash
+pm2 restart stream
+```
