@@ -42,18 +42,14 @@ export async function saveConfig(config) {
 
 export function loadPasswords() {
   return new Promise((resolve, reject) => {
-    // check if file exists
-    fs.access("./passwords.json", fs.constants.F_OK, (err) => {
-      if (err) {
-        resolve(null);
-        return;
-      }
-    });
-
     fs.readFile("./passwords.json", "utf8", (err, data) => {
       if (err) {
-        console.error("Error reading passwords.json file:", err);
-        reject(err);
+        // If the error is about the file not existing, resolve with null
+        if (err.code === 'ENOENT') {
+          resolve(null);
+        } else {
+          reject(err);
+        }
         return;
       }
 

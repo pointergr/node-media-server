@@ -14,10 +14,10 @@
   "auth": {
     "play": false,
     "publish": false,
-    "secret": "m9C9aViMM56o",
+    "secret": "p2m32d6PSJjA",
     "api": true,
     "api_user": "admin",
-    "api_pass": "^c^=HHp5zc"
+    "api_pass": "=DBM~8@dS;"
   },
   "trans": {
     "ffmpeg": "/usr/bin/ffmpeg",
