@@ -47,12 +47,12 @@ const streamSecret = password
   .numbersLength(4)
   .generate(12);
 const expire = Math.floor(Date.now() / 1000) + 50 * 365 * 24 * 60 * 60;
-const streamName = "/live";
+const streamName = "/live/stream";
 const hashString = `${streamName}-${expire}-${streamSecret}`;
-console.log(`hashString: ${hashString}`);
+console.log(`[hashString: ${hashString}]`);
 const hash = crypto.createHash("md5").update(hashString).digest("hex");
 const config = await loadConfig();
-const newConfig = await updateConfig(config);
+await updateConfig(config);
 
 printConfig(adminPassword, streamSecret, expire, hash, hostname);
 
@@ -68,9 +68,9 @@ function printConfig(adminPassword, streamSecret, expire, hash, hostname) {
   console.log(`Admin password: ${adminPassword}`);
   console.log(`Stream secret: ${streamSecret}`);
   console.log('');
-  console.log(`rtmp url: rtmp://${hostname}/live/?sign=${expire}-${hash}`);
-  console.log(`http url: http://${hostname}/live.flv?sign=${expire}-${hash}`);
-  console.log(`ws url: ws://${hostname}/live.flv?sign=${expire}-${hash}`);
+  console.log(`rtmp url: rtmp://${hostname}/live/stream?sign=${expire}-${hash}`);
+  console.log(`http url: http://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
+  console.log(`ws url: ws://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
 }
 
 async function updateConfig(config) {
