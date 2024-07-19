@@ -1,27 +1,30 @@
-# Node media server
+# Node Media Server
 
 ## Αυτόματη εγκατάσταση
+
+Αντικατάστησε το `server.example.com` με το hostname του server σου:
 ```bash
 apt update
 apt install git -y
 git clone https://github.com/pointergr/node-media-server.git
 cd node-media-server
-./install
+git checkout master
+./install server.example.com
 ```
 
-# Προετοιμασία
-Ανοίγουμε ένα server.
+## Χειροκίνητη εγκατάσταση
+Άνοιξε έναν server.
 
-Πρέπει να έχουμε πραγματικό url που να δείχνει στον server (A Record).
-Παρακάτω θα έχουμε το υποθετικό stream.example.com
+Πρέπει να έχεις ένα πραγματικό URL που να δείχνει στον server (A Record).
+Παρακάτω θα χρησιμοποιήσουμε το υποθετικό `stream.example.com`.
 
-Εγκατάσταση πακέτων στο λειτουργικό
+### Εγκατάσταση πακέτων στο λειτουργικό
 ```bash
 apt update
 apt install caddy git ffmpeg ufw
 ```
 
-Ενεργοποιούμε το firewall
+### Ενεργοποίηση του firewall
 ```bash
 ufw allow 22
 ufw allow 443
@@ -32,7 +35,7 @@ ufw default allow outgoing
 ufw enable
 ```
 
-Ρυθμιση Caddy (άλλαξε το xxxxxxx με το σωστό url)
+### Ρύθμιση Caddy (άλλαξε το `stream.example.com` με το σωστό URL)
 ```bash
 cat <<EOF > /etc/caddy/Caddyfile
 https://stream.example.com {
@@ -41,7 +44,7 @@ https://stream.example.com {
 EOF
 ```
 
-Εγκατάσταση volta.sh
+### Εγκατάσταση του Volta
 ```bash
 curl https://get.volta.sh | bash
 source ~/.bashrc
@@ -49,34 +52,35 @@ volta install node@20
 volta install npm@bundled
 ```
 
-Εγκατάσταση stream server
+### Εγκατάσταση του stream server
 ```bash
 git clone git@github.com:pointergr/node-media-server.git
 cd node-media-server
 npm install
 ```
 
-Εγκατάσταση του pm2
+### Εγκατάσταση του pm2
 ```bash
 npm install pm2 -g
+source ~/.bashrc
 ```
 
-Παραγωγή κωδικών
+### Παραγωγή κωδικών
 ```bash
 npm run generate-passwords stream.example.com
 ```
 
-Ξεκινάμε τον server σαν pm2 process
+### Ξεκινώντας τον server σαν pm2 process
 ```bash
 pm2 start app.js --name stream
 ```
 
-Για επανεκίνηση του stream εκτελούμε
+### Για επανεκκίνηση του stream εκτελούμε
 ```bash
 pm2 restart stream
 ```
 
-Για logs του stream εκτελούμε
+### Για logs του stream εκτελούμε
 ```bash
 pm2 logs stream
 ```
