@@ -1,9 +1,19 @@
 # Node media server
 
-# Προετοιμασία
-Ανοίγουμε ένα VPS
+## Αυτόματη εγκατάσταση
+```bash
+apt update
+apt install git -y
+git clone https://github.com/pointergr/node-media-server.git
+cd node-media-server
+./install
+```
 
-Ορίζουμε ένα A Record στην cloudflare στο domain streamings.gr με την IP του VPS (π.χ xxxxxxx.streamings.gr -> 185.25.22.240)
+# Προετοιμασία
+Ανοίγουμε ένα server.
+
+Πρέπει να έχουμε πραγματικό url που να δείχνει στον server (A Record).
+Παρακάτω θα έχουμε το υποθετικό stream.example.com
 
 Εγκατάσταση πακέτων στο λειτουργικό
 ```bash
@@ -25,7 +35,7 @@ ufw enable
 Ρυθμιση Caddy (άλλαξε το xxxxxxx με το σωστό url)
 ```bash
 cat <<EOF > /etc/caddy/Caddyfile
-https://xxxxxxx.streamings.gr {
+https://stream.example.com {
         reverse_proxy localhost:8000
 }
 EOF
@@ -34,11 +44,14 @@ EOF
 Εγκατάσταση volta.sh
 ```bash
 curl https://get.volta.sh | bash
+source ~/.bashrc
+volta install node@20
+volta install npm@bundled
 ```
 
 Εγκατάσταση stream server
 ```bash
-git clone git clone git@github.com:pointergr/node-media-server.git
+git clone git@github.com:pointergr/node-media-server.git
 cd node-media-server
 npm install
 ```
@@ -50,7 +63,7 @@ npm install pm2 -g
 
 Παραγωγή κωδικών
 ```bash
-npm run generate-passwords xxxxxxx.streamings.gr
+npm run generate-passwords stream.example.com
 ```
 
 Ξεκινάμε τον server σαν pm2 process
@@ -63,7 +76,7 @@ pm2 start app.js --name stream
 pm2 restart stream
 ```
 
-Για λογσ του stream εκτελούμε
+Για logs του stream εκτελούμε
 ```bash
 pm2 logs stream
 ```

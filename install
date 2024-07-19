@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Έλεγχος αν δόθηκε το hostname ως παράμετρος
+if [ -z "$1" ]; then
+  echo "Χρήση: $0 <hostname>"
+  exit 1
+fi
+
+HOSTNAME=$1
+
+# Αυτόματη επιλογή ζώνης ώρας
+echo 'tzdata tzdata/Areas select Europe' | debconf-set-selections
+echo 'tzdata tzdata/Zones/Europe select Athens' | debconf-set-selections
+
+# Ορισμός του DEBIAN_FRONTEND για μη διαδραστική εγκατάσταση
+export DEBIAN_FRONTEND=noninteractive
+
+# Ενημέρωση και εγκατάσταση των απαραίτητων πακέτων
+apt update
+apt upgrade -y
+apt install -y caddy git ffmpeg ufw curl
+
+# Ενεργοποίηση του firewall
+ufw allow 22
+ufw allow 443
+ufw allow 8000
+ufw allow 1935
+ufw default deny incoming
+ufw default allow outgoing
+ufw --force enable
+
+# Ρύθμιση Caddy
+cat <<EOF > /etc/caddy/Caddyfile
+https://$HOSTNAME {
+        reverse_proxy localhost:8000
+}
+EOF
+
+# Επανεκκίνηση του Caddy για να εφαρμοστούν οι αλλαγές
+systemctl restart caddy
+
+# Εγκατάσταση volta.sh
+curl https://get.volta.sh | bash
+export VOLTA_HOME="$HOME/.volta"
+export PATH="$VOLTA_HOME/bin:$PATH"
+sleep 3
+volta install node@20
+volta install npm@bundled
+
+# Κλωνοποίηση και εγκατάσταση του stream server
+git clone https://github.com/pointergr/node-media-server.git
+cd node-media-server
+npm install
+
+# Εγκατάσταση του pm2
+npm install pm2 -g
+
+# Παραγωγή κωδικών
+npm run generate-passwords $HOSTNAME
+
+# Ξεκινάμε τον server σαν pm2 process
+pm2 start app.js --name stream
+
+# Μήνυμα ολοκλήρωσης
+echo "Ο streaming server εγκαταστάθηκε και ξεκίνησε επιτυχώς!"
