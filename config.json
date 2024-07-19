@@ -13,11 +13,11 @@
   },
   "auth": {
     "play": false,
-    "publish": false,
-    "secret": "p2m32d6PSJjA",
+    "publish": true,
+    "secret": "aCY5z3Rv3g3N",
     "api": true,
     "api_user": "admin",
-    "api_pass": "=DBM~8@dS;"
+    "api_pass": "i%}zV;45iR"
   },
   "trans": {
     "ffmpeg": "/usr/bin/ffmpeg",
