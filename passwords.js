@@ -71,6 +71,8 @@ function printConfig(adminPassword, streamSecret, expire, hash, hostname) {
   console.log(`rtmp url: rtmp://${hostname}/live/stream?sign=${expire}-${hash}`);
   console.log(`http url: http://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
   console.log(`ws url: ws://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
+  console.log('');
+  console.log(`rtmp for player: rtmp://${hostname}:1935/live/index.m3u8}`)
 }
 
 async function updateConfig(config) {

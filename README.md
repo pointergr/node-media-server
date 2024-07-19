@@ -3,7 +3,7 @@
 # Προετοιμασία
 Ανοίγουμε ένα VPS
 
-Ορίζουμε ένα A Record στην cloudflare στο domain streamings με την IP του VPS (π.χ xxxxxxx.streamings.gr -> 185.25.22.240)
+Ορίζουμε ένα A Record στην cloudflare στο domain streamings.gr με την IP του VPS (π.χ xxxxxxx.streamings.gr -> 185.25.22.240)
 
 Εγκατάσταση πακέτων στο λειτουργικό
 ```bash
@@ -41,6 +41,10 @@ curl https://get.volta.sh | bash
 git clone git clone git@github.com:pointergr/node-media-server.git
 cd node-media-server
 npm install
+```
+
+Εγκατάσταση του pm2
+```bash
 npm install pm2 -g
 ```
 
@@ -49,7 +53,7 @@ npm install pm2 -g
 npm run generate-passwords xxxxxxx.streamings.gr
 ```
 
-Το ξεκινάμε σαν pm2 process
+Ξεκινάμε τον server σαν pm2 process
 ```bash
 pm2 start app.js --name stream
 ```
@@ -57,4 +61,9 @@ pm2 start app.js --name stream
 Για επανεκίνηση του stream εκτελούμε
 ```bash
 pm2 restart stream
+```
+
+Για λογσ του stream εκτελούμε
+```bash
+pm2 logs stream
 ```
