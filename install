@@ -33,6 +33,10 @@ ufw --force enable
 cat <<EOF > /etc/caddy/Caddyfile
 https://$HOSTNAME {
         reverse_proxy localhost:8000
+
+        # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
+        header *.m3u8 Cache-Control "no-store"
+        header *.ts Cache-Control "public, max-age=31536000, immutable"
 }
 EOF
 

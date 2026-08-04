@@ -40,6 +40,10 @@ ufw enable
 cat <<EOF > /etc/caddy/Caddyfile
 https://stream.example.com {
         reverse_proxy localhost:8000
+
+        # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
+        header *.m3u8 Cache-Control "no-store"
+        header *.ts Cache-Control "public, max-age=31536000, immutable"
 }
 EOF
 ```
@@ -83,4 +87,43 @@ pm2 restart stream
 ### Για logs του stream εκτελούμε
 ```bash
 pm2 logs stream
+```
+
+## HLS
+
+Το node-media-server v4 δεν κάνει transcoding — το HLS το βγάζει το `app.js` σπρώχνοντας ένα
+`ffmpeg -c copy` (remux, όχι transcode) ανά stream όταν ξεκινάει το publish, και το σταματάει
+όταν κλείνει. Τα segments γράφονται στο `./media/<app>/<name>/` και σερβίρονται από τον static
+server του v4:
+
+```
+https://stream.example.com/live/stream/index.m3u8
+```
+
+Θέλει keyframe interval ≤ 2s στον encoder (OBS: Output → Keyframe Interval = 2), αλλιώς τα
+segments βγαίνουν μεγαλύτερα από το `hls_time` και αυξάνει το latency. Το path του ffmpeg
+ρυθμίζεται στο `config.json` (`hls.ffmpeg`). Λάθη του ffmpeg φαίνονται στο `pm2 logs stream`.
+
+### Cloudflare
+
+Ο Caddyfile βάζει ήδη τα σωστά `Cache-Control`. Στο Cloudflare χρειάζεται Cache Rule που να
+σέβεται τα origin headers — αν κασάρει το `.m3u8`, ο player κολλάει σε παλιό playlist.
+Προσοχή επίσης στο ToS 2.8 της Cloudflare για video μέσω CDN σε non-Enterprise plan.
+
+## Admin API
+
+Το v4 άλλαξε το API: `/api/v1/{health,info,streams,sessions,stats}` με JWT αντί για basic auth.
+Το login είναι challenge-response σε δύο βήματα (δεν ταξιδεύει ποτέ ο κωδικός):
+
+```bash
+CHALLENGE=$(curl -s -X POST https://stream.example.com/api/v1/login \
+  -H "Content-Type: application/json" -d '{"username":"admin"}' | jq -r .data.challenge)
+
+RESPONSE=$(echo -n "$CHALLENGE" | openssl dgst -sha256 -hmac "<admin password>" | awk '{print $NF}')
+
+TOKEN=$(curl -s -X POST https://stream.example.com/api/v1/login \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"admin\",\"challenge\":\"$CHALLENGE\",\"response\":\"$RESPONSE\"}" | jq -r .data.token)
+
+curl -H "Authorization: Bearer $TOKEN" https://stream.example.com/api/v1/streams
 ```

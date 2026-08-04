@@ -72,11 +72,21 @@ function printConfig(adminPassword, streamSecret, expire, hash, hostname) {
   console.log(`http url: http://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
   console.log(`ws url: ws://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
   console.log('');
-  console.log(`rtmp for player: rtmp://${hostname}:1935/live/index.m3u8}`)
+  console.log(`hls url for player: https://${hostname}/live/stream/index.m3u8`);
+  console.log('');
+  console.log('--- Ρύθμιση OBS ---');
+  console.log('Settings -> Stream');
+  console.log(`  Service:    Custom...`);
+  console.log(`  Server:     rtmp://${hostname}/live`);
+  console.log(`  Stream Key: stream?sign=${expire}-${hash}`);
+  console.log('Settings -> Output -> Output Mode: Advanced -> Streaming');
+  console.log('  Keyframe Interval: 2  (υποχρεωτικό, αλλιώς σπάει το HLS)');
+  console.log('  Encoder: x264 ή NVENC, Rate Control: CBR');
+  console.log('Πάτα Start Streaming και μετά άνοιξε το hls url παραπάνω.');
 }
 
 async function updateConfig(config) {
-  config.auth.api_pass = adminPassword;
+  config.auth.jwt.users[0].password = adminPassword;
   config.auth.secret = streamSecret;
   await saveConfig(config);
   return config;

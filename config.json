@@ -1,36 +1,33 @@
 {
+  "bind": "0.0.0.0",
   "rtmp": {
-    "port": 1935,
-    "chunk_size": 60000,
-    "gop_cache": true,
-    "ping": 30,
-    "ping_timeout": 60
+    "port": 1935
   },
   "http": {
-    "mediaroot": "./media",
-    "allow_origin": "*",
     "port": 8000
+  },
+  "static": {
+    "router": "/",
+    "root": "./media"
+  },
+  "hls": {
+    "ffmpeg": "/usr/bin/ffmpeg"
   },
   "auth": {
     "play": false,
     "publish": true,
     "secret": "aCY5z3Rv3g3N",
-    "api": true,
-    "api_user": "admin",
-    "api_pass": "i%}zV;45iR"
-  },
-  "trans": {
-    "ffmpeg": "/usr/bin/ffmpeg",
-    "tasks": [
-      {
-        "app": "live",
-        "hls": true,
-        "hlsFlags": "[hls_time=2:hls_list_size=3:hls_flags=delete_segments]",
-        "hlsKeep": true,
-        "dash": true,
-        "dashFlags": "[f=dash:window_size=3:extra_window_size=5]",
-        "dashKeep": true
-      }
-    ]
+    "jwt": {
+      "secret": "",
+      "expiresIn": "24h",
+      "algorithm": "HS256",
+      "users": [
+        {
+          "username": "admin",
+          "password": "i%}zV;45iR",
+          "role": "admin"
+        }
+      ]
+    }
   }
 }
