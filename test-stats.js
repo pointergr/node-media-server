@@ -6,6 +6,22 @@ const nms = {
   h: {},
   on(event, fn) { (this.h[event] ??= []).push(fn); },
   emit(event, session) { (this.h[event] ?? []).forEach((fn) => fn(session)); },
+  httpServer: { httpServer: { prependListener(event, fn) { nms.onRequest = fn; } } },
+};
+
+// Ένα HTTP request στο HLS, όπως έρχεται από τον Caddy. Γυρνάει το cookie που
+// έστειλε ο server, ώστε το επόμενο request να μπορεί να το ξαναδώσει.
+const hlsHit = (url, ip, { cookie, bytes = 0 } = {}) => {
+  const out = {};
+  const res = {
+    h: [],
+    on(e, fn) { this.h.push(fn); },
+    setHeader(k, v) { out[k] = v; },
+    getHeader: () => bytes,
+  };
+  nms.onRequest({ url, headers: { "x-forwarded-for": ip, cookie }, socket: {} }, res);
+  res.h.forEach((fn) => fn());
+  return out["Set-Cookie"]?.split(";")[0];
 };
 
 const session = (over) => ({
@@ -61,6 +77,27 @@ for (const row of db.prepare("SELECT * FROM samples").all()) {
   assert.ok(row.in_bps >= 0 && row.out_bps >= 0, "ποτέ αρνητικό bitrate");
 }
 assert.equal(snapshot().streams[0].viewers, 0, "ο θεατής έφυγε");
+
+// Client χωρίς cookies (wrk, curl): όσα requests κι αν κάνει, μετράει ως ένας
+const cookie = hlsHit("/live/stream/index.m3u8", "5.5.5.5");
+hlsHit("/live/stream/index.m3u8", "5.5.5.5");
+hlsHit("/live/stream/index.m3u8", "5.5.5.5");
+assert.ok(cookie?.startsWith("nmsv="), "το πρώτο request παίρνει cookie");
+assert.equal(snapshot().streams[0].viewers, 1, "ένας client χωρίς cookie = ένας θεατής");
+
+// Ο ίδιος player ξαναέρχεται με το cookie του: δεν διπλομετριέται
+hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie });
+assert.equal(snapshot().streams[0].viewers, 1, "το cookie αντικαθιστά τη μέτρηση με IP");
+
+// Δύο συσκευές πίσω από το ίδιο NAT: ίδια IP, διαφορετικά cookies
+hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=aaa" });
+hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=bbb" });
+assert.equal(snapshot().streams[0].viewers, 3, "τρεις players πίσω από μία IP");
+
+hlsHit("/live/stream/1-0.ts", "5.5.5.5", { bytes: 400_000 });
+await tick();
+sample();
+assert.ok(db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1).out_bps > 0, "τα bytes του HLS μπαίνουν στο out_bps");
 
 const logged = db.prepare("SELECT * FROM sessions").all();
 assert.equal(logged.length, 1, "μία γραμμή στο session log");

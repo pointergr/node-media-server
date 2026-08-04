@@ -177,6 +177,10 @@ segments βγαίνουν μεγαλύτερα από το `hls_time` και α�
   ποτέ για διαφορετικό περιεχόμενο.
 - **`.m3u8` — ποτέ.** Ξαναγράφεται κάθε ~2 δευτερόλεπτα. Ακόμα και 10 δευτερόλεπτα cache
   σημαίνει ότι ο player ζητάει segments που έχουν ήδη σβηστεί, δηλαδή 404 και κόλλημα.
+  Είναι επίσης προϋπόθεση για τη μέτρηση θεατών: κάθε request στο playlist πρέπει να
+  φτάνει στο origin, αλλιώς το admin UI δείχνει μηδέν θεατές (δες [Admin UI](#admin-ui)).
+  Και το `Set-Cookie` του πρώτου request δεν πρέπει ποτέ να κασαριστεί, αλλιώς πολλοί
+  players μοιράζονται το ίδιο cookie και μετράνε ως ένας.
 - **`.flv` — ποτέ.** Είναι ατέρμονο chunked response· αν το πιάσει κανόνας τύπου
   «Cache Everything», το Cloudflare προσπαθεί να το ολοκληρώσει και ο player δεν ξεκινάει ποτέ.
 - **`/api/`, `/admin` — ποτέ.** Δυναμικά, και το `/admin` έχει credentials.
@@ -185,7 +189,9 @@ segments βγαίνουν μεγαλύτερα από το `hls_time` και α�
 
 - Caching → Configuration → Browser Cache TTL: **Respect Existing Headers**. Αλλιώς το
   Cloudflare επιβάλλει δικό του TTL στον browser και ακυρώνει το `no-store` του playlist.
-- **Tiered Cache: On** — με πολλούς θεατές μειώνει αισθητά τα requests στο origin.
+- **Tiered Cache: On** — με πολλούς θεατές μειώνει αισθητά τα requests στο origin. Σε
+  αντάλλαγμα, τα segments που σερβίρει το edge δεν μετράνε στο bitrate εξόδου του admin UI —
+  το πραγματικό bandwidth προς τους θεατές το δείχνει το dashboard της Cloudflare.
 - Το `rtmp.` υποdomain δεν αφορά καθόλου το cache: είναι DNS only, δεν περνάει από το Cloudflare.
 - Ποτέ «Cache Everything» σε όλο το domain, ποτέ Edge TTL override στα `.m3u8`.
 
@@ -209,6 +215,17 @@ segments βγαίνουν μεγαλύτερα από το `hls_time` και α�
   που κάνει και το basic_auth.
 - Το ffmpeg του HLS συνδέεται ως θεατής στο 127.0.0.1 και εξαιρείται από τα στατιστικά,
   αλλιώς κάθε stream θα έδειχνε έναν φανταστικό θεατή παραπάνω.
+- Το HLS σερβίρεται ως στατικά αρχεία (`express.static`), χωρίς session και χωρίς events.
+  Οι θεατές του μετριούνται από τα requests στο `index.m3u8`: στο πρώτο request ο server
+  βάζει cookie `nmsv` και μετά μετράει ένα θεατή ανά cookie, ενεργό για 30 δευτερόλεπτα
+  μετά το τελευταίο request. Έτσι δύο συσκευές πίσω από το ίδιο NAT μετράνε σωστά ως δύο.
+  Το `no-store` του Caddy στα `.m3u8` είναι προϋπόθεση — αν κασαριστεί το playlist,
+  τα requests δεν φτάνουν καν εδώ.
+- Client που δεν κρατάει cookies (`wrk`, `curl`, player σε άλλο origin που δεν στέλνει
+  credentials) μετράει με την IP του, οπότε ένα load test από ένα μηχάνημα δείχνει έναν
+  θεατή όσα connections κι αν ανοίξει. Η IP βγαίνει από το `X-Forwarded-For` του Caddy.
+- Τα bytes των segments προστίθενται στο bitrate εξόδου του stream. Με ενεργό CDN cache
+  στα `.ts` ένα μέρος τους δεν φτάνει στο origin και το out_bps βγαίνει μικρότερο.
 
 Το `stats.db` είναι στο `.gitignore`. Έλεγχος του collector: `node test-stats.js`.
 

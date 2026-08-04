@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const SAMPLE_MS = 60_000;
 const RETENTION_DAYS = 30;
+// Ο player ξαναζητά το playlist κάθε ~2s (hls_time). 30s αντέχει και ένα stall.
+const HLS_TTL_MS = 30_000;
 const CLEANUP_MS = 24 * 60 * 60 * 1000;
 const ADMIN_HTML = path.join(path.dirname(fileURLToPath(import.meta.url)), "admin", "index.html");
 
@@ -51,15 +53,62 @@ export function startStats(nms, config) {
 
   const liveSessions = new Map(); // session.id -> session
   const publishers = new Map(); //   streamPath -> session
-  const closedBytes = new Map(); //  streamPath -> {in, out} από sessions που έκλεισαν
+  const accBytes = new Map(); //     streamPath -> {in, out} από κλειστά sessions + HLS
   const prevBytes = new Map(); //    streamPath -> {in, out} στο προηγούμενο δείγμα
   const lastBps = new Map(); //      streamPath -> {in_bps, out_bps}
+  const hlsSeen = new Map(); //      streamPath -> Map(ip -> τελευταίο request σε ms)
   let prevCpu = process.cpuUsage();
   let prevTs = Date.now();
 
-  const closed = (stream) => closedBytes.get(stream) ?? { in: 0, out: 0 };
+  const closed = (stream) => accBytes.get(stream) ?? { in: 0, out: 0 };
+  const addOut = (stream, bytes) => {
+    const acc = closed(stream);
+    accBytes.set(stream, { in: acc.in, out: acc.out + bytes });
+  };
+
+  // Ο express.static του nms σερβίρει το HLS χωρίς session, οπότε οι θεατές του
+  // μετριούνται από τα requests στο playlist, με ένα cookie ανά player.
+  function hlsViewersOf(stream) {
+    const seen = hlsSeen.get(stream);
+    if (!seen) return 0;
+    const cutoff = Date.now() - HLS_TTL_MS;
+    for (const [key, ts] of seen) if (ts < cutoff) seen.delete(key);
+    return seen.size;
+  }
+
   const viewersOf = (stream) =>
-    [...liveSessions.values()].filter((s) => !s.isPublisher && s.streamPath === stream).length;
+    [...liveSessions.values()].filter((s) => !s.isPublisher && s.streamPath === stream).length +
+    hlsViewersOf(stream);
+
+  function trackHls(req, res) {
+    const p = req.url.split("?")[0];
+    if (!p.endsWith(".m3u8") && !p.endsWith(".ts")) return;
+    const stream = p.slice(0, p.lastIndexOf("/"));
+    res.on("finish", () => addOut(stream, Number(res.getHeader("content-length")) || 0));
+    if (!p.endsWith(".m3u8")) return;
+
+    // Πίσω από τον Caddy το remoteAddress είναι πάντα loopback.
+    const ip = (req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || "").trim();
+    const token = req.headers.cookie?.match(/(?:^|;\s*)nmsv=([^;]+)/)?.[1];
+    const seen = hlsSeen.get(stream) ?? new Map();
+    hlsSeen.set(stream, seen);
+
+    if (token) {
+      seen.delete(ip); // το πρώτο request αυτού του player είχε μετρηθεί με την IP
+      seen.set(token, Date.now());
+      return;
+    }
+    // Χωρίς cookie: είτε πρώτο request, είτε client που δεν κρατάει cookies (wrk,
+    // curl, cross-origin player χωρίς credentials). Κλειδί η IP, ώστε να μην
+    // μετράει καινούριος θεατής σε κάθε request — υποβαθμίζεται σε μέτρηση ανά IP.
+    seen.set(ip, Date.now());
+    res.setHeader(
+      "Set-Cookie",
+      `nmsv=${crypto.randomUUID()}; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax`
+    );
+  }
+  // prepend: το express απαντάει στο ίδιο event και πρέπει να προλάβουμε το Set-Cookie
+  nms.httpServer?.httpServer?.prependListener("request", trackHls);
 
   function finish(session) {
     if (isLocal(session)) return;
@@ -69,7 +118,7 @@ export function startStats(nms, config) {
     // Τα bytes των κλειστών sessions συσσωρεύονται, αλλιώς το άθροισμα των live
     // πέφτει όταν αποχωρεί θεατής και βγαίνει αρνητικό bitrate.
     const acc = closed(session.streamPath);
-    closedBytes.set(session.streamPath, {
+    accBytes.set(session.streamPath, {
       in: acc.in + session.inBytes,
       out: acc.out + session.outBytes,
     });
