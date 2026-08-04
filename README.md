@@ -23,11 +23,14 @@ git checkout master
 | Record | Ρόλος | Cloudflare |
 |---|---|---|
 | `rtmp.stream.example.com` | εκπομπή — εδώ στέλνει το OBS (RTMP, 1935) | **DNS only** (γκρι) |
-| `stream.example.com` | αναπαραγωγή — HLS/FLV για τους players | proxied (πορτοκαλί) |
+| `stream.example.com` | playlist, FLV, admin | proxied (πορτοκαλί) |
 
 Το `rtmp.` πρέπει να μείνει DNS only: το Cloudflare proxy περνάει μόνο HTTP(S) ports,
-οπότε με πορτοκαλί σύννεφο το publish στο 1935 δεν φτάνει ποτέ στον server. Τα HLS
-segments αντίθετα θέλουμε να περνάνε από το Cloudflare, γι' αυτό κασάρονται.
+οπότε με πορτοκαλί σύννεφο το publish στο 1935 δεν φτάνει ποτέ στον server.
+
+Με [R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος) προστίθεται και τρίτο hostname,
+`media.stream.example.com`, για τα `.ts` — αυτό όμως **δεν** το φτιάχνεις εσύ, το βάζει
+μόνο του το R2 ως CNAME όταν κάνεις Connect Domain.
 
 Αν λείπει το `rtmp.` record, ο Caddy δεν μπορεί να βγάλει certificate γι' αυτό και
 γεμίζει τα logs με ACME errors.
@@ -164,6 +167,60 @@ https://stream.example.com/live/stream/index.m3u8
 segments βγαίνουν μεγαλύτερα από το `hls_time` και αυξάνει το latency. Το path του ffmpeg
 ρυθμίζεται στο `config.json` (`hls.ffmpeg`). Λάθη του ffmpeg φαίνονται στο `pm2 logs stream`.
 
+### Segments στο R2 (προαιρετικό, αλλά ο σωστός τρόπος)
+
+Το ToS 2.8 της Cloudflare απαγορεύει το σερβίρισμα βίντεο μέσω του CDN σε non-Enterprise
+plan — δηλαδή ακριβώς το κασάρισμα των `.ts`, που όμως είναι όλο το bandwidth. Το R2 δεν
+είναι CDN αλλά storage με μηδενικό egress· το να φεύγει βίντεο από R2 custom domain είναι
+η προβλεπόμενη χρήση του.
+
+Γι' αυτό σπάμε το HLS στα δύο:
+
+| | Πού | Γιατί |
+|---|---|---|
+| `index.m3u8` | origin, όπως και πριν | ψίχουλα bytes, ήδη bypass cache — δεν αγγίζει το 2.8 |
+| `*.ts` | R2 + custom domain | εδώ είναι το 100% του bandwidth |
+
+Το playlist **πρέπει** να μείνει στο origin: πάνω στα requests του μετράμε τους θεατές
+(δες [Admin UI](#admin-ui)). Αν πήγαινε κι αυτό στο R2, το admin UI θα έδειχνε μόνιμα μηδέν.
+
+Ρύθμιση στο Cloudflare:
+
+1. R2 → Create bucket (π.χ. `stream`).
+2. Settings → **Public access → Connect Domain**: `media.stream.example.com` (χωριστό
+   subdomain από το `stream.example.com` — προστίθεται αυτόματα ως CNAME).
+3. Settings → **CORS Policy**: `AllowedOrigins: ["*"]`, `AllowedMethods: ["GET"]`. Χωρίς
+   αυτό ο browser μπλοκάρει τα segments, επειδή το playlist έρχεται από άλλο origin.
+4. Settings → **Object lifecycle rules**: delete μετά από 1 μέρα. Τα segments είναι
+   εφήμερα· χωρίς τον κανόνα το bucket μεγαλώνει για πάντα.
+5. Manage R2 API Tokens → **Object Read & Write** token για το bucket.
+
+Και στο `config.json`:
+
+```json
+"hls": {
+  "ffmpeg": "/usr/bin/ffmpeg",
+  "r2": {
+    "endpoint": "https://<account-id>.r2.cloudflarestorage.com",
+    "bucket": "stream",
+    "accessKeyId": "<από το API token>",
+    "secretAccessKey": "<από το API token>",
+    "publicUrl": "https://media.stream.example.com"
+  }
+}
+```
+
+Άδειο `accessKeyId` σημαίνει R2 off: τα segments σερβίρονται από τον ίδιο τον server, όπως πριν.
+
+Πώς δουλεύει (`r2.js`): ο ffmpeg γράφει το playlist του σε `ff.m3u8` με απόλυτα URLs
+(`-hls_base_url`), το `r2.js` ανεβάζει τα segments που δείχνει και **μετά** το δημοσιεύει
+ως `index.m3u8`. Αν γινόταν ανάποδα, ο player θα ζητούσε από το R2 segment που δεν έχει
+ανέβει ακόμα — το R2 είναι strongly consistent, οπότε μετά το upload είναι αμέσως εκεί.
+
+Κόστος σε latency: μόνο ο χρόνος του upload, ~100–300 ms για segment των 2s. Αν ένα PUT
+αργήσει πάνω από 2 δευτερόλεπτα, τα uploads μένουν πίσω και το latency μεγαλώνει μόνιμα —
+βγαίνει warning στο `pm2 logs stream`. Έλεγχος: `node test-r2.js`.
+
 ### Cloudflare cache rules
 
 Ο Caddyfile βάζει ήδη τα σωστά `Cache-Control`. Στο Cloudflare (Caching → Cache Rules)
@@ -172,15 +229,16 @@ segments βγαίνουν μεγαλύτερα από το `hls_time` και α�
 
 | # | Expression | Ρύθμιση |
 |---|---|---|
-| 1 | `ends_with(http.request.uri.path, ".ts")` | Eligible for cache · Edge TTL: **use origin cache-control** |
+| 1 | `ends_with(http.request.uri.path, ".ts")` | **Μόνο χωρίς R2:** Eligible for cache · Edge TTL: use origin cache-control |
 | 2 | `ends_with(http.request.uri.path, ".m3u8")` | **Bypass cache** |
 | 3 | `ends_with(http.request.uri.path, ".flv") or starts_with(http.request.uri.path, "/api/") or starts_with(http.request.uri.path, "/admin")` | **Bypass cache** |
 
 Γιατί:
 
-- **`.ts` — κασάρισέ τα.** Εδώ είναι όλο το bandwidth. Είναι ασφαλές επειδή κάθε publish
-  γράφει segments με μοναδικό prefix (`<timestamp>-0.ts`), οπότε ένα όνομα δεν ξαναχρησιμοποιείται
-  ποτέ για διαφορετικό περιεχόμενο.
+- **`.ts` — κασάρισέ τα, αν δεν έχεις R2.** Εδώ είναι όλο το bandwidth. Είναι ασφαλές επειδή
+  κάθε publish γράφει segments με μοναδικό prefix (`<timestamp>-0.ts`), οπότε ένα όνομα δεν
+  ξαναχρησιμοποιείται ποτέ για διαφορετικό περιεχόμενο. Με R2 ο κανόνας φεύγει εντελώς: τα
+  segments δεν περνάνε καν από αυτό το domain.
 - **`.m3u8` — ποτέ.** Ξαναγράφεται κάθε ~2 δευτερόλεπτα. Ακόμα και 10 δευτερόλεπτα cache
   σημαίνει ότι ο player ζητάει segments που έχουν ήδη σβηστεί, δηλαδή 404 και κόλλημα.
   Είναι επίσης προϋπόθεση για τη μέτρηση θεατών: κάθε request στο playlist πρέπει να
@@ -201,7 +259,8 @@ segments βγαίνουν μεγαλύτερα από το `hls_time` και α�
 - Το `rtmp.` υποdomain δεν αφορά καθόλου το cache: είναι DNS only, δεν περνάει από το Cloudflare.
 - Ποτέ «Cache Everything» σε όλο το domain, ποτέ Edge TTL override στα `.m3u8`.
 
-Προσοχή στο ToS 2.8 της Cloudflare για video μέσω CDN σε non-Enterprise plan.
+Το κασάρισμα των `.ts` στο CDN αντιβαίνει στο ToS 2.8 της Cloudflare σε non-Enterprise plan —
+η καθαρή λύση είναι το [R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος).
 
 ## Admin UI
 
@@ -231,7 +290,9 @@ segments βγαίνουν μεγαλύτερα από το `hls_time` και α�
   credentials) μετράει με την IP του, οπότε ένα load test από ένα μηχάνημα δείχνει έναν
   θεατή όσα connections κι αν ανοίξει. Η IP βγαίνει από το `X-Forwarded-For` του Caddy.
 - Τα bytes των segments προστίθενται στο bitrate εξόδου του stream. Με ενεργό CDN cache
-  στα `.ts` ένα μέρος τους δεν φτάνει στο origin και το out_bps βγαίνει μικρότερο.
+  στα `.ts` ένα μέρος τους δεν φτάνει στο origin και το out_bps βγαίνει μικρότερο — και με
+  R2 πέφτει σχεδόν στο μηδέν, αφού τα segments δεν περνάνε καθόλου από εδώ. Ο αριθμός των
+  θεατών παραμένει σωστός· το πραγματικό bandwidth το δείχνουν τα R2 metrics.
 
 Το `stats.db` είναι στο `.gitignore`. Έλεγχος του collector: `node test-stats.js`.
 

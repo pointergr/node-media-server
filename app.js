@@ -4,8 +4,12 @@ import crypto from "crypto";
 import fs from "fs";
 import { loadConfig, saveConfig } from "./config.js";
 import { startStats } from "./stats.js";
+import { startR2Sync } from "./r2.js";
 
 const config = await loadConfig();
+
+// Χωρίς credentials το R2 είναι off και τα segments σερβίρονται από εδώ, όπως πριν.
+const r2 = config.hls.r2?.accessKeyId ? config.hls.r2 : null;
 
 // Το v4 παράγει jwt secret μόνο όταν τρέχει με το δικό του bin/app.js
 if (!config.auth.jwt.secret) {
@@ -35,19 +39,27 @@ nms.on("postPublish", (session) => {
       "-f", "hls",
       "-hls_time", "2",
       "-hls_list_size", "3",
-      "-hls_flags", "delete_segments",
+      // temp_file: ο ffmpeg γράφει .tmp και κάνει rename, οπότε ποτέ κανείς —
+      // ούτε ο player, ούτε το R2 sync — δεν διαβάζει μισογραμμένο αρχείο
+      "-hls_flags", "delete_segments+temp_file",
       "-hls_segment_filename", `${dir}/${prefix}-%d.ts`,
-      `${dir}/index.m3u8`,
+      // Με R2 το playlist το γράφει το r2.js: ο ffmpeg βγάζει το δικό του σε
+      // ff.m3u8 με απόλυτα URLs, και δημοσιεύεται ως index.m3u8 μόλις ανέβουν
+      // τα segments που δείχνει.
+      ...(r2 ? ["-hls_base_url", `${r2.publicUrl}${session.streamPath}/`] : []),
+      `${dir}/${r2 ? "ff" : "index"}.m3u8`,
     ],
     { stdio: ["ignore", "ignore", "inherit"] }
   );
   ff.on("error", (err) => console.error(`HLS ffmpeg failed: ${err.message}`));
 
-  hlsJobs.set(session.id, ff);
+  hlsJobs.set(session.id, { ff, stop: r2 && startR2Sync(dir, session.streamPath, r2) });
 });
 
 nms.on("donePublish", (session) => {
-  hlsJobs.get(session.id)?.kill("SIGKILL");
+  const job = hlsJobs.get(session.id);
+  job?.ff.kill("SIGKILL");
+  job?.stop?.();
   hlsJobs.delete(session.id);
 });
 
