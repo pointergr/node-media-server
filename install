@@ -22,6 +22,7 @@ apt install -y caddy git ffmpeg ufw curl
 
 # Ενεργοποίηση του firewall
 ufw allow 22
+ufw allow 80
 ufw allow 443
 ufw allow 8000
 ufw allow 1935
@@ -29,26 +30,12 @@ ufw default deny incoming
 ufw default allow outgoing
 ufw --force enable
 
-# Ρύθμιση Caddy
-cat <<EOF > /etc/caddy/Caddyfile
-https://$HOSTNAME {
-        reverse_proxy localhost:8000
-
-        # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
-        header *.m3u8 Cache-Control "no-store"
-        header *.ts Cache-Control "public, max-age=31536000, immutable"
-}
-EOF
-
-# Επανεκκίνηση του Caddy για να εφαρμοστούν οι αλλαγές
-systemctl restart caddy
-
-# Εγκατάσταση volta.sh
+# Εγκατάσταση volta.sh (το node:sqlite του admin θέλει node 24)
 curl https://get.volta.sh | bash
 export VOLTA_HOME="$HOME/.volta"
 export PATH="$VOLTA_HOME/bin:$PATH"
 sleep 3
-volta install node@20
+volta install node@24
 volta install npm@bundled
 
 # Κλωνοποίηση και εγκατάσταση του stream server
@@ -61,6 +48,50 @@ npm install pm2 -g
 
 # Παραγωγή κωδικών
 npm run generate-passwords $HOSTNAME
+
+# Ρύθμιση Caddy — χρειάζεται τον admin κωδικό, γι' αυτό τρέχει μετά το generate-passwords
+mkdir -p /var/log/caddy
+chown caddy:caddy /var/log/caddy
+
+ADMIN_PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('passwords.json')).adminPassword)")
+ADMIN_HASH=$(caddy hash-password --plaintext "$ADMIN_PASS")
+
+cat <<EOF > /etc/caddy/Caddyfile
+{
+        # runtime errors: certificates, ACME, config
+        log {
+                output file /var/log/caddy/error.log
+                level ERROR
+        }
+}
+
+# Ρητά και τα δύο schemes: σκέτο hostname σημαίνει automatic HTTPS με redirect
+# 80->443, που με Cloudflare Flexible γίνεται redirect loop πριν βγει το certificate.
+http://$HOSTNAME, https://$HOSTNAME, http://rtmp.$HOSTNAME, https://rtmp.$HOSTNAME {
+        # Το admin UI ακούει μόνο στο loopback — το auth το κάνει εδώ ο Caddy
+        handle /admin* {
+                basic_auth {
+                        admin $ADMIN_HASH
+                }
+                reverse_proxy localhost:8001
+        }
+
+        handle {
+                reverse_proxy localhost:8000
+        }
+
+        # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
+        header *.m3u8 Cache-Control "no-store"
+        header *.ts Cache-Control "public, max-age=31536000, immutable"
+
+        log {
+                output file /var/log/caddy/access.log
+        }
+}
+EOF
+
+# Επανεκκίνηση του Caddy για να εφαρμοστούν οι αλλαγές
+systemctl restart caddy
 
 # Ξεκινάμε τον server σαν pm2 process
 pm2 start app.js --name stream

@@ -13,6 +13,10 @@
   "hls": {
     "ffmpeg": "/usr/bin/ffmpeg"
   },
+  "admin": {
+    "port": 8001,
+    "db": "./stats.db"
+  },
   "auth": {
     "play": false,
     "publish": true,

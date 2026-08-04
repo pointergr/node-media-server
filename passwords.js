@@ -67,22 +67,30 @@ function printConfig(adminPassword, streamSecret, expire, hash, hostname) {
   console.log(`Admin username: admin`);
   console.log(`Admin password: ${adminPassword}`);
   console.log(`Stream secret: ${streamSecret}`);
+  console.log(`Admin UI:      https://${hostname}/admin`);
   console.log('');
-  console.log(`rtmp url: rtmp://${hostname}/live/stream?sign=${expire}-${hash}`);
-  console.log(`http url: http://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
-  console.log(`ws url: ws://${hostname}/live/stream.flv?sign=${expire}-${hash}`);
+  console.log(`=== ΕΚΠΟΜΠΗ (OBS) -> rtmp.${hostname} ===`);
+  console.log('Το rtmp. πρέπει να είναι DNS only στο Cloudflare (γκρι σύννεφο):');
+  console.log('το proxy περνάει μόνο HTTP(S), το 1935 δεν φτάνει ποτέ στον server.');
   console.log('');
-  console.log(`hls url for player: https://${hostname}/live/stream/index.m3u8`);
-  console.log('');
-  console.log('--- Ρύθμιση OBS ---');
-  console.log('Settings -> Stream');
-  console.log(`  Service:    Custom...`);
-  console.log(`  Server:     rtmp://${hostname}/live`);
+  console.log('OBS -> Settings -> Stream');
+  console.log('  Service:    Custom...');
+  console.log(`  Server:     rtmp://rtmp.${hostname}/live`);
   console.log(`  Stream Key: stream?sign=${expire}-${hash}`);
-  console.log('Settings -> Output -> Output Mode: Advanced -> Streaming');
+  console.log('OBS -> Settings -> Output -> Output Mode: Advanced -> Streaming');
   console.log('  Keyframe Interval: 2  (υποχρεωτικό, αλλιώς σπάει το HLS)');
   console.log('  Encoder: x264 ή NVENC, Rate Control: CBR');
-  console.log('Πάτα Start Streaming και μετά άνοιξε το hls url παραπάνω.');
+  console.log('');
+  console.log(`=== ΑΝΑΠΑΡΑΓΩΓΗ (players) -> ${hostname} ===`);
+  console.log('Αυτά περνάνε από το Cloudflare (πορτοκαλί σύννεφο).');
+  console.log('');
+  console.log(`  hls: https://${hostname}/live/stream/index.m3u8`);
+  console.log(`  flv: https://${hostname}/live/stream.flv`);
+  console.log(`  ws:  wss://${hostname}/live/stream.flv`);
+  console.log('');
+  console.log('Η αναπαραγωγή είναι ανοιχτή (auth.play=false στο config.json) — το');
+  console.log('sign χρειάζεται μόνο στην εκπομπή. Αν κλειδώσεις και την αναπαραγωγή,');
+  console.log(`πρόσθεσε ?sign=${expire}-${hash} στα urls των players.`);
 }
 
 async function updateConfig(config) {

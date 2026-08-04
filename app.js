@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
 import { loadConfig, saveConfig } from "./config.js";
+import { startStats } from "./stats.js";
 
 const config = await loadConfig();
 
@@ -43,5 +44,7 @@ nms.on("donePublish", (session) => {
   hlsJobs.get(session.id)?.kill("SIGKILL");
   hlsJobs.delete(session.id);
 });
+
+startStats(nms, config);
 
 nms.run();
