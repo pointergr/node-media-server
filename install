@@ -89,6 +89,11 @@ $HOSTNAME, rtmp.$HOSTNAME {
         header @m3u8 Cache-Control "no-store"
         header @ts Cache-Control "public, max-age=31536000, immutable"
 
+        # Οι online HLS players τρέχουν σε άλλο origin — χωρίς αυτό το hls.js
+        # μπλοκάρεται από τον browser και δεν βλέπει ούτε segments ούτε bitrates
+        @hls path *.m3u8 *.ts
+        header @hls Access-Control-Allow-Origin "*"
+
         log {
                 output file /var/log/caddy/access.log
         }

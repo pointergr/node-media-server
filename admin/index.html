@@ -265,7 +265,8 @@
       [{ label: "Stream" }, { label: "Πηγή" }, { label: "Βίντεο" }, { label: "Ήχος" },
       { label: "Θεατές", num: 1 }, { label: "Είσοδος", num: 1 }, { label: "Έξοδος", num: 1 }, { label: "Διάρκεια", num: 1 }],
       d.streams.map((s) => [
-        `<b>${s.stream}</b>`, `${s.protocol} · ${s.ip}`, `${s.video} ${s.resolution}`, s.audio,
+        `<a href="/admin/player?stream=${encodeURIComponent(s.stream)}" target="_blank"><b>${s.stream}</b></a>`,
+        `${s.protocol} · ${s.ip}`, `${s.video} ${s.resolution}`, s.audio,
         s.viewers, bps(s.in_bps), bps(s.out_bps), dur((Date.now() - s.since) / 1000),
       ]));
 

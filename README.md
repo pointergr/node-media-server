@@ -88,6 +88,11 @@ stream.example.com, rtmp.stream.example.com {
         header @m3u8 Cache-Control "no-store"
         header @ts Cache-Control "public, max-age=31536000, immutable"
 
+        # Οι online HLS players τρέχουν σε άλλο origin — χωρίς αυτό το hls.js
+        # μπλοκάρεται από τον browser και δεν βλέπει ούτε segments ούτε bitrates
+        @hls path *.m3u8 *.ts
+        header @hls Access-Control-Allow-Origin "*"
+
         log {
                 output file /var/log/caddy/access.log
         }
@@ -229,6 +234,23 @@ segments βγαίνουν μεγαλύτερα από το `hls_time` και α�
   στα `.ts` ένα μέρος τους δεν φτάνει στο origin και το out_bps βγαίνει μικρότερο.
 
 Το `stats.db` είναι στο `.gitignore`. Έλεγχος του collector: `node test-stats.js`.
+
+## Demo player
+
+Στο `https://stream.example.com/admin/player` — πίσω από το ίδιο basic auth με το admin UI.
+Κλικ στο όνομα ενός ενεργού stream στο admin το ανοίγει απευθείας.
+
+Παίζει το `<stream>/index.m3u8` με [hls.js](https://github.com/video-dev/hls.js) από CDN
+(σε Safari με το native HLS του browser) και ξαναδοκιμάζει κάθε 3 δευτερόλεπτα όσο δεν
+εκπέμπει κανείς — μπορείς να την αφήσεις ανοιχτή και να ξεκινήσεις το OBS μετά.
+Το stream path αλλάζει από το πεδίο πάνω δεξιά ή από το `?stream=`:
+
+```
+https://stream.example.com/admin/player?stream=/live/stream
+```
+
+Ο preview μετράει ως κανονικός θεατής στα στατιστικά — είναι ο ευκολότερος τρόπος να
+επαληθεύσεις ότι δουλεύει η μέτρηση, αλλά μην τον αφήνεις ανοιχτό όταν κοιτάς νούμερα.
 
 ## Admin API
 

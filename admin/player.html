@@ -1,0 +1,108 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player</title>
+<style>
+  :root { color-scheme: light; --surface-1: #fcfcfb; --plane: #f9f9f7; --text-primary: #0b0b0b;
+    --text-secondary: #52514e; --muted: #898781; --border: rgba(11, 11, 11, .1);
+    --good: #0ca30c; --bad: #d33; }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme=light])) { color-scheme: dark; --surface-1: #1a1a19; --plane: #0d0d0d;
+      --text-primary: #fff; --text-secondary: #c3c2b7; --border: rgba(255, 255, 255, .1);
+      --bad: #f66; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; background: var(--plane); color: var(--text-primary);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .spacer { flex: 1; }
+  a { color: var(--text-secondary); }
+  input, button { font: inherit; color: var(--text-primary); background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; }
+  input { min-width: 220px; font-variant-numeric: tabular-nums; }
+  button { color: var(--text-secondary); cursor: pointer; }
+  button:hover { color: var(--text-primary); }
+  .card { background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; }
+  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 6px; display: block; }
+  #status { margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+  #status.bad { color: var(--bad); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.on { background: var(--good); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 12px; }
+</style>
+
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Player</h1>
+  <span class="spacer"></span>
+  <input id="path" value="/live/stream" spellcheck="false">
+  <button id="load">Φόρτωση</button>
+  <a href="/admin">στατιστικά</a>
+</header>
+
+<div class="card">
+  <video id="video" controls muted playsinline></video>
+  <div id="status"></div>
+</div>
+
+<p class="hint">
+  Ο preview μετράει ως κανονικός θεατής στα στατιστικά. Το muted είναι απαραίτητο για να
+  ξεκινάει η αναπαραγωγή χωρίς κλικ — ανέβασε την ένταση από τα controls.
+</p>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script>
+  const el = (id) => document.getElementById(id);
+  const video = el("video"), input = el("path"), out = el("status");
+  let hls, retry;
+
+  function say(msg, bad) {
+    out.textContent = msg;
+    out.className = bad ? "bad" : "";
+    el("dot").className = "dot" + (bad ? "" : " on");
+  }
+
+  video.onplaying = () => say(`live · ${video.videoWidth}x${video.videoHeight}`);
+
+  // Το stream μπορεί να μην εκπέμπει ακόμα: ξαναδοκιμάζουμε αντί να πεθάνει η σελίδα.
+  function later(src) {
+    clearTimeout(retry);
+    retry = setTimeout(() => load(src), 3000);
+  }
+
+  function load(src) {
+    clearTimeout(retry);
+    hls?.destroy();
+    say("σύνδεση…");
+
+    // Safari: native HLS, το hls.js δεν υποστηρίζεται (δεν έχει MSE για fMP4/TS)
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = src;
+      video.onerror = () => { say("δεν παίζει, νέα προσπάθεια…", true); later(src); };
+      return video.play().catch(() => say("πάτα play", true));
+    }
+    if (!window.Hls?.isSupported()) return say("ο browser δεν υποστηρίζει HLS", true);
+
+    hls = new Hls();
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => say("πάτα play")));
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if (!d.fatal) return;
+      say(`${d.details}, νέα προσπάθεια…`, true);
+      later(src);
+    });
+    hls.loadSource(src);
+    hls.attachMedia(video);
+  }
+
+  function start() {
+    const path = input.value.trim().replace(/\/+$/, "");
+    history.replaceState(null, "", "?stream=" + encodeURIComponent(path));
+    load(path + "/index.m3u8");
+  }
+
+  input.value = new URLSearchParams(location.search).get("stream") || input.value;
+  el("load").onclick = start;
+  input.onkeydown = (e) => e.key === "Enter" && start();
+  start();
+</script>
