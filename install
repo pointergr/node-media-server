@@ -70,7 +70,9 @@ cat <<EOF > /etc/caddy/Caddyfile
 http://$HOSTNAME, https://$HOSTNAME, http://rtmp.$HOSTNAME, https://rtmp.$HOSTNAME {
         # Το admin UI ακούει μόνο στο loopback — το auth το κάνει εδώ ο Caddy
         handle /admin* {
-                basic_auth {
+                # basicauth, όχι basic_auth: το νέο όνομα δεν υπάρχει πριν τον Caddy 2.8,
+                # ενώ το παλιό δουλεύει και στις δύο (με deprecation warning στις νέες)
+                basicauth {
                         admin $ADMIN_HASH
                 }
                 reverse_proxy localhost:8001
@@ -81,8 +83,10 @@ http://$HOSTNAME, https://$HOSTNAME, http://rtmp.$HOSTNAME, https://rtmp.$HOSTNA
         }
 
         # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
-        header *.m3u8 Cache-Control "no-store"
-        header *.ts Cache-Control "public, max-age=31536000, immutable"
+        @m3u8 path *.m3u8
+        @ts path *.ts
+        header @m3u8 Cache-Control "no-store"
+        header @ts Cache-Control "public, max-age=31536000, immutable"
 
         log {
                 output file /var/log/caddy/access.log

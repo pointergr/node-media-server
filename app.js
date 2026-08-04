@@ -20,7 +20,12 @@ const hlsJobs = new Map();
 
 nms.on("postPublish", (session) => {
   const dir = `${config.static.root}${session.streamPath}`;
+  // Ο μετρητής των segments ξεκινάει από το 0 σε κάθε publish. Χωρίς μοναδικό
+  // prefix ανά συνεδρία, το CDN σερβίρει τα segments της προηγούμενης κάτω από
+  // τα ίδια ονόματα. Τα παλιά αρχεία φεύγουν, δεν τα πιάνει το delete_segments.
+  fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
+  const prefix = Date.now();
 
   const ff = spawn(
     config.hls.ffmpeg,
@@ -31,6 +36,7 @@ nms.on("postPublish", (session) => {
       "-hls_time", "2",
       "-hls_list_size", "3",
       "-hls_flags", "delete_segments",
+      "-hls_segment_filename", `${dir}/${prefix}-%d.ts`,
       `${dir}/index.m3u8`,
     ],
     { stdio: ["ignore", "ignore", "inherit"] }

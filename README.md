@@ -69,7 +69,9 @@ cat <<EOF > /etc/caddy/Caddyfile
 http://stream.example.com, https://stream.example.com, http://rtmp.stream.example.com, https://rtmp.stream.example.com {
         # Το admin UI ακούει μόνο στο loopback — το auth το κάνει εδώ ο Caddy
         handle /admin* {
-                basic_auth {
+                # basicauth, όχι basic_auth: το νέο όνομα δεν υπάρχει πριν τον Caddy 2.8,
+                # ενώ το παλιό δουλεύει και στις δύο (με deprecation warning στις νέες)
+                basicauth {
                         admin <hash από: caddy hash-password --plaintext "<admin password>">
                 }
                 reverse_proxy localhost:8001
@@ -80,8 +82,10 @@ http://stream.example.com, https://stream.example.com, http://rtmp.stream.exampl
         }
 
         # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
-        header *.m3u8 Cache-Control "no-store"
-        header *.ts Cache-Control "public, max-age=31536000, immutable"
+        @m3u8 path *.m3u8
+        @ts path *.ts
+        header @m3u8 Cache-Control "no-store"
+        header @ts Cache-Control "public, max-age=31536000, immutable"
 
         log {
                 output file /var/log/caddy/access.log
@@ -154,11 +158,38 @@ https://stream.example.com/live/stream/index.m3u8
 segments βγαίνουν μεγαλύτερα από το `hls_time` και αυξάνει το latency. Το path του ffmpeg
 ρυθμίζεται στο `config.json` (`hls.ffmpeg`). Λάθη του ffmpeg φαίνονται στο `pm2 logs stream`.
 
-### Cloudflare
+### Cloudflare cache rules
 
-Ο Caddyfile βάζει ήδη τα σωστά `Cache-Control`. Στο Cloudflare χρειάζεται Cache Rule που να
-σέβεται τα origin headers — αν κασάρει το `.m3u8`, ο player κολλάει σε παλιό playlist.
-Προσοχή επίσης στο ToS 2.8 της Cloudflare για video μέσω CDN σε non-Enterprise plan.
+Ο Caddyfile βάζει ήδη τα σωστά `Cache-Control`. Στο Cloudflare (Caching → Cache Rules)
+χρειάζονται τρεις κανόνες με **αμοιβαία αποκλειόμενα** expressions, ώστε να μην παίζει
+ρόλο η σειρά τους:
+
+| # | Expression | Ρύθμιση |
+|---|---|---|
+| 1 | `ends_with(http.request.uri.path, ".ts")` | Eligible for cache · Edge TTL: **use origin cache-control** |
+| 2 | `ends_with(http.request.uri.path, ".m3u8")` | **Bypass cache** |
+| 3 | `ends_with(http.request.uri.path, ".flv") or starts_with(http.request.uri.path, "/api/") or starts_with(http.request.uri.path, "/admin")` | **Bypass cache** |
+
+Γιατί:
+
+- **`.ts` — κασάρισέ τα.** Εδώ είναι όλο το bandwidth. Είναι ασφαλές επειδή κάθε publish
+  γράφει segments με μοναδικό prefix (`<timestamp>-0.ts`), οπότε ένα όνομα δεν ξαναχρησιμοποιείται
+  ποτέ για διαφορετικό περιεχόμενο.
+- **`.m3u8` — ποτέ.** Ξαναγράφεται κάθε ~2 δευτερόλεπτα. Ακόμα και 10 δευτερόλεπτα cache
+  σημαίνει ότι ο player ζητάει segments που έχουν ήδη σβηστεί, δηλαδή 404 και κόλλημα.
+- **`.flv` — ποτέ.** Είναι ατέρμονο chunked response· αν το πιάσει κανόνας τύπου
+  «Cache Everything», το Cloudflare προσπαθεί να το ολοκληρώσει και ο player δεν ξεκινάει ποτέ.
+- **`/api/`, `/admin` — ποτέ.** Δυναμικά, και το `/admin` έχει credentials.
+
+Εκτός των rules:
+
+- Caching → Configuration → Browser Cache TTL: **Respect Existing Headers**. Αλλιώς το
+  Cloudflare επιβάλλει δικό του TTL στον browser και ακυρώνει το `no-store` του playlist.
+- **Tiered Cache: On** — με πολλούς θεατές μειώνει αισθητά τα requests στο origin.
+- Το `rtmp.` υποdomain δεν αφορά καθόλου το cache: είναι DNS only, δεν περνάει από το Cloudflare.
+- Ποτέ «Cache Everything» σε όλο το domain, ποτέ Edge TTL override στα `.m3u8`.
+
+Προσοχή στο ToS 2.8 της Cloudflare για video μέσω CDN σε non-Enterprise plan.
 
 ## Admin UI
 
