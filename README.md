@@ -64,9 +64,10 @@ cat <<EOF > /etc/caddy/Caddyfile
         }
 }
 
-# Ρητά και τα δύο schemes: σκέτο hostname σημαίνει automatic HTTPS με redirect
-# 80->443, που με Cloudflare Flexible γίνεται redirect loop πριν βγει το certificate.
-http://stream.example.com, https://stream.example.com, http://rtmp.stream.example.com, https://rtmp.stream.example.com {
+# Χωρίς scheme ο Caddy εξυπηρετεί και τα δύο: βγάζει μόνος του certificate, ακούει
+# στο 443 και κάνει redirect 80->443. Θέλει Cloudflare SSL mode Full — με Flexible
+# το CF χτυπάει το origin σε http και ο redirect γίνεται loop.
+stream.example.com, rtmp.stream.example.com {
         # Το admin UI ακούει μόνο στο loopback — το auth το κάνει εδώ ο Caddy
         handle /admin* {
                 # basicauth, όχι basic_auth: το νέο όνομα δεν υπάρχει πριν τον Caddy 2.8,
