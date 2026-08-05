@@ -41,11 +41,21 @@ docker compose logs -f
 | Mount | Γιατί |
 |---|---|
 | `./config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
-| `media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ |
+| `media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ. Named volume, όχι bind mount: ο φάκελος `media/` δίπλα στο compose μένει **πάντα άδειος** — τα αρχεία τα βλέπεις με `docker compose exec stream ls -R /app/media` |
 | `data` | το `stats.db` με τα στατιστικά 30 ημερών και το `passwords.json` |
 
 Ο Caddy μένει στο host, με το ίδιο ακριβώς Caddyfile — δείχνει σε `localhost:8000` και
 `localhost:8001`, που τώρα είναι published ports του container. Το `ufw` το ίδιο.
+
+Με Docker όμως **δεν** τρέχει το `./install`, που είναι το μόνο που γράφει τον bcrypt hash
+του admin στο Caddyfile. Πρέπει να μπει με το χέρι, αλλιώς το `/admin` απαντάει 401 όσο
+σωστό κι αν είναι το password — ο Caddy κάνει το auth, όχι το app:
+
+```bash
+caddy hash-password --plaintext "<το admin password από το generate-passwords>"
+# το αποτέλεσμα στο basicauth του /etc/caddy/Caddyfile
+systemctl reload caddy
+```
 
 ### Κωδικοί σε Docker
 
