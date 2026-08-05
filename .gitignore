@@ -1,3 +1,6 @@
+# Ο server γράφει μέσα το jwt secret και το generate-passwords τους κωδικούς:
+# είναι κατάσταση του κάθε deployment, όχι πηγαίος κώδικας. Πρότυπο: config.example.json
+/config.json
 /media
 /node_modules
 package-lock.json

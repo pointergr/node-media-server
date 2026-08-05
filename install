@@ -41,6 +41,7 @@ volta install npm@bundled
 # Κλωνοποίηση και εγκατάσταση του stream server
 git clone https://github.com/pointergr/node-media-server.git
 cd node-media-server
+cp config.example.json config.json
 npm install
 
 # Εγκατάσταση του pm2

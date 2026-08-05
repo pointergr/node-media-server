@@ -18,13 +18,17 @@ git checkout master
 Docker και τα δύο DNS records.
 
 ```bash
-cp .env.example .env      # βάλε μέσα το DOMAIN σου
+cp .env.example .env               # βάλε μέσα το DOMAIN σου
+cp config.example.json config.json # χωρίς αυτό το bind mount φτιάχνει φάκελο
 docker compose up -d --build
 docker compose logs -f
 ```
 
 Καμία χειροκίνητη αλλαγή στο `config.json`: το compose δίνει `ADMIN_HOST` και `ADMIN_DB`
 ως environment variables.
+
+Το `config.json` **δεν** είναι στο git (μόνο το `config.example.json`): κρατάει τους κωδικούς
+και το jwt secret του κάθε server, οπότε το `git pull` δεν το αγγίζει ποτέ.
 
 | Volume | Γιατί |
 |---|---|
@@ -46,7 +50,7 @@ docker compose restart stream
 Τυπώνει admin password, stream secret και τις έτοιμες ρυθμίσεις του OBS, και γράφει τα
 credentials στο mounted `config.json` — γι' αυτό χρειάζεται restart, διαβάζεται μόνο στο boot.
 
-**Μέχρι να τρέξει αυτό, ο server δουλεύει με τους κωδικούς που είναι committed στο repo.**
+**Μέχρι να τρέξει αυτό, ο server δουλεύει με τους κωδικούς-παραδείγματα του `config.example.json`.**
 
 Η ίδια εντολή ξανά τους ξανατυπώνει αντί να φτιάξει καινούργιους, επειδή το `passwords.json`
 ζει στο `data` volume και επιβιώνει το recreate. Για νέους κωδικούς θέλει ρητό `force`:
@@ -128,6 +132,7 @@ volta install npm@bundled
 ```bash
 git clone git@github.com:pointergr/node-media-server.git
 cd node-media-server
+cp config.example.json config.json
 npm install
 ```
 
@@ -155,6 +160,28 @@ pm2 restart stream
 ### Για logs του stream εκτελούμε
 ```bash
 pm2 logs stream
+```
+
+## Ενημέρωση υπάρχοντος server
+
+Το `config.json` δεν είναι στο git, οπότε οι κωδικοί μένουν ως έχουν:
+
+```bash
+cd node-media-server
+git pull
+npm install         # μόνο αν άλλαξαν dependencies
+pm2 restart stream  # σε Docker: docker compose up -d --build
+```
+
+Σε server που εγκαταστάθηκε **πριν** βγει το `config.example.json`, το `config.json` είναι
+ακόμα tracked με τους πραγματικούς κωδικούς μέσα και το `git pull` θα κολλήσει. Μία φορά:
+
+```bash
+cp config.json /root/config.json.bak
+git checkout -- config.json   # πετάει τους κωδικούς από το working tree
+git pull                      # τώρα το config.json φεύγει από το tracking
+cp /root/config.json.bak config.json
+pm2 restart stream
 ```
 
 ## HLS
