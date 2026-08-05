@@ -76,23 +76,29 @@
     hls?.destroy();
     say("σύνδεση…");
 
-    // Safari: native HLS, το hls.js δεν υποστηρίζεται (δεν έχει MSE για fMP4/TS)
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = src;
-      video.onerror = () => { say("δεν παίζει, νέα προσπάθεια…", true); later(src); };
-      return video.play().catch(() => say("πάτα play", true));
+    // Πρώτα το hls.js, μετά το native — ποτέ ανάποδα. Το canPlayType δεν είναι
+    // δήλωση υποστήριξης: ο Chrome απαντάει "maybe" στο vnd.apple.mpegurl χωρίς
+    // να παίζει HLS, οπότε το <video src> έμενε για πάντα σε readyState 0 —
+    // χωρίς error event, δηλαδή ούτε καν retry, μόνιμο "σύνδεση…".
+    if (window.Hls?.isSupported()) {
+      hls = new Hls();
+      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => say("πάτα play")));
+      hls.on(Hls.Events.ERROR, (_, d) => {
+        if (!d.fatal) return;
+        say(`${d.details}, νέα προσπάθεια…`, true);
+        later(src);
+      });
+      hls.loadSource(src);
+      return hls.attachMedia(video);
     }
-    if (!window.Hls?.isSupported()) return say("ο browser δεν υποστηρίζει HLS", true);
 
-    hls = new Hls();
-    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => say("πάτα play")));
-    hls.on(Hls.Events.ERROR, (_, d) => {
-      if (!d.fatal) return;
-      say(`${d.details}, νέα προσπάθεια…`, true);
-      later(src);
-    });
-    hls.loadSource(src);
-    hls.attachMedia(video);
+    // Safari: δεν έχει MSE για TS, αλλά παίζει HLS native
+    if (!video.canPlayType("application/vnd.apple.mpegurl")) {
+      return say("ο browser δεν υποστηρίζει HLS", true);
+    }
+    video.src = src;
+    video.onerror = () => { say("δεν παίζει, νέα προσπάθεια…", true); later(src); };
+    video.play().catch(() => say("πάτα play", true));
   }
 
   function start() {
