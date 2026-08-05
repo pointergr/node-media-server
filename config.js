@@ -40,9 +40,24 @@ export async function saveConfig(config) {
   });
 }
 
+// Δίπλα στο stats.db, ώστε σε Docker να ζει στο data volume και να επιβιώνει
+// το recreate του container.
+const PASSWORDS = "./data/passwords.json";
+
+// Μεταφορά από την παλιά θέση. Χωρίς αυτό, ένα generate-passwords σε υπάρχοντα
+// server δεν θα έβρισκε τίποτα και θα έφτιαχνε καινούργιους κωδικούς —
+// αλλάζοντας σιωπηλά το stream key του OBS.
+function migratePasswords() {
+  if (fs.existsSync("./passwords.json") && !fs.existsSync(PASSWORDS)) {
+    fs.mkdirSync("./data", { recursive: true });
+    fs.renameSync("./passwords.json", PASSWORDS);
+  }
+}
+
 export function loadPasswords() {
   return new Promise((resolve, reject) => {
-    fs.readFile("./passwords.json", "utf8", (err, data) => {
+    migratePasswords();
+    fs.readFile(PASSWORDS, "utf8", (err, data) => {
       if (err) {
         // If the error is about the file not existing, resolve with null
         if (err.code === 'ENOENT') {
@@ -68,8 +83,9 @@ export function loadPasswords() {
 
 export async function savePasswords(passwords) {
   return new Promise((resolve, reject) => {
+    fs.mkdirSync("./data", { recursive: true });
     fs.writeFile(
-      "./passwords.json",
+      PASSWORDS,
       JSON.stringify(passwords, null, 2),
       "utf8",
       (err) => {

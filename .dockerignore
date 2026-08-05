@@ -1,5 +1,6 @@
 node_modules
 media
+data
 stats.db*
 passwords.json
 .git

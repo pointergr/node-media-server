@@ -4,7 +4,7 @@
   "description": "Node media server",
   "main": "index.js",
   "scripts": {
-    "test": "node test-stats.js && node test-r2.js",
+    "test": "node test-stats.js && node test-r2.js && node test-passwords.js",
     "generate-passwords": "node passwords.js",
     "start": "node app.js"
   },

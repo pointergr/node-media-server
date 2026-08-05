@@ -42,16 +42,28 @@ docker compose logs -f
 |---|---|
 | `./config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
 | `media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ |
-| `data` | το `stats.db` με τα στατιστικά 30 ημερών |
+| `data` | το `stats.db` με τα στατιστικά 30 ημερών και το `passwords.json` |
 
 Ο Caddy μένει στο host, με το ίδιο ακριβώς Caddyfile — δείχνει σε `localhost:8000` και
 `localhost:8001`, που τώρα είναι published ports του container. Το `ufw` το ίδιο.
 
-Οι κωδικοί βγαίνουν μία φορά, πριν σηκωθεί το container:
+### Κωδικοί σε Docker
 
 ```bash
-docker run --rm -v $PWD:/app -w /app node:24-slim \
-  sh -c "npm install --omit=dev && npm run generate-passwords stream.example.com"
+docker compose exec stream npm run generate-passwords stream.example.com
+docker compose restart stream
+```
+
+Τυπώνει admin password, stream secret και τις έτοιμες ρυθμίσεις του OBS, και γράφει τα
+credentials στο mounted `config.json` — γι' αυτό χρειάζεται restart, διαβάζεται μόνο στο boot.
+
+**Μέχρι να τρέξει αυτό, ο server δουλεύει με τους κωδικούς που είναι committed στο repo.**
+
+Η ίδια εντολή ξανά τους ξανατυπώνει αντί να φτιάξει καινούργιους, επειδή το `passwords.json`
+ζει στο `data` volume και επιβιώνει το recreate. Για νέους κωδικούς θέλει ρητό `force`:
+
+```bash
+docker compose exec stream npm run generate-passwords stream.example.com force
 ```
 
 ## Χειροκίνητη εγκατάσταση

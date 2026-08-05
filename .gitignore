@@ -3,6 +3,7 @@
 package-lock.json
 .aider*
 passwords.json
+/data
 /stats.db
 /stats.db-shm
 /stats.db-wal
