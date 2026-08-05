@@ -14,48 +14,27 @@ git checkout master
 
 ## Docker
 
-Δύο αλλαγές στο `config.json` πριν το πρώτο boot:
-
-```json
-"admin": {
-  "port": 8001,
-  "host": "0.0.0.0",
-  "db": "./data/stats.db"
-}
-```
-
-Το `host` γιατί το loopback μέσα στο container είναι του container — με το default
-`127.0.0.1` ο Caddy του host δεν φτάνει ποτέ στο admin UI. Την έκθεση την κρατάει το
-port mapping `127.0.0.1:8001:8001`: η θύρα δένεται μόνο στο loopback του host, ακριβώς
-όπως και χωρίς Docker. Το `db` γιατί ένα volume είναι φάκελος, όχι αρχείο.
-
-Μετά:
+Το compose σηκώνει και τον Caddy, οπότε δεν χρειάζεται τίποτα στο host πέρα από
+Docker και τα δύο DNS records.
 
 ```bash
+cp .env.example .env      # βάλε μέσα το DOMAIN σου
 docker compose up -d --build
 docker compose logs -f
 ```
 
-Τα τρία mounts είναι απαραίτητα:
+Καμία χειροκίνητη αλλαγή στο `config.json`: το compose δίνει `ADMIN_HOST` και `ADMIN_DB`
+ως environment variables.
 
-| Mount | Γιατί |
+| Volume | Γιατί |
 |---|---|
 | `./config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
 | `media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ. Named volume, όχι bind mount: ο φάκελος `media/` δίπλα στο compose μένει **πάντα άδειος** — τα αρχεία τα βλέπεις με `docker compose exec stream ls -R /app/media` |
 | `data` | το `stats.db` με τα στατιστικά 30 ημερών και το `passwords.json` |
+| `caddy-data` | τα certificates· χωρίς αυτό κάθε recreate ζητάει νέο cert και η Let's Encrypt κόβει στο rate limit |
 
-Ο Caddy μένει στο host, με το ίδιο ακριβώς Caddyfile — δείχνει σε `localhost:8000` και
-`localhost:8001`, που τώρα είναι published ports του container. Το `ufw` το ίδιο.
-
-Με Docker όμως **δεν** τρέχει το `./install`, που είναι το μόνο που γράφει τον bcrypt hash
-του admin στο Caddyfile. Πρέπει να μπει με το χέρι, αλλιώς το `/admin` απαντάει 401 όσο
-σωστό κι αν είναι το password — ο Caddy κάνει το auth, όχι το app:
-
-```bash
-caddy hash-password --plaintext "<το admin password από το generate-passwords>"
-# το αποτέλεσμα στο basicauth του /etc/caddy/Caddyfile
-systemctl reload caddy
-```
+Δημοσιεύεται **μόνο** το 1935 (RTMP) πέρα από τα 80/443 του Caddy. Τα 8000/8001 μένουν
+στο compose network: τα βλέπει μόνο ο Caddy. Στο `ufw` αρκούν 22, 80, 443, 1935.
 
 ### Κωδικοί σε Docker
 
@@ -117,63 +96,25 @@ ufw default allow outgoing
 ufw enable
 ```
 
-### Ρύθμιση Caddy (άλλαξε το `stream.example.com` με το σωστό URL)
+### Ρύθμιση Caddy
+
+Ένα μόνο Caddyfile, αυτό του repo — το ίδιο χρησιμοποιεί και το Docker setup. Βάλε το
+hostname σου στη θέση του placeholder:
+
 ```bash
-mkdir -p /var/log/caddy
-chown caddy:caddy /var/log/caddy
-
-cat <<EOF > /etc/caddy/Caddyfile
-{
-        # runtime errors: certificates, ACME, config
-        log {
-                output file /var/log/caddy/error.log
-                level ERROR
-        }
-}
-
-# Χωρίς scheme ο Caddy εξυπηρετεί και τα δύο: βγάζει μόνος του certificate, ακούει
-# στο 443 και κάνει redirect 80->443. Θέλει Cloudflare SSL mode Full — με Flexible
-# το CF χτυπάει το origin σε http και ο redirect γίνεται loop.
-stream.example.com, rtmp.stream.example.com {
-        # Το admin UI ακούει μόνο στο loopback — το auth το κάνει εδώ ο Caddy
-        handle /admin* {
-                # basicauth, όχι basic_auth: το νέο όνομα δεν υπάρχει πριν τον Caddy 2.8,
-                # ενώ το παλιό δουλεύει και στις δύο (με deprecation warning στις νέες)
-                basicauth {
-                        admin <hash από: caddy hash-password --plaintext "<admin password>">
-                }
-                reverse_proxy localhost:8001
-        }
-
-        handle {
-                reverse_proxy localhost:8000
-        }
-
-        # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
-        @m3u8 path *.m3u8
-        @ts path *.ts
-        header @m3u8 Cache-Control "no-store"
-        header @ts Cache-Control "public, max-age=31536000, immutable"
-
-        # Οι online HLS players τρέχουν σε άλλο origin — χωρίς αυτό το hls.js
-        # μπλοκάρεται από τον browser και δεν βλέπει ούτε segments ούτε bitrates
-        @hls path *.m3u8 *.ts
-        header @hls Access-Control-Allow-Origin "*"
-
-        log {
-                output file /var/log/caddy/access.log
-        }
-}
-EOF
+sed "s/{\\$DOMAIN}/stream.example.com/g" Caddyfile > /etc/caddy/Caddyfile
+systemctl restart caddy
 ```
+
+Το `STREAM_HOST` μένει στο default (`localhost`) γιατί εδώ ο Caddy και ο server είναι
+στο ίδιο μηχάνημα. Δεν μπαίνει basic auth στο Caddyfile: το κάνει ο ίδιος ο admin server
+με τον κωδικό του `config.json` (δες [Admin UI](#admin-ui)).
 
 ### Logs του Caddy
 ```bash
-tail -f /var/log/caddy/error.log     # certificates, ACME, config
-tail -f /var/log/caddy/access.log    # requests, 4xx/5xx
-journalctl -u caddy -f               # ό,τι σκάει πριν φορτώσει το config
+journalctl -u caddy -f               # access logs, certificates, ACME, config
 ```
-Ο Caddy κάνει μόνος του rotate (100MiB ανά αρχείο, 10 αρχεία, 90 μέρες) — δεν θέλει logrotate.
+Ο Caddy γράφει στο stderr, οπότε τα πάντα είναι στο journal — δεν θέλει logrotate.
 
 ### Εγκατάσταση του Volta
 ```bash
@@ -331,6 +272,10 @@ plan — δηλαδή ακριβώς το κασάρισμα των `.ts`, πο�
 Στο `https://stream.example.com/admin` (χρήστης `admin`, ο κωδικός από το
 `generate-passwords`). Το v4 δεν έχει δικό του panel — αυτό είναι δικό μας.
 
+Το basic auth το κάνει ο ίδιος ο admin server, με τον κωδικό του `config.json`. Δεν
+μπαίνει hash στο Caddyfile: ένα δεύτερο αντίγραφο του κωδικού σε άλλο αρχείο σημαίνει
+σίγουρο 401 την πρώτη φορά που θα αλλάξουν οι κωδικοί και δεν θα ενημερωθεί.
+
 Δείχνει ενεργά streams (θεατές, bitrate, codec, ανάλυση, διάρκεια), γραφήματα για
 1h / 24h / 7d / 30d, ενεργές συνδέσεις με κουμπί kill, και log πρόσφατων συνδέσεων.
 
@@ -340,8 +285,9 @@ plan — δηλαδή ακριβώς το κασάρισμα των `.ts`, πο�
   60 δευτερόλεπτα σε SQLite (`stats.db`), με διατήρηση 30 ημερών. Το bitrate δεν υπάρχει
   πουθενά στο API του v4 — βγαίνει από τη διαφορά δύο δειγμάτων.
 - Το UI σερβίρεται από δικό μας HTTP server στο `127.0.0.1:8001`. **Δεν** ακούει σε
-  εξωτερικό interface, οπότε δεν χρειάζεται άνοιγμα στο ufw· περνάει μόνο μέσω Caddy,
-  που κάνει και το basic_auth.
+  εξωτερικό interface, οπότε δεν χρειάζεται άνοιγμα στο ufw· περνάει μόνο μέσω Caddy.
+  Σε Docker ακούει στο `0.0.0.0` (`ADMIN_HOST`) γιατί ο Caddy είναι σε άλλο container,
+  αλλά η θύρα δεν δημοσιεύεται στο host.
 - Το ffmpeg του HLS συνδέεται ως θεατής στο 127.0.0.1 και εξαιρείται από τα στατιστικά,
   αλλιώς κάθε stream θα έδειχνε έναν φανταστικό θεατή παραπάνω.
 - Το HLS σερβίρεται ως στατικά αρχεία (`express.static`), χωρίς session και χωρίς events.

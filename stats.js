@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
@@ -30,12 +31,16 @@ function isLocal(session) {
 }
 
 export function startStats(nms, config) {
+  // Τα env overrides υπάρχουν για το docker-compose: αλλιώς κάθε deployment θα
+  // έπρεπε να πειράξει με το χέρι το mounted config.json.
+  const dbPath = process.env.ADMIN_DB ?? config.admin.db;
+
   // Το SQLite δεν φτιάχνει τον φάκελο μόνο του, και σε Docker το db ζει σε
   // volume (./data/stats.db) που στο πρώτο boot είναι άδειο.
-  if (config.admin.db !== ":memory:") {
-    fs.mkdirSync(path.dirname(config.admin.db), { recursive: true });
+  if (dbPath !== ":memory:") {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   }
-  const db = new DatabaseSync(config.admin.db);
+  const db = new DatabaseSync(dbPath);
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS samples (
@@ -272,12 +277,28 @@ export function startStats(nms, config) {
   setInterval(sample, SAMPLE_MS);
   setInterval(cleanup, CLEANUP_MS);
 
-  // Μόνο στο loopback — το auth το κάνει ο Caddy με basic_auth στο /admin*.
-  // Σε container το loopback είναι του container: εκεί θέλει 0.0.0.0 και το
-  // publish να δένεται στο loopback του host (-p 127.0.0.1:8001:8001).
-  const host = config.admin.host ?? "127.0.0.1";
-  http.createServer((req, res) => {
+  // Το auth γίνεται εδώ, όχι στον Caddy: έτσι ο κωδικός ζει μόνο στο config.json
+  // και δεν χρειάζεται να κρατιέται συγχρονισμένος με ένα bcrypt hash σε άλλο
+  // αρχείο, που κανείς δεν θυμάται να ενημερώσει όταν αλλάζουν οι κωδικοί.
+  const user = config.auth.jwt.users[0];
+  const expected = Buffer.from(
+    `Basic ${Buffer.from(`${user.username}:${user.password}`).toString("base64")}`
+  );
+  const authorized = (req) => {
+    const got = Buffer.from(req.headers.authorization ?? "");
+    return got.length === expected.length && timingSafeEqual(got, expected);
+  };
+
+  // Χωρίς Docker μένει στο loopback και το TLS το κάνει ο Caddy από μπροστά. Σε
+  // container το loopback είναι του container, οπότε το compose δίνει 0.0.0.0 —
+  // η θύρα δεν δημοσιεύεται στο host, φτάνει μόνο ο Caddy από το compose network.
+  const host = process.env.ADMIN_HOST ?? config.admin.host ?? "127.0.0.1";
+  const server = http.createServer((req, res) => {
     try {
+      if (!authorized(req)) {
+        res.writeHead(401, { "WWW-Authenticate": 'Basic realm="admin"' });
+        return res.end();
+      }
       route(req, res);
     } catch (err) {
       json(res, 500, { error: err.message });
@@ -286,5 +307,5 @@ export function startStats(nms, config) {
     console.log(`Admin listening on ${host}:${config.admin.port}`);
   });
 
-  return { sample, snapshot, series, db };
+  return { sample, snapshot, series, db, server };
 }

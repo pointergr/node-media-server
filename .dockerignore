@@ -5,3 +5,5 @@ stats.db*
 passwords.json
 .git
 .aider*
+.env
+Caddyfile

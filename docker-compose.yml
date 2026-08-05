@@ -2,12 +2,16 @@ services:
   stream:
     build: .
     restart: unless-stopped
+    environment:
+      # Ο admin πρέπει να είναι προσιτός από το container του Caddy, όχι μόνο από
+      # το loopback του δικού του. Δεν δημοσιεύεται θύρα προς τα έξω, και το basic
+      # auth το κάνει το ίδιο το app.
+      ADMIN_HOST: 0.0.0.0
+      ADMIN_DB: ./data/stats.db
     ports:
+      # Μόνο το RTMP: το OBS χτυπάει κατευθείαν εδώ, δεν περνάει από τον Caddy
+      # (το Cloudflare proxy δεν περνάει το 1935 — το rtmp. record θέλει DNS only).
       - "1935:1935"
-      - "8000:8000"
-      # Μόνο στο loopback του host: το admin UI δεν έχει δικό του auth, το κάνει
-      # ο Caddy. Χωρίς το 127.0.0.1: θα ήταν ορθάνοιχτο στο internet.
-      - "127.0.0.1:8001:8001"
     volumes:
       # Ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται
       # σε κάθε recreate και ακυρώνονται όλα τα tokens.
@@ -15,6 +19,24 @@ services:
       - media:/app/media
       - data:/app/data
 
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?βάλε DOMAIN=stream.example.com στο .env}
+      STREAM_HOST: stream
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Τα certificates. Χωρίς αυτό ο Caddy ξαναβγάζει cert σε κάθε recreate και
+      # η Let's Encrypt το κόβει στο rate limit.
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
   media:
   data:
+  caddy-data:
+  caddy-config:

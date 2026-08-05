@@ -49,56 +49,9 @@ npm install pm2 -g
 # Παραγωγή κωδικών
 npm run generate-passwords $HOSTNAME
 
-# Ρύθμιση Caddy — χρειάζεται τον admin κωδικό, γι' αυτό τρέχει μετά το generate-passwords
-mkdir -p /var/log/caddy
-chown caddy:caddy /var/log/caddy
-
-ADMIN_PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('passwords.json')).adminPassword)")
-ADMIN_HASH=$(caddy hash-password --plaintext "$ADMIN_PASS")
-
-cat <<EOF > /etc/caddy/Caddyfile
-{
-        # runtime errors: certificates, ACME, config
-        log {
-                output file /var/log/caddy/error.log
-                level ERROR
-        }
-}
-
-# Χωρίς scheme ο Caddy εξυπηρετεί και τα δύο: βγάζει μόνος του certificate, ακούει
-# στο 443 και κάνει redirect 80->443. Θέλει Cloudflare SSL mode Full — με Flexible
-# το CF χτυπάει το origin σε http και ο redirect γίνεται loop.
-$HOSTNAME, rtmp.$HOSTNAME {
-        # Το admin UI ακούει μόνο στο loopback — το auth το κάνει εδώ ο Caddy
-        handle /admin* {
-                # basicauth, όχι basic_auth: το νέο όνομα δεν υπάρχει πριν τον Caddy 2.8,
-                # ενώ το παλιό δουλεύει και στις δύο (με deprecation warning στις νέες)
-                basicauth {
-                        admin $ADMIN_HASH
-                }
-                reverse_proxy localhost:8001
-        }
-
-        handle {
-                reverse_proxy localhost:8000
-        }
-
-        # HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable
-        @m3u8 path *.m3u8
-        @ts path *.ts
-        header @m3u8 Cache-Control "no-store"
-        header @ts Cache-Control "public, max-age=31536000, immutable"
-
-        # Οι online HLS players τρέχουν σε άλλο origin — χωρίς αυτό το hls.js
-        # μπλοκάρεται από τον browser και δεν βλέπει ούτε segments ούτε bitrates
-        @hls path *.m3u8 *.ts
-        header @hls Access-Control-Allow-Origin "*"
-
-        log {
-                output file /var/log/caddy/access.log
-        }
-}
-EOF
+# Ρύθμιση Caddy — ένα μόνο Caddyfile, αυτό του repo. Το STREAM_HOST μένει στο
+# default (localhost) γιατί εδώ ο Caddy και ο server είναι στο ίδιο μηχάνημα.
+sed "s/{\\\$DOMAIN}/$HOSTNAME/g" Caddyfile > /etc/caddy/Caddyfile
 
 # Επανεκκίνηση του Caddy για να εφαρμοστούν οι αλλαγές
 systemctl restart caddy

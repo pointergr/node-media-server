@@ -42,7 +42,10 @@ const session = (over) => ({
   ...over,
 });
 
-const { sample, snapshot, db } = startStats(nms, { admin: { port: 0, db: ":memory:" } });
+const { sample, snapshot, db, server } = startStats(nms, {
+  admin: { port: 0, db: ":memory:" },
+  auth: { jwt: { users: [{ username: "admin", password: "μυστικό" }] } },
+});
 
 const publisher = session({ isPublisher: true });
 const viewer = session({ ip: "1.2.3.4:6000" });
@@ -107,6 +110,15 @@ assert.equal(logged[0].publisher, 0);
 // Ο ffmpeg δεν πρέπει να γράφεται ούτε στο log
 nms.emit("donePlay", ffmpeg);
 assert.equal(db.prepare("SELECT COUNT(*) c FROM sessions").get().c, 1, "το local session δεν λογάρεται");
+
+// Το admin UI δεν έχει τίποτα άλλο μπροστά του — αν πέσει αυτό, είναι ορθάνοιχτο
+const url = `http://127.0.0.1:${server.address().port}/admin/api/live`;
+const creds = (u, p) => ({ Authorization: `Basic ${Buffer.from(`${u}:${p}`).toString("base64")}` });
+
+assert.equal((await fetch(url)).status, 401, "χωρίς credentials δεν περνάει");
+assert.equal((await fetch(url, { headers: creds("admin", "λάθος") })).status, 401, "λάθος κωδικός");
+assert.equal((await fetch(url, { headers: creds("λάθος", "μυστικό") })).status, 401, "λάθος χρήστης");
+assert.equal((await fetch(url, { headers: creds("admin", "μυστικό") })).status, 200, "σωστά credentials");
 
 console.log("stats.js OK");
 process.exit(0);
