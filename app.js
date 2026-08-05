@@ -20,9 +20,21 @@ if (!config.auth.jwt.secret) {
 const nms = new NodeMediaServer(config);
 
 // Το v4 δεν κάνει HLS, οπότε το βγάζουμε με ffmpeg remux ανά stream.
+// Κλειδί το streamPath, όχι το session.id: το job ανήκει στον φάκελο του stream,
+// και δύο jobs στον ίδιο φάκελο γράφουν πάνω στο ίδιο ff.m3u8.
 const hlsJobs = new Map();
 
 nms.on("postPublish", (session) => {
+  // Το nms βγάζει postPublish *πριν* ελέγξει αν το path έχει ήδη publisher
+  // (broadcast_server.js:159 πριν το :160), και ο δεύτερος απορρίπτεται: το
+  // isPublisher του δεν γίνεται ποτέ true, οπότε στο close καλείται donePlay και
+  // donePublish δεν βγαίνει ποτέ γι' αυτόν. Χωρίς αυτόν τον έλεγχο, κάθε
+  // reconnect του OBS πάνω σε session που δεν έχει κλείσει ακόμα αφήνει ένα
+  // ζόμπι ffmpeg να γράφει για πάντα στο ίδιο ff.m3u8 — το index.m3u8 παίζει
+  // πινγκ-πονγκ ανάμεσα σε δύο άσχετες σειρές segments και κανένας player δεν
+  // προλαβαίνει να χτίσει buffer.
+  if (hlsJobs.has(session.streamPath)) return;
+
   const dir = `${config.static.root}${session.streamPath}`;
   // Ο μετρητής των segments ξεκινάει από το 0 σε κάθε publish. Χωρίς μοναδικό
   // prefix ανά συνεδρία, το CDN σερβίρει τα segments της προηγούμενης κάτω από
@@ -53,14 +65,14 @@ nms.on("postPublish", (session) => {
   );
   ff.on("error", (err) => console.error(`HLS ffmpeg failed: ${err.message}`));
 
-  hlsJobs.set(session.id, { ff, stop: r2 && startR2Sync(dir, session.streamPath, r2) });
+  hlsJobs.set(session.streamPath, { ff, stop: r2 && startR2Sync(dir, session.streamPath, r2) });
 });
 
 nms.on("donePublish", (session) => {
-  const job = hlsJobs.get(session.id);
+  const job = hlsJobs.get(session.streamPath);
   job?.ff.kill("SIGKILL");
   job?.stop?.();
-  hlsJobs.delete(session.id);
+  hlsJobs.delete(session.streamPath);
 });
 
 startStats(nms, config);
