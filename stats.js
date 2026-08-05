@@ -267,15 +267,18 @@ export function startStats(nms, config) {
   setInterval(sample, SAMPLE_MS);
   setInterval(cleanup, CLEANUP_MS);
 
-  // Μόνο στο loopback — το auth το κάνει ο Caddy με basic_auth στο /admin*
+  // Μόνο στο loopback — το auth το κάνει ο Caddy με basic_auth στο /admin*.
+  // Σε container το loopback είναι του container: εκεί θέλει 0.0.0.0 και το
+  // publish να δένεται στο loopback του host (-p 127.0.0.1:8001:8001).
+  const host = config.admin.host ?? "127.0.0.1";
   http.createServer((req, res) => {
     try {
       route(req, res);
     } catch (err) {
       json(res, 500, { error: err.message });
     }
-  }).listen(config.admin.port, "127.0.0.1", () => {
-    console.log(`Admin listening on 127.0.0.1:${config.admin.port}`);
+  }).listen(config.admin.port, host, () => {
+    console.log(`Admin listening on ${host}:${config.admin.port}`);
   });
 
   return { sample, snapshot, series, db };

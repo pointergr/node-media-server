@@ -12,6 +12,44 @@ git checkout master
 ./install server.example.com
 ```
 
+## Docker
+
+```bash
+docker build -t nms .
+
+docker run -d --name stream --restart unless-stopped \
+  -p 1935:1935 \
+  -p 8000:8000 \
+  -p 127.0.0.1:8001:8001 \
+  -v $PWD/config.json:/app/config.json \
+  -v nms-media:/app/media \
+  -v nms-data:/app/stats.db \
+  nms
+```
+
+Πριν το πρώτο run, στο `config.json` βάλε `"admin": { "host": "0.0.0.0", ... }`. Το loopback
+μέσα στο container είναι του container — χωρίς αυτό ο Caddy του host δεν φτάνει ποτέ στο
+admin UI. Η έκθεση την κρατάει το `-p 127.0.0.1:8001:8001`: η θύρα δένεται μόνο στο loopback
+του host, ακριβώς όπως και χωρίς Docker.
+
+Τα τρία volumes είναι απαραίτητα:
+
+| Volume | Γιατί |
+|---|---|
+| `config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
+| `/app/media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ |
+| `/app/stats.db` | τα στατιστικά 30 ημερών |
+
+Ο Caddy μένει στο host, με το ίδιο ακριβώς Caddyfile — δείχνει σε `localhost:8000` και
+`localhost:8001`, που τώρα είναι published ports του container. Το `ufw` το ίδιο.
+
+Οι κωδικοί βγαίνουν μία φορά, πριν σηκωθεί το container:
+
+```bash
+docker run --rm -v $PWD:/app -w /app node:24-slim \
+  sh -c "npm install --omit=dev && npm run generate-passwords stream.example.com"
+```
+
 ## Χειροκίνητη εγκατάσταση
 Άνοιξε έναν server.
 
