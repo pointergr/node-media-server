@@ -14,31 +14,35 @@ git checkout master
 
 ## Docker
 
-```bash
-docker build -t nms .
+Δύο αλλαγές στο `config.json` πριν το πρώτο boot:
 
-docker run -d --name stream --restart unless-stopped \
-  -p 1935:1935 \
-  -p 8000:8000 \
-  -p 127.0.0.1:8001:8001 \
-  -v $PWD/config.json:/app/config.json \
-  -v nms-media:/app/media \
-  -v nms-data:/app/stats.db \
-  nms
+```json
+"admin": {
+  "port": 8001,
+  "host": "0.0.0.0",
+  "db": "./data/stats.db"
+}
 ```
 
-Πριν το πρώτο run, στο `config.json` βάλε `"admin": { "host": "0.0.0.0", ... }`. Το loopback
-μέσα στο container είναι του container — χωρίς αυτό ο Caddy του host δεν φτάνει ποτέ στο
-admin UI. Η έκθεση την κρατάει το `-p 127.0.0.1:8001:8001`: η θύρα δένεται μόνο στο loopback
-του host, ακριβώς όπως και χωρίς Docker.
+Το `host` γιατί το loopback μέσα στο container είναι του container — με το default
+`127.0.0.1` ο Caddy του host δεν φτάνει ποτέ στο admin UI. Την έκθεση την κρατάει το
+port mapping `127.0.0.1:8001:8001`: η θύρα δένεται μόνο στο loopback του host, ακριβώς
+όπως και χωρίς Docker. Το `db` γιατί ένα volume είναι φάκελος, όχι αρχείο.
 
-Τα τρία volumes είναι απαραίτητα:
+Μετά:
 
-| Volume | Γιατί |
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+Τα τρία mounts είναι απαραίτητα:
+
+| Mount | Γιατί |
 |---|---|
-| `config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
-| `/app/media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ |
-| `/app/stats.db` | τα στατιστικά 30 ημερών |
+| `./config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
+| `media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ |
+| `data` | το `stats.db` με τα στατιστικά 30 ημερών |
 
 Ο Caddy μένει στο host, με το ίδιο ακριβώς Caddyfile — δείχνει σε `localhost:8000` και
 `localhost:8001`, που τώρα είναι published ports του container. Το `ufw` το ίδιο.

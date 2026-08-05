@@ -1,0 +1,20 @@
+services:
+  stream:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "1935:1935"
+      - "8000:8000"
+      # Μόνο στο loopback του host: το admin UI δεν έχει δικό του auth, το κάνει
+      # ο Caddy. Χωρίς το 127.0.0.1: θα ήταν ορθάνοιχτο στο internet.
+      - "127.0.0.1:8001:8001"
+    volumes:
+      # Ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται
+      # σε κάθε recreate και ακυρώνονται όλα τα tokens.
+      - ./config.json:/app/config.json
+      - media:/app/media
+      - data:/app/data
+
+volumes:
+  media:
+  data:

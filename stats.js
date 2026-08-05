@@ -30,6 +30,11 @@ function isLocal(session) {
 }
 
 export function startStats(nms, config) {
+  // Το SQLite δεν φτιάχνει τον φάκελο μόνο του, και σε Docker το db ζει σε
+  // volume (./data/stats.db) που στο πρώτο boot είναι άδειο.
+  if (config.admin.db !== ":memory:") {
+    fs.mkdirSync(path.dirname(config.admin.db), { recursive: true });
+  }
   const db = new DatabaseSync(config.admin.db);
   db.exec(`
     PRAGMA journal_mode = WAL;
