@@ -19,6 +19,33 @@ git checkout master
 Και τα δύο επιβιώνουν reboot — `pm2 startup`/`pm2 save` στο ένα, restart policy του
 compose στο άλλο.
 
+### Με cloud-init
+
+Το script είναι ήδη non-interactive και τρέχει ως root, οπότε μπαίνει αυτούσιο σε
+`runcmd` — όλο το στήσιμο γίνεται στο πρώτο boot του VM:
+
+```yaml
+#cloud-config
+package_update: true
+packages: [git]
+runcmd:
+  - export HOME=/root
+  - git clone -b master https://github.com/pointergr/node-media-server.git /opt/node-media-server
+  - cd /opt/node-media-server && ./install stream.example.com --docker
+```
+
+- **Το `HOME=/root` το θέλει ρητά.** Το `runcmd` δεν εγγυάται `$HOME`· αν λείπει, το
+  volta γράφει σε λάθος path και το `pm2 startup --hp "$HOME"` στήνει σπασμένο unit.
+  Στο `--docker` δεν παίζει ρόλο, στο bare-metal είναι η διαφορά μεταξύ «σηκώνεται
+  μετά από reboot» και «δεν σηκώνεται».
+- **Δώσε πρώτα το DNS.** Το cloud-init τρέχει στο πρώτο boot· αν το A record δεν
+  δείχνει ακόμα στην IP, ο Caddy αποτυγχάνει στο ACME challenge. Ανακάμπτει μόνος του,
+  αλλά μην κάνεις rebuild το VM στο μεταξύ — καις rate limit της Let's Encrypt.
+- **Οι κωδικοί τυπώνονται μία φορά,** στο `/var/log/cloud-init-output.log`. Εκεί
+  βλέπεις και αν πέτυχε όλο το install.
+- **Σε cloud-init προτίμησε το `--docker`:** το bare-metal path κάνει `apt install -y
+  caddy`, που θέλει το repo της Caddy — υπάρχει στο Debian, όχι στα σκέτα Ubuntu images.
+
 ## Docker
 
 Το compose σηκώνει και τον Caddy, οπότε δεν χρειάζεται τίποτα στο host πέρα από
