@@ -9,13 +9,20 @@ apt install git -y
 git clone https://github.com/pointergr/node-media-server.git
 cd node-media-server
 git checkout master
-./install server.example.com
+./install server.example.com            # ή: ./install server.example.com --docker
 ```
+
+Χωρίς `--docker` στήνεται στο μηχάνημα (caddy + volta/node 24 + pm2). Με `--docker`
+εγκαθιστά τον Docker και σηκώνει το compose· τα κοινά (ζώνη ώρας, ufw, clone,
+`config.json`, κωδικοί) είναι τα ίδια και στα δύο. Η μόνη διαφορά στο firewall είναι
+το 8000: ανοίγει μόνο χωρίς Docker, γιατί στο compose ο admin δεν δημοσιεύει θύρα.
+Και τα δύο επιβιώνουν reboot — `pm2 startup`/`pm2 save` στο ένα, restart policy του
+compose στο άλλο.
 
 ## Docker
 
 Το compose σηκώνει και τον Caddy, οπότε δεν χρειάζεται τίποτα στο host πέρα από
-Docker και τα δύο DNS records.
+Docker και τα δύο DNS records. Χειροκίνητα, αν δεν χρησιμοποιήσεις το `./install --docker`:
 
 ```bash
 cp .env.example .env               # βάλε μέσα το DOMAIN σου
@@ -23,6 +30,18 @@ cp config.example.json config.json # χωρίς αυτό το bind mount φτι�
 docker compose up -d --build
 docker compose logs -f
 ```
+
+Μετά από reboot σηκώνονται μόνα τους: τα services έχουν `restart: unless-stopped`.
+Προϋπόθεση είναι να ξεκινάει ο ίδιος ο Docker στο boot — μια φορά, στον server
+(το `./install --docker` το κάνει ήδη):
+
+```bash
+sudo systemctl enable --now docker
+```
+
+(Το `unless-stopped` δεν ξαναπιάνει container που το σταμάτησες ρητά με
+`docker compose stop` πριν το reboot — αυτό είναι το ζητούμενο, `docker compose up -d`
+το ξαναφέρνει.)
 
 Καμία χειροκίνητη αλλαγή στο `config.json`: το compose δίνει `ADMIN_HOST` και `ADMIN_DB`
 ως environment variables.

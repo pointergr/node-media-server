@@ -1,12 +1,17 @@
 #!/bin/bash
+set -e
 
 # Έλεγχος αν δόθηκε το hostname ως παράμετρος
 if [ -z "$1" ]; then
-  echo "Χρήση: $0 <hostname>"
+  echo "Χρήση: $0 <hostname> [--docker]"
   exit 1
 fi
 
 HOSTNAME=$1
+DOCKER=""
+if [ "$2" = "--docker" ]; then DOCKER=1; fi
+
+# ── Κοινά ──────────────────────────────────────────────────────────────────
 
 # Αυτόματη επιλογή ζώνης ώρας
 echo 'tzdata tzdata/Areas select Europe' | debconf-set-selections
@@ -15,20 +20,50 @@ echo 'tzdata tzdata/Zones/Europe select Athens' | debconf-set-selections
 # Ορισμός του DEBIAN_FRONTEND για μη διαδραστική εγκατάσταση
 export DEBIAN_FRONTEND=noninteractive
 
-# Ενημέρωση και εγκατάσταση των απαραίτητων πακέτων
 apt update
 apt upgrade -y
-apt install -y caddy git ffmpeg ufw curl
+apt install -y git ufw curl
 
-# Ενεργοποίηση του firewall
+# Ενεργοποίηση του firewall. Το 8000 μόνο χωρίς Docker: στο compose ο admin δεν
+# δημοσιεύει θύρα, τον φτάνεις μέσω Caddy.
 ufw allow 22
 ufw allow 80
 ufw allow 443
-ufw allow 8000
 ufw allow 1935
+if [ -z "$DOCKER" ]; then ufw allow 8000; fi
 ufw default deny incoming
 ufw default allow outgoing
 ufw --force enable
+
+# Το README λέει clone-και-μετά-./install, οπότε συνήθως είμαστε ήδη μέσα στο repo.
+if [ ! -f config.example.json ]; then
+  git clone https://github.com/pointergr/node-media-server.git
+  cd node-media-server
+fi
+cp config.example.json config.json
+
+# ── Docker ─────────────────────────────────────────────────────────────────
+
+if [ -n "$DOCKER" ]; then
+  curl -fsSL https://get.docker.com | sh
+  # Χωρίς αυτό δεν ξανασηκώνεται τίποτα μετά από reboot: το restart policy των
+  # containers παίζει μόνο αν ξεκινάει ο ίδιος ο daemon στο boot.
+  systemctl enable --now docker
+
+  sed "s/^DOMAIN=.*/DOMAIN=$HOSTNAME/" .env.example > .env
+  docker compose up -d --build
+
+  # Οι κωδικοί γράφονται στο mounted config.json, που διαβάζεται μόνο στο boot.
+  docker compose exec -T stream npm run generate-passwords "$HOSTNAME"
+  docker compose restart stream
+
+  echo "Ο streaming server εγκαταστάθηκε σε Docker και ξεκίνησε επιτυχώς!"
+  exit 0
+fi
+
+# ── Χωρίς Docker ───────────────────────────────────────────────────────────
+
+apt install -y caddy ffmpeg
 
 # Εγκατάσταση volta.sh (το node:sqlite του admin θέλει node 24)
 curl https://get.volta.sh | bash
@@ -38,10 +73,6 @@ sleep 3
 volta install node@24
 volta install npm@bundled
 
-# Κλωνοποίηση και εγκατάσταση του stream server
-git clone https://github.com/pointergr/node-media-server.git
-cd node-media-server
-cp config.example.json config.json
 npm install
 
 # Εγκατάσταση του pm2
@@ -59,6 +90,12 @@ systemctl restart caddy
 
 # Ξεκινάμε τον server σαν pm2 process
 pm2 start app.js --name stream
+
+# Επιβίωση μετά από reboot — το αντίστοιχο του restart policy του compose. Το
+# startup στήνει το systemd unit (τρέχουμε ως root), το save γράφει τη λίστα των
+# process που θα ξαναπιάσει· χωρίς το save το unit σηκώνεται άδειο.
+pm2 startup systemd -u root --hp "$HOME"
+pm2 save
 
 # Μήνυμα ολοκλήρωσης
 echo "Ο streaming server εγκαταστάθηκε και ξεκίνησε επιτυχώς!"
