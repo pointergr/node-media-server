@@ -27,7 +27,7 @@
   "auth": {
     "play": false,
     "publish": true,
-    "secret": "aCY5z3Rv3g3N",
+    "secret": "MySuperSecret",
     "jwt": {
       "secret": "",
       "expiresIn": "24h",
@@ -35,7 +35,7 @@
       "users": [
         {
           "username": "admin",
-          "password": "i%}zV;45iR",
+          "password": "MySuperPassword",
           "role": "admin"
         }
       ]

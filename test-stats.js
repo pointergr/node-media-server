@@ -11,7 +11,7 @@ const nms = {
 
 // Ένα HTTP request στο HLS, όπως έρχεται από τον Caddy. Γυρνάει το cookie που
 // έστειλε ο server, ώστε το επόμενο request να μπορεί να το ξαναδώσει.
-const hlsHit = (url, ip, { cookie, bytes = 0 } = {}) => {
+const hlsHit = (url, ip, { cookie, bytes = 0, ua = "Chrome" } = {}) => {
   const out = {};
   const res = {
     h: [],
@@ -19,7 +19,7 @@ const hlsHit = (url, ip, { cookie, bytes = 0 } = {}) => {
     setHeader(k, v) { out[k] = v; },
     getHeader: () => bytes,
   };
-  nms.onRequest({ url, headers: { "x-forwarded-for": ip, cookie }, socket: {} }, res);
+  nms.onRequest({ url, headers: { "x-forwarded-for": ip, cookie, "user-agent": ua }, socket: {} }, res);
   res.h.forEach((fn) => fn());
   return out["Set-Cookie"]?.split(";")[0];
 };
@@ -96,6 +96,12 @@ assert.equal(snapshot().streams[0].viewers, 1, "το cookie αντικαθιστ
 hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=aaa" });
 hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=bbb" });
 assert.equal(snapshot().streams[0].viewers, 3, "τρεις players πίσω από μία IP");
+
+// Δύο browsers στον ίδιο υπολογιστή, σε ξένο origin (δεν κρατούν το cookie):
+// ίδια IP, διαφορετικό User-Agent
+hlsHit("/live/stream/index.m3u8", "6.6.6.6", { ua: "Firefox" });
+hlsHit("/live/stream/index.m3u8", "6.6.6.6", { ua: "Safari" });
+assert.equal(snapshot().streams[0].viewers, 5, "δύο browsers, ίδια IP, δύο θεατές");
 
 hlsHit("/live/stream/1-0.ts", "5.5.5.5", { bytes: 400_000 });
 await tick();

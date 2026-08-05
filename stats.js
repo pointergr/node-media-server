@@ -104,15 +104,19 @@ export function startStats(nms, config) {
     const seen = hlsSeen.get(stream) ?? new Map();
     hlsSeen.set(stream, seen);
 
+    // Χωρίς cookie: είτε πρώτο request, είτε client που δεν κρατάει cookies (wrk,
+    // curl, cross-origin player χωρίς credentials — το hls.js σε ξένο origin δεν
+    // αποθηκεύει καν το Set-Cookie). Κλειδί IP+User-Agent, ώστε να μην μετράει
+    // καινούριος θεατής σε κάθε request.
+    // ponytail: δύο tabs του ίδιου browser μετρούν ως ένας θεατής· για ακριβή
+    // μέτρηση χρειάζεται token στο URL του playlist από τον player.
+    const key = `${ip}|${req.headers["user-agent"] ?? ""}`;
     if (token) {
-      seen.delete(ip); // το πρώτο request αυτού του player είχε μετρηθεί με την IP
+      seen.delete(key); // το πρώτο request αυτού του player είχε μετρηθεί με IP+UA
       seen.set(token, Date.now());
       return;
     }
-    // Χωρίς cookie: είτε πρώτο request, είτε client που δεν κρατάει cookies (wrk,
-    // curl, cross-origin player χωρίς credentials). Κλειδί η IP, ώστε να μην
-    // μετράει καινούριος θεατής σε κάθε request — υποβαθμίζεται σε μέτρηση ανά IP.
-    seen.set(ip, Date.now());
+    seen.set(key, Date.now());
     res.setHeader(
       "Set-Cookie",
       `nmsv=${crypto.randomUUID()}; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax`
