@@ -172,6 +172,30 @@ https://stream.example.com/live/stream/index.m3u8
 segments βγαίνουν μεγαλύτερα από το `hls_time` και αυξάνει το latency. Το path του ffmpeg
 ρυθμίζεται στο `config.json` (`hls.ffmpeg`). Λάθη του ffmpeg φαίνονται στο `pm2 logs stream`.
 
+### Δοκιμή χωρίς OBS
+
+```bash
+npm run test-stream                              # bare metal
+docker compose exec stream npm run test-stream   # Docker
+```
+
+Εκπέμπει τις χρωματικές μπάρες του ffmpeg (`testsrc`) με συνθετικό ήχο, φτιάχνοντας μόνο
+του το `sign` από το `config.json`. Αποδεικνύει σε ένα βήμα ότι δουλεύουν RTMP, publish
+auth, ffmpeg και HLS — χωρίς να ανοίξεις OBS. Ctrl-C για τερματισμό.
+
+Με το δημόσιο hostname περνάει από έξω, οπότε ελέγχει και Caddy, DNS και στατιστικά:
+
+```bash
+docker compose exec stream npm run test-stream -- rtmp.stream.example.com
+```
+
+Η διαφορά μετράει: ό,τι έρχεται από `127.0.0.1` το `stats.js` το θεωρεί δικό μας (όπως τον
+ffmpeg του HLS) και **δεν** το δείχνει στο admin. Από εξωτερικό IP εμφανίζεται κανονικά,
+με codec, ανάλυση και θεατές.
+
+Ο encoder χρησιμοποιεί `-g 60`, δηλαδή keyframe κάθε 2s στα 30fps — ακριβώς το
+Keyframe Interval = 2 που θέλει και το OBS.
+
 ### Segments στο R2 (προαιρετικό, αλλά ο σωστός τρόπος)
 
 Το ToS 2.8 της Cloudflare απαγορεύει το σερβίρισμα βίντεο μέσω του CDN σε non-Enterprise
