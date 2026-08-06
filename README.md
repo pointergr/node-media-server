@@ -323,6 +323,12 @@ plan — δηλαδή ακριβώς το κασάρισμα των `.ts`, πο�
 αργήσει πάνω από 2 δευτερόλεπτα, τα uploads μένουν πίσω και το latency μεγαλώνει μόνιμα —
 βγαίνει warning στο `pm2 logs stream`. Έλεγχος: `node test-r2.js`.
 
+Κάθε PUT κόβεται στα 5s και το `aws4fetch` περιορίζεται σε 2 retries: σε live, ένα segment
+που άργησε παραπάνω δεν το θέλει πια κανένας player, ενώ οι default 10 retries με
+exponential backoff θα πάγωναν το `index.m3u8` για ~50 δευτερόλεπτα — και χωρίς προθεσμία
+μια κολλημένη σύνδεση για λεπτά, χωρίς ούτε ένα log. Ο γύρος που αποτυγχάνει δεν δημοσιεύει
+playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί από το σημείο που είναι τότε το stream.
+
 ### Cloudflare cache rules
 
 Ο Caddyfile βάζει ήδη τα σωστά `Cache-Control`. Στο Cloudflare (Caching → Cache Rules)

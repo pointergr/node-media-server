@@ -9,7 +9,14 @@ import { startR2Sync } from "./r2.js";
 const config = await loadConfig();
 
 // Χωρίς credentials το R2 είναι off και τα segments σερβίρονται από εδώ, όπως πριν.
-const r2 = config.hls.r2?.accessKeyId ? config.hls.r2 : null;
+// Trailing slash στο endpoint ή στο publicUrl δίνει "//" στο key και 404 σε κάθε
+// segment, χωρίς κανένα ίχνος στα logs του server.
+const noSlash = (o) => ({
+  ...o,
+  endpoint: o.endpoint.replace(/\/+$/, ""),
+  publicUrl: o.publicUrl.replace(/\/+$/, ""),
+});
+const r2 = config.hls.r2?.accessKeyId ? noSlash(config.hls.r2) : null;
 
 // Το v4 παράγει jwt secret μόνο όταν τρέχει με το δικό του bin/app.js
 if (!config.auth.jwt.secret) {
@@ -65,7 +72,19 @@ nms.on("postPublish", (session) => {
   );
   ff.on("error", (err) => console.error(`HLS ffmpeg failed: ${err.message}`));
 
-  hlsJobs.set(session.streamPath, { ff, stop: r2 && startR2Sync(dir, session.streamPath, r2) });
+  const job = { ff, stop: r2 && startR2Sync(dir, session.streamPath, r2) };
+  hlsJobs.set(session.streamPath, job);
+
+  // Αν ο ffmpeg πεθάνει μόνος του (σφάλμα στο RTMP, OOM), το job πρέπει να φύγει
+  // από τον χάρτη: αλλιώς ο έλεγχος παραπάνω μπλοκάρει κάθε νέο job και το HLS
+  // μένει νεκρό μέχρι να αποσυνδεθεί ο publisher — σιωπηλά, με τον watcher του R2
+  // ανοιχτό. Στο κανονικό κλείσιμο το donePublish έχει ήδη σβήσει το entry.
+  ff.on("exit", (code) => {
+    if (hlsJobs.get(session.streamPath) !== job) return;
+    console.error(`HLS ffmpeg ${session.streamPath}: exit ${code}`);
+    job.stop?.();
+    hlsJobs.delete(session.streamPath);
+  });
 });
 
 nms.on("donePublish", (session) => {
