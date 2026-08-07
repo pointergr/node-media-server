@@ -21,7 +21,8 @@ const RANGES = {
   "30d": [2592000, 7200],
 };
 
-const VIDEO_CODECS = { 7: "H.264", 12: "H.265", 13: "AV1" };
+// Με enhanced RTMP το videocodecid του onMetaData είναι ο fourCC ως αριθμός
+const VIDEO_CODECS = { 7: "H.264", 12: "H.265", 13: "AV1", 0x61766331: "H.264", 0x68766331: "H.265", 0x61763031: "AV1" };
 const AUDIO_CODECS = { 2: "MP3", 7: "G711a", 8: "G711u", 10: "AAC" };
 
 // Το session.ip είναι "host:port" (rtmp_session.js:30), οπότε κόβουμε το port.

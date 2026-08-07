@@ -5,17 +5,30 @@ import fs from "fs";
 import { loadConfig, saveConfig } from "./config.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
+import { patchAvc1 } from "./ertmp.js";
+
+patchAvc1();
 
 const config = await loadConfig();
 
 // Χωρίς credentials το R2 είναι off και τα segments σερβίρονται από εδώ, όπως πριν.
 // Trailing slash στο endpoint ή στο publicUrl δίνει "//" στο key και 404 σε κάθε
 // segment, χωρίς κανένα ίχνος στα logs του server.
-const noSlash = (o) => ({
-  ...o,
-  endpoint: o.endpoint.replace(/\/+$/, ""),
-  publicUrl: o.publicUrl.replace(/\/+$/, ""),
-});
+// Και τα δύο είναι placeholders στο config.example.json. Αν μείνουν ασυμπλήρωτα
+// ενώ το accessKeyId είναι γεμάτο, ο server σηκώνεται κανονικά και το μόνο ίχνος
+// είναι ένα "Invalid URL" ανά segment από το aws4fetch — ενώ το index.m3u8 δεν
+// γράφεται ποτέ και δεν παίζει τίποτα. Καλύτερα να μη σηκωθεί καθόλου.
+const noSlash = (o) => {
+  const clean = {
+    ...o,
+    endpoint: (o.endpoint ?? "").replace(/\/+$/, ""),
+    publicUrl: (o.publicUrl ?? "").replace(/\/+$/, ""),
+  };
+  for (const key of ["endpoint", "publicUrl"]) {
+    if (!URL.canParse(clean[key])) throw new Error(`config.hls.r2.${key}: "${o[key]}" δεν είναι έγκυρο URL`);
+  }
+  return clean;
+};
 const r2 = config.hls.r2?.accessKeyId ? noSlash(config.hls.r2) : null;
 
 // Το v4 παράγει jwt secret μόνο όταν τρέχει με το δικό του bin/app.js
