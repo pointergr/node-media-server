@@ -216,7 +216,41 @@ pm2 logs stream
 cd node-media-server
 git pull
 npm install         # μόνο αν άλλαξαν dependencies
-pm2 restart stream  # σε Docker: docker compose up -d --build
+pm2 restart stream
+```
+
+### Σε Docker
+
+```bash
+cd node-media-server
+git pull
+docker compose up -d --build
+docker compose logs -f stream    # Ctrl-C· τα logs συνεχίζουν χωρίς αυτό
+```
+
+Χωρίς `npm install`: το `COPY package.json` + `npm install` είναι μέσα στο Dockerfile και
+το `--build` τα ξανατρέχει. Χωρίς `--build` το compose ξανασηκώνει το **παλιό** image και
+δεν αλλάζει τίποτα — είναι το πιο συνηθισμένο «έκανα deploy και δεν άλλαξε τίποτα».
+
+**Κόβει την εκπομπή.** Το `--build` κάνει recreate το container, οπότε πέφτει το RTMP: το
+OBS ξανασυνδέεται μόνο του σε λίγα δευτερόλεπτα, οι θεατές τρώνε ένα κενό στο HLS και το
+`media` volume κρατάει τα segments της προηγούμενης εκπομπής μέχρι να τα σβήσει ο νέος
+ffmpeg. Κάνε deploy εκτός εκπομπής.
+
+Τι επιβιώνει: το `config.json` (bind mount, εκτός git — το `git pull` δεν το αγγίζει) και
+τα named volumes `data` (στατιστικά, κωδικοί), `caddy-data` (certificates), `media`.
+
+Αν άλλαξε **μόνο** το `Caddyfile`, δεν χρειάζεται build — είναι bind mount:
+
+```bash
+docker compose restart caddy
+```
+
+Έλεγχος μετά το deploy:
+
+```bash
+docker compose exec stream npm test
+docker compose exec stream npm run test-stream -- rtmp.stream.example.com
 ```
 
 Σε server που εγκαταστάθηκε **πριν** βγει το `config.example.json`, το `config.json` είναι
