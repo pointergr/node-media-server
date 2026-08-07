@@ -26,6 +26,8 @@ export function startR2Sync(dir, streamPath, r2) {
   });
 
   const uploaded = new Set();
+  // Τα bytes όσων δεν ανέβηκαν ακόμα — δες το σχόλιο στο sync().
+  const cache = new Map();
   const src = `${dir}/ff.m3u8`;
   const dst = `${dir}/index.m3u8`;
   let stopped = false;
@@ -46,6 +48,7 @@ export function startR2Sync(dir, streamPath, r2) {
     });
     if (!res.ok) throw new Error(`PUT ${name} -> ${res.status} ${await res.text()}`);
     uploaded.add(name);
+    cache.delete(name);
   };
 
   // Το playlist γράφεται *μετά* τα uploads: αλλιώς ο player διαβάζει ένα segment
@@ -53,15 +56,24 @@ export function startR2Sync(dir, streamPath, r2) {
   const sync = async () => {
     const started = Date.now();
     const playlist = fs.readFileSync(src, "utf8");
-    // Διαβάζουμε όλα τα segments πριν από το πρώτο upload: ο ffmpeg σβήνει το
-    // παλιότερο του παραθύρου δύο segments αργότερα (4s με hls_time 2), οπότε
-    // ένας αργός γύρος θα έβρισκε ENOENT και θα χανόταν ολόκληρος — ακριβώς τη
-    // στιγμή που είμαστε ήδη πίσω. Έτσι το «πίσω» κοστίζει latency, όχι playlist.
-    const pending = playlistSegments(playlist)
-      .filter((name) => !uploaded.has(name))
-      .map((name) => [name, fs.readFileSync(`${dir}/${name}`)]);
+    // Διαβάζουμε όλα τα segments πριν από το πρώτο upload: ο ffmpeg σβήνει όσα
+    // βγαίνουν από το παράθυρο, οπότε ένας αργός γύρος θα έβρισκε ENOENT και θα
+    // χανόταν ολόκληρος — ακριβώς τη στιγμή που είμαστε ήδη πίσω. Έτσι το «πίσω»
+    // κοστίζει latency, όχι playlist.
+    const names = playlistSegments(playlist);
+    const pending = names.filter((name) => !uploaded.has(name));
+    // Και τα κρατάμε μέχρι να ανέβουν: ένα PUT που σκάει (timeout, 503) ξαναδοκιμάζεται
+    // στον επόμενο γύρο, αλλά ως τότε ο ffmpeg μπορεί να έχει σβήσει το αρχείο.
+    // Χωρίς το cache, το ENOENT έριχνε *κάθε* επόμενο γύρο όσο το όνομα ήταν ακόμα
+    // στο playlist: ένα αργό PUT πάγωνε το index.m3u8 για δευτερόλεπτα, όχι για έναν
+    // γύρο, και ο θεατής άδειαζε τον buffer του.
+    for (const name of pending) {
+      if (!cache.has(name)) cache.set(name, fs.readFileSync(`${dir}/${name}`));
+    }
+    // Ό,τι βγήκε από το παράθυρο δεν το ζητάει πια κανείς — μην κρατάς τη μνήμη.
+    for (const name of cache.keys()) if (!names.includes(name)) cache.delete(name);
     // Παράλληλα: ο γύρος που προλαβαίνει στοιχίζει ένα RTT, όχι τρία.
-    await Promise.all(pending.map(([name, body]) => put(name, body)));
+    await Promise.all(pending.map((name) => put(name, cache.get(name))));
     // Ο φάκελος μπορεί να ανήκει ήδη στην επόμενη εκπομπή: ίδιο path, άλλα
     // segments. Χωρίς αυτό ο καθυστερημένος γύρος δημοσιεύει το playlist της
     // προηγούμενης, που υπάρχει ακόμα στο R2 και παίζει κανονικά.
