@@ -67,6 +67,16 @@ nms.on("postPublish", (session) => {
     config.hls.ffmpeg,
     [
       "-i", `rtmp://127.0.0.1:${config.rtmp.port}${session.streamPath}`,
+      // Το OBS βάζει SPS/PPS in-band μόνο στο *πρώτο* keyframe — στα υπόλοιπα τα
+      // έχει μόνο το avcC. Το h264_mp4toannexb, που βάζει το ίδιο το mpegts muxer,
+      // τα βλέπει εκεί, σηκώνει τα idr_sps_seen/idr_pps_seen και δεν τα ξαναβάζει
+      // ποτέ: μόνο το segment 0 βγαίνει με παραμέτρους. Όποιος μπαίνει στο live
+      // edge δεν παίρνει ούτε ανάλυση ούτε profile και βλέπει μαύρο — ενώ όποιος
+      // ήταν συνδεδεμένος από την αρχή παίζει κανονικά και δεν το καταλαβαίνει.
+      // Το ρητό mp4toannexb γυρίζει το extradata σε annex-b, και το dump_extra
+      // (freq=keyframe by default) το ξαναγράφει πριν από κάθε keyframe. Σκέτο
+      // dump_extra δεν κάνει: χώνει AVCC bytes σε annex-b stream και σκάει.
+      "-bsf:v", "h264_mp4toannexb,dump_extra",
       "-c", "copy",
       "-f", "hls",
       "-hls_time", "2",
