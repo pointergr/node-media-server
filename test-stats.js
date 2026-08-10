@@ -11,7 +11,7 @@ const nms = {
 
 // Ένα HTTP request στο HLS, όπως έρχεται από τον Caddy. Γυρνάει το cookie που
 // έστειλε ο server, ώστε το επόμενο request να μπορεί να το ξαναδώσει.
-const hlsHit = (url, ip, { cookie, bytes = 0, ua = "Chrome" } = {}) => {
+const hlsHit = (srv, url, ip, { cookie, bytes = 0, ua = "Chrome" } = {}) => {
   const out = {};
   const res = {
     h: [],
@@ -19,7 +19,7 @@ const hlsHit = (url, ip, { cookie, bytes = 0, ua = "Chrome" } = {}) => {
     setHeader(k, v) { out[k] = v; },
     getHeader: () => bytes,
   };
-  nms.onRequest({ url, headers: { "x-forwarded-for": ip, cookie, "user-agent": ua }, socket: {} }, res);
+  srv.onRequest({ url, headers: { "x-forwarded-for": ip, cookie, "user-agent": ua }, socket: {} }, res);
   res.h.forEach((fn) => fn());
   return out["Set-Cookie"]?.split(";")[0];
 };
@@ -82,28 +82,28 @@ for (const row of db.prepare("SELECT * FROM samples").all()) {
 assert.equal(snapshot().streams[0].viewers, 0, "ο θεατής έφυγε");
 
 // Client χωρίς cookies (wrk, curl): όσα requests κι αν κάνει, μετράει ως ένας
-const cookie = hlsHit("/live/stream/index.m3u8", "5.5.5.5");
-hlsHit("/live/stream/index.m3u8", "5.5.5.5");
-hlsHit("/live/stream/index.m3u8", "5.5.5.5");
+const cookie = hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5");
+hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5");
+hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5");
 assert.ok(cookie?.startsWith("nmsv="), "το πρώτο request παίρνει cookie");
 assert.equal(snapshot().streams[0].viewers, 1, "ένας client χωρίς cookie = ένας θεατής");
 
 // Ο ίδιος player ξαναέρχεται με το cookie του: δεν διπλομετριέται
-hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie });
+hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5", { cookie });
 assert.equal(snapshot().streams[0].viewers, 1, "το cookie αντικαθιστά τη μέτρηση με IP");
 
 // Δύο συσκευές πίσω από το ίδιο NAT: ίδια IP, διαφορετικά cookies
-hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=aaa" });
-hlsHit("/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=bbb" });
+hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=aaa" });
+hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5", { cookie: "nmsv=bbb" });
 assert.equal(snapshot().streams[0].viewers, 3, "τρεις players πίσω από μία IP");
 
 // Δύο browsers στον ίδιο υπολογιστή, σε ξένο origin (δεν κρατούν το cookie):
 // ίδια IP, διαφορετικό User-Agent
-hlsHit("/live/stream/index.m3u8", "6.6.6.6", { ua: "Firefox" });
-hlsHit("/live/stream/index.m3u8", "6.6.6.6", { ua: "Safari" });
+hlsHit(nms, "/live/stream/index.m3u8", "6.6.6.6", { ua: "Firefox" });
+hlsHit(nms, "/live/stream/index.m3u8", "6.6.6.6", { ua: "Safari" });
 assert.equal(snapshot().streams[0].viewers, 5, "δύο browsers, ίδια IP, δύο θεατές");
 
-hlsHit("/live/stream/1-0.ts", "5.5.5.5", { bytes: 400_000 });
+hlsHit(nms, "/live/stream/1-0.ts", "5.5.5.5", { bytes: 400_000 });
 await tick();
 sample();
 assert.ok(db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1).out_bps > 0, "τα bytes του HLS μπαίνουν στο out_bps");
@@ -125,6 +125,106 @@ assert.equal((await fetch(url)).status, 401, "χωρίς credentials δεν πε
 assert.equal((await fetch(url, { headers: creds("admin", "λάθος") })).status, 401, "λάθος κωδικός");
 assert.equal((await fetch(url, { headers: creds("λάθος", "μυστικό") })).status, 401, "λάθος χρήστης");
 assert.equal((await fetch(url, { headers: creds("admin", "μυστικό") })).status, 200, "σωστά credentials");
+assert.equal(
+  (await (await fetch(url, { headers: creds("admin", "μυστικό") })).json()).r2Estimate, false,
+  "χωρίς config.hls.r2 ο εκτιμητής δεν είναι ενεργός"
+);
+
+// --- εκτιμητής εξόδου R2 (addR2Out) -----------------------------------------
+// Όταν το R2 είναι ενεργό τα .ts δεν αγγίζουν ποτέ αυτόν τον server (τα σερβίρει
+// το CDN) — ο εκτιμητής παίρνει bitrate εξόδου από bytes segment × ενεργοί HLS
+// θεατές. Δύο ξεχωριστά instances, ένα με R2 off κι ένα με R2 on: το r2Active
+// αποφασίζεται μία φορά στο startStats() από το config.
+function freshStats(hls) {
+  const fakeNms = {
+    h: {},
+    on(event, fn) { (this.h[event] ??= []).push(fn); },
+    emit(event, s) { (this.h[event] ?? []).forEach((fn) => fn(s)); },
+    httpServer: { httpServer: { prependListener(event, fn) { fakeNms.onRequest = fn; } } },
+  };
+  const s = startStats(fakeNms, {
+    admin: { port: 0, db: ":memory:" },
+    auth: { jwt: { users: [{ username: "admin", password: "x" }] } },
+    ...(hls && { hls }),
+  });
+  return { nms: fakeNms, ...s };
+}
+
+// R2 off: ο εκτιμητής δεν πρέπει να προσθέσει τίποτα — τα .ts μετρώνται ήδη
+// πραγματικά από το trackHls, ένας δεύτερος πολλαπλασιασμός θα διπλομετρούσε.
+// Αυτό είναι το πιο σοβαρό σφάλμα που θα μπορούσε να γίνει εδώ.
+{
+  const s = freshStats(null);
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+  s.sample();
+  s.addR2Out("/live/stream", "seg-0.ts", 1_000_000);
+  await tick();
+  s.sample();
+  assert.equal(
+    s.db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1).out_bps, 0,
+    "εκτιμητής off όταν το R2 είναι off — καμία διπλομέτρηση"
+  );
+  s.server.close();
+}
+
+// R2 on
+{
+  const s = freshStats({ r2: { accessKeyId: "key" } });
+  await tick(); // ο http server χρειάζεται έναν γύρο του event loop για να δεσμεύσει port
+  const liveUrl = `http://127.0.0.1:${s.server.address().port}/admin/api/live`;
+  assert.equal(
+    (await (await fetch(liveUrl, { headers: creds("admin", "x") })).json()).r2Estimate, true,
+    "με config.hls.r2.accessKeyId ο εκτιμητής είναι ενεργός"
+  );
+
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+
+  // Μηδέν θεατές -> μηδέν bytes, καθαρή περίπτωση
+  s.sample();
+  s.addR2Out("/live/stream", "seg-0.ts", 1_000_000);
+  await tick();
+  s.sample();
+  assert.equal(
+    s.db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1).out_bps, 0,
+    "μηδέν HLS θεατές -> μηδέν bytes από τον εκτιμητή"
+  );
+
+  // Δύο θεατές μέσω requests στο playlist (ίδιο μηχανισμό με hlsSeen)
+  hlsHit(s.nms, "/live/stream/index.m3u8", "9.9.9.9", { cookie: "nmsv=a" });
+  hlsHit(s.nms, "/live/stream/index.m3u8", "9.9.9.9", { cookie: "nmsv=b" });
+
+  // Πολλαπλασιασμός bytes × θεατές: ανάγουμε το out_bps πίσω σε bytes μέσω του
+  // πραγματικού dt (μετρημένου γύρω από τα δείγματα) για να τον επαληθεύσουμε.
+  s.sample();
+  let t0 = Date.now();
+  s.addR2Out("/live/stream", "seg-1.ts", 300_000);
+  await tick();
+  let t1 = Date.now();
+  s.sample();
+  let row = s.db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1);
+  let impliedBytes = (row.out_bps * (t1 - t0) / 1000) / 8;
+  assert.ok(
+    Math.abs(impliedBytes - 300_000 * 2) < 300_000 * 2 * 0.3,
+    `bytes × θεατές: αναμενόταν ~${300_000 * 2}, βγήκε ~${Math.round(impliedBytes)}`
+  );
+
+  // Retry του ίδιου segment (π.χ. sync() που ξανατρέχει): μετράει μία φορά, όχι δύο
+  s.sample();
+  t0 = Date.now();
+  s.addR2Out("/live/stream", "seg-2.ts", 200_000);
+  s.addR2Out("/live/stream", "seg-2.ts", 200_000); // ίδιο όνομα
+  await tick();
+  t1 = Date.now();
+  s.sample();
+  row = s.db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1);
+  impliedBytes = (row.out_bps * (t1 - t0) / 1000) / 8;
+  assert.ok(
+    Math.abs(impliedBytes - 200_000 * 2) < 200_000 * 2 * 0.3,
+    `retry ίδιου segment μετράει μία φορά: αναμενόταν ~${200_000 * 2}, βγήκε ~${Math.round(impliedBytes)}`
+  );
+
+  s.server.close();
+}
 
 console.log("stats.js OK");
 process.exit(0);

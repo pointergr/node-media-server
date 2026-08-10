@@ -251,15 +251,21 @@
     const viewers = d.streams.reduce((a, s) => a + s.viewers, 0);
     const inBps = d.streams.reduce((a, s) => a + s.in_bps, 0);
     const outBps = d.streams.reduce((a, s) => a + s.out_bps, 0);
+    // Με R2 ενεργό το out_bps είναι εκτίμηση (bytes segment × θεατές) — τα .ts
+    // σερβίρονται από το CDN και δεν αγγίζουν ποτέ αυτόν τον server. Δείχνε το.
+    const outLabel = d.r2Estimate ? "Bitrate εξόδου (εκτ.)" : "Bitrate εξόδου";
+    const outTitle = d.r2Estimate
+      ? ` title="Εκτίμηση: τα .ts segments σερβίρονται από το R2, όχι μέτρηση πραγματικής κίνησης"`
+      : "";
     el("tiles").innerHTML = [
-      ["Streams", d.streams.length],
-      ["Θεατές", viewers],
-      ["Bitrate εισόδου", bps(inBps)],
-      ["Bitrate εξόδου", bps(outBps)],
-      ["Uptime", dur(d.server.uptime)],
-      ["Μνήμη", d.server.rss_mb + " <small>MB</small>"],
-    ].map(([label, value]) =>
-      `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
+      ["Streams", d.streams.length, ""],
+      ["Θεατές", viewers, ""],
+      ["Bitrate εισόδου", bps(inBps), ""],
+      [outLabel, bps(outBps), outTitle],
+      ["Uptime", dur(d.server.uptime), ""],
+      ["Μνήμη", d.server.rss_mb + " <small>MB</small>", ""],
+    ].map(([label, value, title]) =>
+      `<div class="tile"${title}><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
 
     el("streams").innerHTML = table(
       [{ label: "Stream" }, { label: "Πηγή" }, { label: "Βίντεο" }, { label: "Ήχος" },

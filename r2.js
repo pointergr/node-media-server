@@ -13,7 +13,11 @@ export const playlistSegments = (playlist) =>
     .filter((line) => line && !line.startsWith("#"))
     .map((line) => line.split("/").pop());
 
-export function startR2Sync(dir, streamPath, r2) {
+// onUpload(name, bytes): κλήση μετά από κάθε *επιτυχημένο* PUT, για να τρέφει τον
+// εκτιμητή bitrate εξόδου του stats.js (τα segments δεν περνάνε ποτέ από το δικό
+// μας HTTP server όταν σερβίρονται από το R2). Το r2.js δεν κάνει require το
+// stats.js — δεν ξέρει καν ότι υπάρχει — το app.js περνάει το callback.
+export function startR2Sync(dir, streamPath, r2, onUpload) {
   const aws = new AwsClient({
     accessKeyId: r2.accessKeyId,
     secretAccessKey: r2.secretAccessKey,
@@ -49,6 +53,10 @@ export function startR2Sync(dir, streamPath, r2) {
     if (!res.ok) throw new Error(`PUT ${name} -> ${res.status} ${await res.text()}`);
     uploaded.add(name);
     cache.delete(name);
+    // uploaded.add() παραπάνω εγγυάται ότι ένα όνομα φτάνει εδώ μία μόνο φορά όσο
+    // ζει αυτό το sync: το pending στο sync() το φιλτράρει έξω μετά, οπότε ένα
+    // retry (π.χ. sync() που ξανατρέχει) δεν ξαναπερνάει από εδώ για το ίδιο name.
+    onUpload?.(name, body.length);
   };
 
   // Το playlist γράφεται *μετά* τα uploads: αλλιώς ο player διαβάζει ένα segment

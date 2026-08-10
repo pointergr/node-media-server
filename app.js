@@ -100,7 +100,13 @@ nms.on("postPublish", (session) => {
   );
   ff.on("error", (err) => console.error(`HLS ffmpeg failed: ${err.message}`));
 
-  const job = { ff, stop: r2 && startR2Sync(dir, session.streamPath, r2) };
+  const job = {
+    ff,
+    // Το bytes×θεατές τρέχει μέσα στο stats.js (αυτό ξέρει τους HLS θεατές) — το
+    // r2.js μόνο αναφέρει τι ανέβηκε, δεν κάνει require το stats.js.
+    stop: r2 && startR2Sync(dir, session.streamPath, r2, (name, bytes) =>
+      stats.addR2Out(session.streamPath, name, bytes)),
+  };
   hlsJobs.set(session.streamPath, job);
 
   // Αν ο ffmpeg πεθάνει μόνος του (σφάλμα στο RTMP, OOM), το job πρέπει να φύγει
@@ -122,6 +128,6 @@ nms.on("donePublish", (session) => {
   hlsJobs.delete(session.streamPath);
 });
 
-startStats(nms, config);
+const stats = startStats(nms, config);
 
 nms.run();

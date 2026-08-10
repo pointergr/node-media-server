@@ -92,6 +92,34 @@ export function startStats(nms, config) {
     [...liveSessions.values()].filter((s) => !s.isPublisher && s.streamPath === stream).length +
     hlsViewersOf(stream);
 
+  // Ίδια συνθήκη ενεργοποίησης με το app.js/r2.js: χωρίς accessKeyId τα .ts
+  // σερβίρονται ήδη από το origin, οπότε τα μετράει κανονικά το trackHls — ένας
+  // δεύτερος πολλαπλασιασμός εδώ θα διπλομετρούσε.
+  const r2Active = Boolean(config.hls?.r2?.accessKeyId);
+
+  // streamPath -> Set(όνομα segment) ήδη προσμετρημένο. Το r2.js δεν ξαναπροσπαθεί
+  // ένα όνομα που έχει ήδη ανέβει (uploaded Set στο r2.js), αλλά το κρατάμε και εδώ
+  // σαν δεύτερη γραμμή άμυνας — αν αλλάξει ποτέ η λογική retry εκεί, δεν θέλουμε
+  // ένα segment να μετρηθεί δύο φορές στο out_bps.
+  const r2Counted = new Map();
+
+  // Με R2 ενεργό το ffmpeg κάνει PUT τα segments κατευθείαν στο CDN — δεν
+  // περνάνε ποτέ από τον δικό μας HTTP server, οπότε το trackHls() δεν τα βλέπει
+  // ποτέ. Εκτίμηση αντί για μέτρηση: bytes του segment × ενεργοί HLS θεατές του
+  // stream (όχι RTMP/FLV θεατές — αυτοί δεν περνάνε από CDN ούτως ή άλλως).
+  // Υποεκτιμά όταν ένας θεατής μπει και τραβήξει μονομιάς όλο το παράθυρο των
+  // 12s (δεν έχει προλάβει ακόμα να «φανεί» σε τόσα segments όσα κατέβασε), και
+  // υπερεκτιμά όταν κάποιος κλείσει τον player μέσα στο παράθυρο HLS_TTL_MS των
+  // 30s (μετράει ακόμα σαν θεατής παρόλο που έφυγε).
+  function addR2Out(stream, name, bytes) {
+    if (!r2Active) return;
+    const counted = r2Counted.get(stream) ?? new Set();
+    r2Counted.set(stream, counted);
+    if (counted.has(name)) return; // retry/επαναϋποβολή του ίδιου segment
+    counted.add(name);
+    addOut(stream, bytes * hlsViewersOf(stream));
+  }
+
   function trackHls(req, res) {
     const p = req.url.split("?")[0];
     if (!p.endsWith(".m3u8") && !p.endsWith(".ts")) return;
@@ -129,7 +157,12 @@ export function startStats(nms, config) {
   function finish(session) {
     if (isLocal(session)) return;
     liveSessions.delete(session.id);
-    if (publishers.get(session.streamPath) === session) publishers.delete(session.streamPath);
+    if (publishers.get(session.streamPath) === session) {
+      publishers.delete(session.streamPath);
+      // Νέο publish σε αυτό το streamPath θα ξεκινήσει με νέο prefix (Date.now()
+      // στο app.js), άρα νέα ονόματα segments — τίποτα να ξαναχρησιμοποιηθεί εδώ.
+      r2Counted.delete(session.streamPath);
+    }
 
     // Τα bytes των κλειστών sessions συσσωρεύονται, αλλιώς το άθροισμα των live
     // πέφτει όταν αποχωρεί θεατής και βγαίνει αρνητικό bitrate.
@@ -228,6 +261,9 @@ export function startStats(nms, config) {
         rss_mb: Number((process.memoryUsage().rss / 1048576).toFixed(1)),
         node: process.version,
       },
+      // Το dashboard το χρειάζεται για να μην παρουσιάσει το out_bps σαν μέτρηση
+      // ενώ είναι εκτίμηση (δες addR2Out παραπάνω).
+      r2Estimate: r2Active,
     };
   }
 
@@ -312,5 +348,5 @@ export function startStats(nms, config) {
     console.log(`Admin listening on ${host}:${config.admin.port}`);
   });
 
-  return { sample, snapshot, series, db, server };
+  return { sample, snapshot, series, db, server, addR2Out };
 }
