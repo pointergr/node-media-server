@@ -94,6 +94,7 @@
   <span class="dot" id="dot"></span>
   <h1>Stream server</h1>
   <span class="spacer"></span>
+  <button class="kill" id="restart">Restart</button>
   <div class="ranges" id="ranges"></div>
 </header>
 
@@ -237,6 +238,7 @@
 
   // --- data ------------------------------------------------------------------
   let range = "24h";
+  let liveStreamCount = 0; // το restart button το διαβάζει για να ξέρει τι μήνυμα να δείξει
 
   async function loadLive() {
     let d;
@@ -247,6 +249,7 @@
       return;
     }
     el("dot").className = "dot" + (d.streams.length ? " on" : "");
+    liveStreamCount = d.streams.length;
 
     const viewers = d.streams.reduce((a, s) => a + s.viewers, 0);
     const inBps = d.streams.reduce((a, s) => a + s.in_bps, 0);
@@ -325,6 +328,31 @@
       range = rangeBtn.dataset.range;
       for (const b of el("ranges").children) b.setAttribute("aria-pressed", b === rangeBtn);
       loadSeries();
+    }
+    if (ev.target.id === "restart") {
+      const msg = liveStreamCount
+        ? "Υπάρχει ενεργή εκπομπή — το restart θα την κόψει. Συνέχεια;"
+        : "Restart του server;";
+      if (!confirm(msg)) return;
+      const btn = ev.target;
+      btn.disabled = true;
+      btn.textContent = "γίνεται restart…";
+      await fetch("/admin/api/restart", { method: "POST" });
+      // Ο server τερματίζει λίγα ms μετά το 202 (πρώτα σκοτώνει τα ffmpeg jobs —
+      // δες app.js) και τον ξανασηκώνει ο supervisor. Poll μέχρι να ξαναπαντήσει,
+      // μετά reload — αλλιώς το UI μένει παγωμένο στο "γίνεται restart…".
+      const poll = setInterval(async () => {
+        try {
+          // Το status θέλει έλεγχο, όχι μόνο το ότι δεν πέταξε το fetch: όσο ο
+          // server είναι κάτω ο Caddy απαντάει 502 — κανονική απόκριση, οπότε
+          // σκέτο await θα έκανε reload πάνω στη σελίδα σφάλματος του Caddy.
+          const r = await fetch("/admin/api/live");
+          if (!r.ok) return;
+          clearInterval(poll);
+          location.reload();
+        } catch {}
+      }, 1000);
+      return;
     }
     const killBtn = ev.target.closest(".kill");
     if (killBtn) {

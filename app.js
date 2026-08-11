@@ -128,6 +128,23 @@ nms.on("donePublish", (session) => {
   hlsJobs.delete(session.streamPath);
 });
 
-const stats = startStats(nms, config);
+// Ο server δεν ξαναξεκινάει τον εαυτό του — τερματίζει καθαρά και τον ξανασηκώνει
+// ο supervisor (pm2 σε bare metal, restart: unless-stopped σε Docker). Πριν το
+// exit πρέπει να σκοτωθούν τα ffmpeg jobs: ένα ορφανό ffmpeg κρατάει κλειδωμένο
+// το streamPath (δες σχόλιο στο hlsJobs παραπάνω) και το HLS του νέου process
+// μένει νεκρό μέχρι να αποσυνδεθεί ο publisher. Ίδια συνάρτηση για Ctrl+C /
+// docker stop και για το κουμπί «Restart» του admin UI, ώστε να μην υπάρχουν
+// δύο διαφορετικοί δρόμοι προς το ίδιο cleanup.
+function shutdown() {
+  for (const job of hlsJobs.values()) {
+    job.ff.kill("SIGKILL");
+    job.stop?.();
+  }
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+const stats = startStats(nms, config, { onRestart: shutdown });
 
 nms.run();

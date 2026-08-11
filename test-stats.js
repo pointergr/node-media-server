@@ -135,7 +135,7 @@ assert.equal(
 // το CDN) — ο εκτιμητής παίρνει bitrate εξόδου από bytes segment × ενεργοί HLS
 // θεατές. Δύο ξεχωριστά instances, ένα με R2 off κι ένα με R2 on: το r2Active
 // αποφασίζεται μία φορά στο startStats() από το config.
-function freshStats(hls) {
+function freshStats(hls, opts) {
   const fakeNms = {
     h: {},
     on(event, fn) { (this.h[event] ??= []).push(fn); },
@@ -146,7 +146,7 @@ function freshStats(hls) {
     admin: { port: 0, db: ":memory:" },
     auth: { jwt: { users: [{ username: "admin", password: "x" }] } },
     ...(hls && { hls }),
-  });
+  }, opts);
   return { nms: fakeNms, ...s };
 }
 
@@ -222,6 +222,37 @@ function freshStats(hls) {
     Math.abs(impliedBytes - 200_000 * 2) < 200_000 * 2 * 0.3,
     `retry ίδιου segment μετράει μία φορά: αναμενόταν ~${200_000 * 2}, βγήκε ~${Math.round(impliedBytes)}`
   );
+
+  s.server.close();
+}
+
+// --- restart button (POST /admin/api/restart) -------------------------------
+// Το πραγματικό onRestart (process.exit) θα σκότωνε το test· εδώ το injected
+// callback απλά σημειώνει ότι κλήθηκε — το app.js δίνει το δικό του shutdown
+// (σκοτώνει τα ffmpeg jobs πρώτα) αντί για το default.
+{
+  let restarted = false;
+  const s = freshStats(null, { onRestart: () => { restarted = true; } });
+  await tick(); // ο http server χρειάζεται έναν γύρο του event loop για να δεσμεύσει port
+  const restartUrl = `http://127.0.0.1:${s.server.address().port}/admin/api/restart`;
+
+  assert.equal(
+    (await fetch(restartUrl, { method: "POST" })).status, 401,
+    "χωρίς credentials δεν κάνει restart"
+  );
+  assert.equal(restarted, false, "401 δεν καλεί το onRestart");
+
+  const res = await fetch(restartUrl, { method: "POST", headers: creds("admin", "x") });
+  assert.equal(res.status, 202, "το restart απαντάει 202 πριν το exit");
+  assert.equal(restarted, false, "το onRestart καλείται μετά την απάντηση, όχι πριν — αλλιώς ο browser βλέπει network error");
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(restarted, true, "το POST καλεί το injected onRestart");
+
+  restarted = false;
+  const getRes = await fetch(restartUrl, { headers: creds("admin", "x") }); // GET, όχι POST
+  assert.notEqual(getRes.status, 202, "GET στο ίδιο path δεν κάνει restart");
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(restarted, false, "GET δεν καλεί το onRestart");
 
   s.server.close();
 }

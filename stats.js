@@ -31,7 +31,10 @@ function isLocal(session) {
   return host === "127.0.0.1" || host === "::1" || host === "::ffff:127.0.0.1";
 }
 
-export function startStats(nms, config) {
+// onRestart: injectable ώστε το test να μην τερματίζει τον εαυτό του — σε
+// production είναι το graceful shutdown του app.js (σκοτώνει τα ffmpeg jobs
+// πριν το exit), εδώ απλά process.exit(0) γιατί δεν υπάρχουν jobs να ξέρει.
+export function startStats(nms, config, { onRestart = () => process.exit(0) } = {}) {
   // Τα env overrides υπάρχουν για το docker-compose: αλλιώς κάθε deployment θα
   // έπρεπε να πειράξει με το χέρι το mounted config.json.
   const dbPath = process.env.ADMIN_DB ?? config.admin.db;
@@ -301,6 +304,14 @@ export function startStats(nms, config) {
       if (!session) return json(res, 404, { error: "session not found" });
       session.close();
       return json(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && p === "/admin/api/restart") {
+      // 202 πρώτα, exit μετά: αν τερματίσουμε πριν απαντήσουμε, ο browser βλέπει
+      // network error (connection reset) αντί για επιτυχία — το UI δεν μπορεί να
+      // ξεχωρίσει αυτό από πραγματική αποτυχία του restart.
+      json(res, 202, { ok: true });
+      setTimeout(onRestart, 50);
+      return;
     }
     if (p === "/admin/api/live") return json(res, 200, snapshot());
     if (p === "/admin/api/series") return json(res, 200, series(url.searchParams.get("range")));
