@@ -5,7 +5,7 @@
   :root {
     color-scheme: light;
     --surface-1: #fcfcfb;
-    --plane: #f9f9f7;
+    --plane: #eeede8; /* πιο σκούρο από τις κάρτες, αλλιώς #f9f9f7 vs #fcfcfb δεν ξεχωρίζει */
     --text-primary: #0b0b0b;
     --text-secondary: #52514e;
     --muted: #898781;
@@ -13,6 +13,7 @@
     --axis: #c3c2b7;
     --border: rgba(11, 11, 11, .1);
     --good: #0ca30c;
+    --live: #d93a2b; /* ίδιο και στα δύο θέματα: πιο ανοιχτό κόκκινο πέφτει κάτω από 4.5:1 με λευκά γράμματα */
     --s1: #2a78d6;
     --s2: #eb6834;
     --s3: #1baf7a;
@@ -34,7 +35,8 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0;
+    margin: 0 auto;
+    max-width: 1600px; /* σε ultrawide τα charts γίνονται σύρματα και το preview τοίχος */
     padding: 24px;
     background: var(--plane);
     color: var(--text-primary);
@@ -53,13 +55,64 @@
   }
   button:hover { color: var(--text-primary); }
   button[aria-pressed=true] { color: var(--text-primary); border-color: var(--axis); font-weight: 600; }
+  /* Χωρίς δικό του padding/font-size: κληρονομεί των υπολοίπων, αλλιώς κάθεται πιο κοντό στη σειρά */
+  #restart { color: #fff; background: var(--live); border-color: var(--live); }
+  #restart:hover { color: #fff; filter: brightness(1.1); }
+  #restart:disabled { opacity: .65; cursor: default; filter: none; }
   .card {
     background: var(--surface-1); border: 1px solid var(--border);
     border-radius: 10px; padding: 16px; margin-bottom: 16px;
   }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+  /* Το min(100%,…) κρατάει το κάτω φράγμα κάτω από 400px σε κινητό, αλλιώς η
+     κάρτα ξεχειλίζει και σκάει οριζόντιο scroll. */
+  .hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 16px; margin-bottom: 16px; }
+  .hero:empty { display: none; }
+  .hero .card { padding: 0; margin: 0; overflow: hidden; container-type: inline-size; }
+  .head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .head a { color: inherit; font-weight: 600; text-decoration: none; }
+  .head a:hover { text-decoration: underline; }
+  .head .since { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .onair {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 5px;
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; color: #fff; background: var(--live);
+  }
+  .onair::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #fff; animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .2; } }
+  /* Σταθερό άνω φράγμα στο preview, ό,τι περισσεύει πάει στα νούμερα: με ένα μόνο
+     stream σε μεγάλη οθόνη το preview έπιανε όλο το πλάτος της κάρτας. */
+  /* minmax(0,1fr) και όχι 1fr: το αυτόματο κάτω φράγμα του 1fr είναι το min-content
+     του panel, δηλαδή και οι τέσσερις στήλες μαζί — έσπρωχνε το preview στα 276px. */
+  .body { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 1fr); }
+  .preview { position: relative; background: #000; aspect-ratio: 16 / 9; }
+  .preview video { width: 100%; height: 100%; display: block; object-fit: contain; }
+  .play {
+    position: absolute; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0;
+    background: transparent; color: #fff; font-size: 34px; opacity: .7; cursor: pointer;
+  }
+  .play:hover { opacity: 1; background: rgba(255, 255, 255, .07); color: #fff; }
+  /* 2x2 δίπλα σε άλλη κάρτα, 4 σε σειρά όταν είναι μόνη της — και στις δύο
+     περιπτώσεις κεντραρισμένα στον χώρο δεξιά από το preview.
+     Ρητό πλήθος στηλών με φράγμα πλάτους, όχι auto-fit με 1fr: τα 1fr απλώνουν τα
+     νούμερα σε όλο το πλάτος της κάρτας, ενώ definite max μέσα σε auto-fit αλλάζει
+     και το πλήθος των tracks. Το κεντράρισμα θέλει justify-content — margin auto ή
+     justify-self κάνουν το κουτί shrink-to-fit και ξεχειλίζει στις στενές κάρτες. */
+  .stat {
+    margin: 0; padding: 16px; align-content: center; justify-content: center;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 120px)); gap: 14px;
+  }
+  /* Container και όχι media query: το πλάτος της κάρτας το ορίζει το πλήθος των
+     streams, όχι μόνο το viewport. Το κατώφλι είναι εκεί που χωράνε 4 στήλες. */
+  @container (min-width: 1120px) {
+    .stat { grid-template-columns: repeat(4, minmax(0, 140px)); }
+  }
+  .stat dt { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .stat dd { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+  .meta { padding: 10px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); }
+  .quiet { color: var(--muted); text-align: center; padding: 30px; }
+  @media (max-width: 560px) { .body { grid-template-columns: minmax(0, 1fr); } }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 16px; }
   .tile .label { font-size: 12px; color: var(--muted); }
-  .tile .value { font-size: 26px; font-weight: 600; line-height: 1.2; }
+  .tile .value { font-size: 22px; font-weight: 600; line-height: 1.2; }
   .tile .value small { font-size: 14px; font-weight: 400; color: var(--text-secondary); }
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
   .chart { position: relative; }
@@ -94,16 +147,14 @@
   <span class="dot" id="dot"></span>
   <h1>Stream server</h1>
   <span class="spacer"></span>
-  <button class="kill" id="restart">Restart</button>
+  <button id="restart">Restart server</button>
   <div class="ranges" id="ranges"></div>
 </header>
 
-<div class="card tiles" id="tiles"></div>
+<div class="hero" id="hero"></div>
+<div class="card" id="no-stream" hidden><div class="quiet">Καμία ενεργή εκπομπή</div></div>
 
-<div class="card">
-  <h2>Ενεργά streams</h2>
-  <div class="scroll" id="streams"></div>
-</div>
+<div class="card tiles" id="tiles"></div>
 
 <div class="charts" id="charts">
   <div class="card"><h2>Bitrate εισόδου</h2><div class="chart" id="c-in"></div></div>
@@ -122,8 +173,11 @@
   <div class="scroll" id="past-sessions"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
-  const SLOTS = ["--s1", "--s2", "--s3"];
+  // Πορτοκαλί πρώτο: το ένα stream είναι η συνηθισμένη περίπτωση και το μπλε
+  // μένει έτσι αποκλειστικά για το CPU, που δεν είναι stream.
+  const SLOTS = ["--s2", "--s1", "--s3"];
   const streamColors = new Map(); // το χρώμα ακολουθεί το stream, όχι τη σειρά του
   const colorOf = (name) => {
     if (!streamColors.has(name)) {
@@ -156,6 +210,92 @@
     return `<table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table>`;
   }
 
+  // --- hero ------------------------------------------------------------------
+  // Οι κάρτες ζουν όσο ζει το stream και ενημερώνονται in place: με innerHTML σε
+  // κάθε refresh των 5s το <video> του preview θα ξεκινούσε από την αρχή.
+  const heroCards = new Map();
+
+  // Ο preview μετράει ως κανονικός HLS θεατής (cookie nmsv στο playlist), οπότε
+  // δεν ξεκινάει μόνος του — ένα dashboard ανοιχτό όλη μέρα θα φούσκωνε τους
+  // ίδιους αριθμούς που δείχνει.
+  function playPreview(video, src) {
+    if (!window.Hls?.isSupported()) {
+      // Safari: δεν έχει MSE για TS, αλλά παίζει HLS native
+      video.src = src;
+      return video.play().catch(() => {});
+    }
+    const hls = new Hls();
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    // Το πρώτο segment αργεί λίγο μετά το postPublish· χωρίς retry ένα κλικ πολύ
+    // νωρίς άφηνε μαύρο κουτί για πάντα.
+    hls.on(Hls.Events.ERROR, (_, d) => d.fatal && setTimeout(() => hls.loadSource(src), 3000));
+    hls.loadSource(src);
+    hls.attachMedia(video);
+    video.hls = hls;
+  }
+
+  function heroCard(stream) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="head">
+        <span class="onair">ON AIR</span>
+        <a href="/admin/player?stream=${encodeURIComponent(stream)}" target="_blank">${stream}</a>
+        <span class="spacer"></span>
+        <span class="since" data-k="since"></span>
+      </div>
+      <div class="body">
+        <div class="preview">
+          <video muted playsinline></video>
+          <button class="play" title="preview (μετράει ως θεατής)">▶</button>
+        </div>
+        <dl class="stat">
+          <div><dt>Θεατές</dt><dd data-k="viewers"></dd></div>
+          <div><dt data-k="outLabel">Έξοδος</dt><dd data-k="out"></dd></div>
+          <div><dt>Είσοδος</dt><dd data-k="in"></dd></div>
+          <div><dt>Ανάλυση</dt><dd data-k="resolution"></dd></div>
+        </dl>
+      </div>
+      <div class="meta" data-k="meta"></div>`;
+    card.querySelector(".play").onclick = (ev) => {
+      ev.target.remove();
+      playPreview(card.querySelector("video"), stream + "/index.m3u8");
+    };
+    return card;
+  }
+
+  function renderHero(streams, r2Estimate) {
+    for (const [stream, card] of heroCards) {
+      if (streams.some((s) => s.stream === stream)) continue;
+      card.querySelector("video").hls?.destroy(); // αλλιώς το hls.js συνεχίζει να ζητάει playlist
+      card.remove();
+      heroCards.delete(stream);
+    }
+    el("no-stream").hidden = streams.length > 0;
+    for (const s of streams) {
+      let card = heroCards.get(s.stream);
+      if (!card) {
+        heroCards.set(s.stream, card = heroCard(s.stream));
+        el("hero").append(card);
+      }
+      const set = (k, v) => card.querySelector(`[data-k="${k}"]`).textContent = v;
+      set("since", dur((Date.now() - s.since) / 1000));
+      set("viewers", s.viewers);
+      set("in", bps(s.in_bps));
+      set("out", bps(s.out_bps));
+      // Με R2 ενεργό το out_bps είναι εκτίμηση (bytes segment × θεατές) — τα .ts
+      // σερβίρονται από το CDN και δεν αγγίζουν ποτέ αυτόν τον server. Δείχνε το,
+      // με αστερίσκο και όχι με λεζάντα: το «(εκτ.)» δεν χωράει στη στήλη.
+      const outLabel = card.querySelector(`[data-k="outLabel"]`);
+      outLabel.textContent = r2Estimate ? "Έξοδος *" : "Έξοδος";
+      outLabel.title = r2Estimate
+        ? "Εκτίμηση: τα .ts segments σερβίρονται από το R2, όχι μέτρηση πραγματικής κίνησης"
+        : "";
+      set("resolution", s.resolution);
+      set("meta", `${s.video} · ${s.audio} · ${s.protocol} από ${s.ip}`);
+    }
+  }
+
   // --- chart -----------------------------------------------------------------
   function lineChart(host, series, fmt, from, to, bucket) {
     const live = series.filter((s) => s.points.length);
@@ -182,11 +322,9 @@
         fill="var(--muted)" font-size="11">${clock(t)}</text>`;
     }).join("");
 
-    const paths = live.map((s) => {
-      const d = s.points.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
-      return `<polyline points="${d}" fill="none" stroke="${s.color}" stroke-width="2"
-        stroke-linejoin="round" stroke-linecap="round"/>`;
-    }).join("");
+    const paths = live.map((s) =>
+      `<path d="${curve(s.points.map((p) => [x(p[0]), y(p[1])]))}" fill="none" stroke="${s.color}"
+        stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`).join("");
 
     const legend = live.length > 1
       ? `<div class="legend">` + live.map((s) =>
@@ -231,6 +369,21 @@
     svg.addEventListener("pointerleave", () => { tip.style.opacity = 0; cross.innerHTML = ""; });
   }
 
+  // Καμπύλη με control points τα ίδια τα δείγματα και άκρα τα μέσα των τμημάτων:
+  // κάθε τόξο μένει μέσα στο κυρτό περίβλημα δύο διαδοχικών σημείων, οπότε δεν
+  // εφευρίσκει ούτε κορυφές ούτε βυθίσματα κάτω από το μηδέν — μια Catmull-Rom θα
+  // ζωγράφιζε αρνητικό bitrate μετά από αιχμή. Τίμημα: η μεμονωμένη αιχμή
+  // στρογγυλεύει λίγο.
+  const xy = (p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+  function curve(pts) {
+    if (pts.length < 3) return "M" + pts.map(xy).join(" L");
+    let d = `M${xy(pts[0])}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      d += ` Q${xy(pts[i])} ${xy([(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2])}`;
+    }
+    return `${d} L${xy(pts.at(-1))}`;
+  }
+
   function niceMax(v) {
     const p = Math.pow(10, Math.floor(Math.log10(v)));
     return Math.ceil(v / p * 2) / 2 * p;
@@ -251,33 +404,17 @@
     el("dot").className = "dot" + (d.streams.length ? " on" : "");
     liveStreamCount = d.streams.length;
 
-    const viewers = d.streams.reduce((a, s) => a + s.viewers, 0);
-    const inBps = d.streams.reduce((a, s) => a + s.in_bps, 0);
-    const outBps = d.streams.reduce((a, s) => a + s.out_bps, 0);
-    // Με R2 ενεργό το out_bps είναι εκτίμηση (bytes segment × θεατές) — τα .ts
-    // σερβίρονται από το CDN και δεν αγγίζουν ποτέ αυτόν τον server. Δείχνε το.
-    const outLabel = d.r2Estimate ? "Bitrate εξόδου (εκτ.)" : "Bitrate εξόδου";
-    const outTitle = d.r2Estimate
-      ? ` title="Εκτίμηση: τα .ts segments σερβίρονται από το R2, όχι μέτρηση πραγματικής κίνησης"`
-      : "";
-    el("tiles").innerHTML = [
-      ["Streams", d.streams.length, ""],
-      ["Θεατές", viewers, ""],
-      ["Bitrate εισόδου", bps(inBps), ""],
-      [outLabel, bps(outBps), outTitle],
-      ["Uptime", dur(d.server.uptime), ""],
-      ["Μνήμη", d.server.rss_mb + " <small>MB</small>", ""],
-    ].map(([label, value, title]) =>
-      `<div class="tile"${title}><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
+    renderHero(d.streams, d.r2Estimate);
 
-    el("streams").innerHTML = table(
-      [{ label: "Stream" }, { label: "Πηγή" }, { label: "Βίντεο" }, { label: "Ήχος" },
-      { label: "Θεατές", num: 1 }, { label: "Είσοδος", num: 1 }, { label: "Έξοδος", num: 1 }, { label: "Διάρκεια", num: 1 }],
-      d.streams.map((s) => [
-        `<a href="/admin/player?stream=${encodeURIComponent(s.stream)}" target="_blank"><b>${s.stream}</b></a>`,
-        `${s.protocol} · ${s.ip}`, `${s.video} ${s.resolution}`, s.audio,
-        s.viewers, bps(s.in_bps), bps(s.out_bps), dur((Date.now() - s.since) / 1000),
-      ]));
+    // Μόνο αθροίσματα και server εδώ — τα νούμερα ανά stream τα δείχνει η κάρτα.
+    el("tiles").innerHTML = [
+      ["Streams", d.streams.length],
+      ["Θεατές", d.streams.reduce((a, s) => a + s.viewers, 0)],
+      ["Συνδέσεις", d.sessions.length],
+      ["Uptime", dur(d.server.uptime)],
+      ["Μνήμη", d.server.rss_mb + " <small>MB</small>"],
+    ].map(([label, value]) =>
+      `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
 
     el("live-sessions").innerHTML = table(
       [{ label: "Stream" }, { label: "Τύπος" }, { label: "Πρωτόκολλο" }, { label: "IP" },
