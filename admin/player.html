@@ -55,7 +55,11 @@
 <script>
   const el = (id) => document.getElementById(id);
   const video = el("video"), input = el("path"), out = el("status");
-  let hls, retry;
+  let hls, retry, stall, current;
+
+  // Πόσο αντέχουμε ένα waiting που δεν κλείνει — δες το onwaiting παρακάτω. Αρκετά
+  // πάνω από τα 2s του segment, ώστε ένα κανονικό rebuffer να μη μετράει ως κοπή.
+  const STALL_MS = 10000;
 
   function say(msg, bad) {
     out.textContent = msg;
@@ -63,7 +67,24 @@
     el("dot").className = "dot" + (bad ? "" : " on");
   }
 
-  video.onplaying = () => say(`live · ${video.videoWidth}x${video.videoHeight}`);
+  video.onplaying = () => {
+    clearTimeout(stall);
+    say(`live · ${video.videoWidth}x${video.videoHeight}`);
+  };
+
+  // Restart του OBS: το postPublish σβήνει τον φάκελο κι ο ffmpeg ξαναρχίζει από
+  // media sequence 0 με καινούριο timeline. Ο hls.js δεν το θεωρεί σφάλμα — απλώς
+  // βάζει τα νέα fragments πίσω από το currentTime και η αναπαραγωγή κολλάει για
+  // πάντα, χωρίς ποτέ fatal error να πιάσει το ERROR handler. Το μόνο αξιόπιστο
+  // σημάδι είναι ένα waiting που δεν κλείνει, και ξεκολλάει μόνο με καινούριο Hls
+  // (το loadSource πάνω στο ίδιο instance κρατάει το παλιό timeline).
+  video.onwaiting = () => {
+    clearTimeout(stall);
+    stall = setTimeout(() => {
+      say("το stream κόπηκε, επανασύνδεση…", true);
+      load(current);
+    }, STALL_MS);
+  };
 
   // Το stream μπορεί να μην εκπέμπει ακόμα: ξαναδοκιμάζουμε αντί να πεθάνει η σελίδα.
   function later(src) {
@@ -73,7 +94,9 @@
 
   function load(src) {
     clearTimeout(retry);
+    clearTimeout(stall);
     hls?.destroy();
+    current = src;
     say("σύνδεση…");
 
     // Πρώτα το hls.js, μετά το native — ποτέ ανάποδα. Το canPlayType δεν είναι

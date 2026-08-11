@@ -219,6 +219,12 @@
   // δεν ξεκινάει μόνος του — ένα dashboard ανοιχτό όλη μέρα θα φούσκωνε τους
   // ίδιους αριθμούς που δείχνει.
   function playPreview(video, src) {
+    stopPreview(video);
+    // Το πρώτο segment αργεί λίγο μετά το postPublish· χωρίς retry ένα κλικ πολύ
+    // νωρίς άφηνε μαύρο κουτί για πάντα. Ξαναπερνάει από εδώ, δεν κάνει σκέτο
+    // loadSource: μετά από restart του OBS το playlist ξαναρχίζει από media
+    // sequence 0 με καινούριο timeline, που μόνο καινούριο Hls το καθαρίζει.
+    const again = () => video.retry = setTimeout(() => playPreview(video, src), 3000);
     if (!window.Hls?.isSupported()) {
       // Safari: δεν έχει MSE για TS, αλλά παίζει HLS native
       video.src = src;
@@ -226,12 +232,25 @@
     }
     const hls = new Hls();
     hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
-    // Το πρώτο segment αργεί λίγο μετά το postPublish· χωρίς retry ένα κλικ πολύ
-    // νωρίς άφηνε μαύρο κουτί για πάντα.
-    hls.on(Hls.Events.ERROR, (_, d) => d.fatal && setTimeout(() => hls.loadSource(src), 3000));
+    hls.on(Hls.Events.ERROR, (_, d) => d.fatal && again());
     hls.loadSource(src);
     hls.attachMedia(video);
     video.hls = hls;
+    // Το κόλλημα μετά από restart του publisher δεν βγάζει fatal error — φαίνεται
+    // μόνο ως waiting που δεν κλείνει ποτέ. Δες και το player.html.
+    video.onplaying = () => clearTimeout(video.stall);
+    video.onwaiting = () => {
+      clearTimeout(video.stall);
+      video.stall = setTimeout(again, 10000);
+    };
+  }
+
+  // Το hls.js συνεχίζει να ζητάει playlist όσο ζει, και τα timers ξαναστήνουν
+  // player πάνω σε <video> που έχει ήδη φύγει από το DOM.
+  function stopPreview(video) {
+    video.hls?.destroy();
+    clearTimeout(video.retry);
+    clearTimeout(video.stall);
   }
 
   function heroCard(stream) {
@@ -267,7 +286,7 @@
   function renderHero(streams, r2Estimate) {
     for (const [stream, card] of heroCards) {
       if (streams.some((s) => s.stream === stream)) continue;
-      card.querySelector("video").hls?.destroy(); // αλλιώς το hls.js συνεχίζει να ζητάει playlist
+      stopPreview(card.querySelector("video"));
       card.remove();
       heroCards.delete(stream);
     }
