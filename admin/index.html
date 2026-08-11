@@ -171,6 +171,7 @@
 <div class="card">
   <h2>Πρόσφατες συνδέσεις</h2>
   <div class="scroll" id="past-sessions"></div>
+  <button id="more-past" hidden></button>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
@@ -464,15 +465,19 @@
     }], (v) => v.toFixed(0) + "%", d.from, to, d.bucket);
   }
 
+  let pastLimit = 15; // το API δίνει 100· δείχνουμε λίγες και ξεδιπλώνει ο χρήστης
+
   async function loadPast() {
     const rows = await (await fetch("/admin/api/sessions")).json();
     el("past-sessions").innerHTML = table(
       [{ label: "Stream" }, { label: "Τύπος" }, { label: "Πρωτόκολλο" }, { label: "IP" },
       { label: "Έναρξη" }, { label: "Διάρκεια", num: 1 }, { label: "Λήψη", num: 1 }, { label: "Αποστολή", num: 1 }],
-      rows.map((r) => [
+      rows.slice(0, pastLimit).map((r) => [
         r.stream, r.publisher ? "publisher" : "θεατής", r.protocol, r.ip,
         clock(r.start_ts), dur(r.end_ts - r.start_ts), bytes(r.in_bytes), bytes(r.out_bytes),
       ]));
+    el("more-past").hidden = rows.length <= pastLimit;
+    el("more-past").textContent = `περισσότερες συνδέσεις (${rows.length - pastLimit})`;
   }
 
   el("ranges").innerHTML = ["1h", "24h", "7d", "30d"].map((r) =>
@@ -508,6 +513,11 @@
           location.reload();
         } catch {}
       }, 1000);
+      return;
+    }
+    if (ev.target.id === "more-past") {
+      pastLimit = Infinity;
+      loadPast();
       return;
     }
     const killBtn = ev.target.closest(".kill");
