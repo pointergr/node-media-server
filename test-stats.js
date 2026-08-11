@@ -150,6 +150,20 @@ function freshStats(hls, opts) {
   return { nms: fakeNms, ...s };
 }
 
+// Το πρώτο δείγμα ενός νέου stream πρέπει να δίνει ήδη bitrate: το prev μπαίνει
+// στο postPublish, όχι στο πρώτο sample(). Αλλιώς το dashboard δείχνει «0 bps»
+// μέχρι το δεύτερο δείγμα — δύο ολόκληρα SAMPLE_MS μετά από κάθε restart.
+{
+  const s = freshStats(null);
+  const pub = session({ isPublisher: true });
+  s.nms.emit("postPublish", pub);
+  pub.inBytes = 500_000;
+  await tick();
+  s.sample();
+  assert.ok(s.snapshot().streams[0].in_bps > 0, "το πρώτο δείγμα μετά το publish έχει ήδη bitrate");
+  s.server.close();
+}
+
 // R2 off: ο εκτιμητής δεν πρέπει να προσθέσει τίποτα — τα .ts μετρώνται ήδη
 // πραγματικά από το trackHls, ένας δεύτερος πολλαπλασιασμός θα διπλομετρούσε.
 // Αυτό είναι το πιο σοβαρό σφάλμα που θα μπορούσε να γίνει εδώ.

@@ -5,7 +5,11 @@ import { timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
-const SAMPLE_MS = 60_000;
+// Το dashboard κάνει poll ανά 5s: με δείγμα ανά 60s το bitrate έδειχνε «0 bps»
+// για ένα ολόκληρο λεπτό μετά από κάθε restart ή νέο publish. Τα buckets των
+// γραφημάτων είναι ≥60s, οπότε εκεί δεν αλλάζει τίποτα — απλώς μέσος όρος
+// περισσότερων δειγμάτων.
+const SAMPLE_MS = 10_000;
 const RETENTION_DAYS = 30;
 // Ο player ξαναζητά το playlist κάθε ~2s (hls_time). 30s αντέχει και ένα stall.
 const HLS_TTL_MS = 30_000;
@@ -69,13 +73,29 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
   const liveSessions = new Map(); // session.id -> session
   const publishers = new Map(); //   streamPath -> session
   const accBytes = new Map(); //     streamPath -> {in, out} από κλειστά sessions + HLS
-  const prevBytes = new Map(); //    streamPath -> {in, out} στο προηγούμενο δείγμα
+  const prevBytes = new Map(); //    streamPath -> {in, out, ts} στο προηγούμενο δείγμα
   const lastBps = new Map(); //      streamPath -> {in_bps, out_bps}
   const hlsSeen = new Map(); //      streamPath -> Map(ip -> τελευταίο request σε ms)
   let prevCpu = process.cpuUsage();
   let prevTs = Date.now();
 
   const closed = (stream) => accBytes.get(stream) ?? { in: 0, out: 0 };
+
+  // Τρέχον σωρευτικό σύνολο του stream: ανοιχτά sessions + ό,τι έχει κλείσει.
+  // Ίδιος υπολογισμός στο sample() και στο seed του postPublish — αν αποκλίνουν,
+  // το πρώτο δείγμα ενός stream βγάζει σκουπίδια.
+  function curBytes(stream) {
+    const acc = closed(stream);
+    let inB = acc.in;
+    let outB = acc.out;
+    for (const s of liveSessions.values()) {
+      if (s.streamPath !== stream) continue;
+      inB += s.inBytes;
+      outB += s.outBytes;
+    }
+    return { in: inB, out: outB };
+  }
+
   const addOut = (stream, bytes) => {
     const acc = closed(stream);
     accBytes.set(stream, { in: acc.in, out: acc.out + bytes });
@@ -188,6 +208,12 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     if (isLocal(session)) return;
     publishers.set(session.streamPath, session);
     liveSessions.set(session.id, session);
+    // Χωρίς αρχικό δείγμα εδώ, το πρώτο sample() αυτού του stream έβγαζε πάντα 0
+    // (prev = cur) και το bitrate εμφανιζόταν μόνο στο δεύτερο. Σε re-publish
+    // υπάρχει ήδη prev — τα bytes είναι σωρευτικά, η συνέχεια δεν σπάει.
+    if (!prevBytes.has(session.streamPath)) {
+      prevBytes.set(session.streamPath, { ...curBytes(session.streamPath), ts: Date.now() });
+    }
   });
   nms.on("postPlay", (session) => {
     if (isLocal(session)) return;
@@ -203,22 +229,17 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     prevTs = now;
     if (dt <= 0) return;
 
-    const totals = new Map();
-    for (const session of liveSessions.values()) {
-      const t = totals.get(session.streamPath) ?? { in: 0, out: 0 };
-      t.in += session.inBytes;
-      t.out += session.outBytes;
-      totals.set(session.streamPath, t);
-    }
-
     for (const stream of publishers.keys()) {
-      const t = totals.get(stream) ?? { in: 0, out: 0 };
-      const acc = closed(stream);
-      const cur = { in: t.in + acc.in, out: t.out + acc.out };
-      const prev = prevBytes.get(stream) ?? cur;
-      const in_bps = Math.max(0, Math.round(((cur.in - prev.in) * 8) / dt));
-      const out_bps = Math.max(0, Math.round(((cur.out - prev.out) * 8) / dt));
-      prevBytes.set(stream, cur);
+      const cur = curBytes(stream);
+      const prev = prevBytes.get(stream) ?? { ...cur, ts: now };
+      // Το παράθυρο μετριέται ανά stream, όχι από το προηγούμενο tick: ένα stream
+      // που ξεκίνησε στη μέση του διαστήματος αλλιώς βγάζει bitrate διαιρεμένο με
+      // ολόκληρο το SAMPLE_MS αντί για τον χρόνο που όντως εκπέμπει.
+      const sdt = (now - prev.ts) / 1000;
+      const bps = (delta) => (sdt > 0 ? Math.max(0, Math.round((delta * 8) / sdt)) : 0);
+      const in_bps = bps(cur.in - prev.in);
+      const out_bps = bps(cur.out - prev.out);
+      prevBytes.set(stream, { ...cur, ts: now });
       lastBps.set(stream, { in_bps, out_bps });
       insertSample.run(ts, stream, viewersOf(stream), in_bps, out_bps);
     }
