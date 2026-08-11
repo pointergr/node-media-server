@@ -2,6 +2,14 @@ services:
   stream:
     build: .
     restart: unless-stopped
+    # Το default json-file δεν κάνει rotate: ή σκάει ο δίσκος, ή —όταν σκάσει—
+    # σβήνεις το container και μαζί όλο το ιστορικό. 250MB φτάνουν για μέρες.
+    # Προσοχή: επιβιώνουν του `restart`, όχι του `down` (νέο container).
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     environment:
       # Ο admin πρέπει να είναι προσιτός από το container του Caddy, όχι μόνο από
       # το loopback του δικού του. Δεν δημοσιεύεται θύρα προς τα έξω, και το basic

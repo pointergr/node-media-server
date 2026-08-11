@@ -40,8 +40,8 @@ const write = (...segs) => {
   fs.writeFileSync(`${dir}/ff.m3u8`, playlist(...segs));
 };
 
-const until = async (fn) => {
-  for (let i = 0; i < 100 && !fn(); i++) await new Promise((r) => setTimeout(r, 20));
+const until = async (fn, tries = 100) => {
+  for (let i = 0; i < tries && !fn(); i++) await new Promise((r) => setTimeout(r, 20));
   return fn();
 };
 
@@ -84,6 +84,24 @@ fs.writeFileSync(`${dir}/ff.m3u8`, playlist("1-2.ts", "1-3.ts"));
 assert.ok(
   await until(() => fs.readFileSync(dst, "utf8") === playlist("1-2.ts", "1-3.ts")),
   "ο επόμενος γύρος ανεβάζει το segment που είχε αποτύχει, χωρίς το αρχείο"
+);
+
+// Ο περιοδικός γύρος, χωρίς κανένα νέο event από το fs.watch: το ff.m3u8 δεν το
+// αγγίζει κανείς μετά την αποτυχία, οπότε μόνο το interval μπορεί να ξεπαγώσει
+// το index.m3u8. Χωρίς αυτό, ένα inotify watch που πεθαίνει σιωπηλά αφήνει το
+// playlist στην τελευταία επιτυχημένη έκδοση για όλη την εκπομπή.
+failing = "1-6.ts";
+write("1-5.ts", "1-6.ts");
+assert.ok(await until(() => attempts >= 6), "το PUT του 1-6.ts απέτυχε");
+assert.equal(
+  fs.readFileSync(dst, "utf8"),
+  playlist("1-2.ts", "1-3.ts"),
+  "όσο αποτυγχάνει, το playlist δεν προχωράει"
+);
+failing = null;
+assert.ok(
+  await until(() => fs.readFileSync(dst, "utf8") === playlist("1-5.ts", "1-6.ts"), 250),
+  "ο περιοδικός γύρος δημοσίευσε χωρίς event από το watch"
 );
 
 // stop() στη μέση ενός γύρου: μέχρι να τελειώσει το PUT, ο φάκελος μπορεί να

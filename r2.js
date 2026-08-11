@@ -35,6 +35,8 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
   const src = `${dir}/ff.m3u8`;
   const dst = `${dir}/index.m3u8`;
   let stopped = false;
+  // Ό,τι έχει ήδη δημοσιευτεί: ο γύρος που δεν αλλάζει τίποτα δεν ξαναγράφει.
+  let published = null;
 
   const put = async (name, body) => {
     const res = await aws.fetch(`${r2.endpoint}/${r2.bucket}${streamPath}/${name}`, {
@@ -63,6 +65,9 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
   // που δεν έχει ανέβει ακόμα στο R2 και τρώει 404.
   const sync = async () => {
     const started = Date.now();
+    // Ο ffmpeg δεν έχει γράψει ακόμα playlist (πρώτο segment, ή respawn μετά από
+    // rmSync). Χωρίς αυτό ο περιοδικός γύρος παρακάτω γεμίζει τα logs με ENOENT.
+    if (!fs.existsSync(src)) return;
     const playlist = fs.readFileSync(src, "utf8");
     // Διαβάζουμε όλα τα segments πριν από το πρώτο upload: ο ffmpeg σβήνει όσα
     // βγαίνουν από το παράθυρο, οπότε ένας αργός γύρος θα έβρισκε ENOENT και θα
@@ -85,8 +90,14 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
     // Ο φάκελος μπορεί να ανήκει ήδη στην επόμενη εκπομπή: ίδιο path, άλλα
     // segments. Χωρίς αυτό ο καθυστερημένος γύρος δημοσιεύει το playlist της
     // προηγούμενης, που υπάρχει ακόμα στο R2 και παίζει κανονικά.
-    if (stopped) return;
-    fs.writeFileSync(dst, playlist);
+    if (stopped || playlist === published) return;
+    // Το writeFileSync είναι open(O_TRUNC) και μετά write: όποιος player ζητήσει
+    // το playlist ανάμεσα στις δύο κλήσεις παίρνει 0 bytes και ο hls.js πεθαίνει
+    // με levelParsingError. Ίδιος λόγος που ο ffmpeg γράφει με temp_file — και
+    // αυτό εδώ είναι το αρχείο που ζητάνε στ' αλήθεια οι θεατές.
+    fs.writeFileSync(`${dst}.tmp`, playlist);
+    fs.renameSync(`${dst}.tmp`, dst);
+    published = playlist;
     // Αν ένας γύρος αργεί περισσότερο από το hls_time, τα uploads δεν προλαβαίνουν
     // τον ffmpeg και το latency μεγαλώνει μόνιμα. Είναι το μόνο σημείο που σπάει
     // σιωπηλά, γι' αυτό ουρλιάζει.
@@ -98,13 +109,27 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
   // .tmp και κάνει rename, οπότε ένα watch πάνω στο αρχείο θα χανόταν στο πρώτο
   // κιόλας update. Οι φορτώσεις μπαίνουν σε σειρά — το sync δεν είναι reentrant.
   let chain = Promise.resolve();
-  const watcher = fs.watch(dir, (_, file) => {
-    if (file !== "ff.m3u8") return;
+  const queue = () => {
     chain = chain.then(sync).catch((err) => console.error(`R2 sync ${streamPath}: ${err.message}`));
+  };
+  const watcher = fs.watch(dir, (_, file) => {
+    if (file === "ff.m3u8") queue();
   });
+  // Χωρίς listener, ένα σφάλμα του watcher βγαίνει ως uncaught exception και
+  // ρίχνει ολόκληρο τον server — μαζί και τα streams που δεν έφταιγαν σε τίποτα.
+  watcher.on("error", (err) => console.error(`R2 watch ${streamPath}: ${err.message}`));
+
+  // Το fs.watch είναι το γρήγορο μονοπάτι, όχι το μόνο. Ένας γύρος που πέταξε
+  // (PUT 5xx, timeout) αφήνει το index.m3u8 στην προηγούμενη έκδοση μέχρι το
+  // επόμενο event, κι ένα inotify watch που πεθαίνει σιωπηλά — όριο συστήματος,
+  // φάκελος που αντικαταστάθηκε — το παγώνει για πάντα, με τον ffmpeg να γράφει
+  // κανονικά δίπλα. Ο περιοδικός γύρος δεν κοστίζει τίποτα όταν δεν άλλαξε
+  // τίποτα: το sync() δεν ξαναγράφει ίδιο playlist.
+  const poll = setInterval(queue, 2000);
 
   return () => {
     stopped = true;
+    clearInterval(poll);
     watcher.close();
   };
 }

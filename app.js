@@ -44,29 +44,38 @@ const nms = new NodeMediaServer(config);
 // και δύο jobs στον ίδιο φάκελο γράφουν πάνω στο ίδιο ff.m3u8.
 const hlsJobs = new Map();
 
-nms.on("postPublish", (session) => {
-  // Το nms βγάζει postPublish *πριν* ελέγξει αν το path έχει ήδη publisher
-  // (broadcast_server.js:159 πριν το :160), και ο δεύτερος απορρίπτεται: το
-  // isPublisher του δεν γίνεται ποτέ true, οπότε στο close καλείται donePlay και
-  // donePublish δεν βγαίνει ποτέ γι' αυτόν. Χωρίς αυτόν τον έλεγχο, κάθε
-  // reconnect του OBS πάνω σε session που δεν έχει κλείσει ακόμα αφήνει ένα
-  // ζόμπι ffmpeg να γράφει για πάντα στο ίδιο ff.m3u8 — το index.m3u8 παίζει
-  // πινγκ-πονγκ ανάμεσα σε δύο άσχετες σειρές segments και κανένας player δεν
-  // προλαβαίνει να χτίσει buffer.
-  if (hlsJobs.has(session.streamPath)) return;
+// Το nms 4.2.8 δεν έχει κανένα socket timeout, keepalive ή ping — grep για
+// timeout|setKeepAlive|Ping|destroy σε όλο το src του βγάζει μηδέν. Ένα OBS που
+// χάνεται χωρίς FIN (blip, NAT timeout, 4G) κρατάει έτσι το streamPath
+// κατειλημμένο για πάντα: το broadcast.publisher δεν μηδενίζεται ποτέ, κάθε
+// reconnect απορρίπτεται με "already has a publisher" και μόνο restart το
+// ξεκολλάει. 15s χωρίς ούτε ένα byte από publisher σημαίνει νεκρή σύνδεση.
+const PUBLISH_IDLE_MS = 15_000;
 
-  const dir = `${config.static.root}${session.streamPath}`;
-  // Ο μετρητής των segments ξεκινάει από το 0 σε κάθε publish. Χωρίς μοναδικό
-  // prefix ανά συνεδρία, το CDN σερβίρει τα segments της προηγούμενης κάτω από
-  // τα ίδια ονόματα. Τα παλιά αρχεία φεύγουν, δεν τα πιάνει το delete_segments.
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
+// Ο ffmpeg μπορεί να πεθάνει μόνος του (σφάλμα στο RTMP, OOM) ενώ ο publisher
+// είναι μια χαρά. Το RTMP συνεχίζει να παίζει, οπότε τίποτα δεν φαίνεται
+// σπασμένο — απλώς το playlist παγώνει και μένει έτσι μέχρι να ξανασυνδεθεί το
+// OBS ή να γίνει restart ο server. Γι' αυτό ξανασηκώνεται μόνος του.
+const RESPAWN_MS = 2000;
+// Αν δεν αντέχει ούτε τόσο, το πρόβλημα δεν είναι παροδικό (λάθος codec, δίσκος
+// γεμάτος) και ο ατέρμονος βρόχος spawn απλώς καίει τη μηχανή.
+const RESPAWN_MIN_LIFE_MS = 5000;
+const RESPAWN_MAX = 5;
+
+// Ο φάκελος έχει ήδη ετοιμαστεί από το postPublish — εδώ μόνο ο ffmpeg, ώστε το
+// respawn να μη σβήνει τα segments που παίζουν αυτή τη στιγμή οι θεατές.
+function startFfmpeg(streamPath, job) {
+  const dir = `${config.static.root}${streamPath}`;
+  // Ο μετρητής των segments ξεκινάει από το 0 σε κάθε spawn. Χωρίς μοναδικό
+  // prefix, το CDN σερβίρει τα segments της προηγούμενης σειράς κάτω από τα ίδια
+  // ονόματα. Τα παλιά αρχεία φεύγουν, δεν τα πιάνει το delete_segments.
+  // Είναι και η ώρα γέννησης αυτού του ffmpeg — δες το exit παρακάτω.
   const prefix = Date.now();
 
   const ff = spawn(
     config.hls.ffmpeg,
     [
-      "-i", `rtmp://127.0.0.1:${config.rtmp.port}${session.streamPath}`,
+      "-i", `rtmp://127.0.0.1:${config.rtmp.port}${streamPath}`,
       // Το OBS βάζει SPS/PPS in-band μόνο στο *πρώτο* keyframe — στα υπόλοιπα τα
       // έχει μόνο το avcC. Το h264_mp4toannexb, που βάζει το ίδιο το mpegts muxer,
       // τα βλέπει εκεί, σηκώνει τα idr_sps_seen/idr_pps_seen και δεν τα ξαναβάζει
@@ -93,38 +102,74 @@ nms.on("postPublish", (session) => {
       // Με R2 το playlist το γράφει το r2.js: ο ffmpeg βγάζει το δικό του σε
       // ff.m3u8 με απόλυτα URLs, και δημοσιεύεται ως index.m3u8 μόλις ανέβουν
       // τα segments που δείχνει.
-      ...(r2 ? ["-hls_base_url", `${r2.publicUrl}${session.streamPath}/`] : []),
+      ...(r2 ? ["-hls_base_url", `${r2.publicUrl}${streamPath}/`] : []),
       `${dir}/${r2 ? "ff" : "index"}.m3u8`,
     ],
     { stdio: ["ignore", "ignore", "inherit"] }
   );
   ff.on("error", (err) => console.error(`HLS ffmpeg failed: ${err.message}`));
+  job.ff = ff;
+
+  ff.on("exit", (code) => {
+    // Ο ffmpeg που σκοτώσαμε εμείς (donePublish, shutdown, προηγούμενο respawn)
+    // δεν πρέπει να ξανασηκώνεται.
+    if (hlsJobs.get(streamPath) !== job || job.ff !== ff) return;
+    job.fails = Date.now() - prefix < RESPAWN_MIN_LIFE_MS ? job.fails + 1 : 0;
+    if (job.fails > RESPAWN_MAX) {
+      console.error(`HLS ffmpeg ${streamPath}: exit ${code}, ${job.fails} αποτυχίες στη σειρά — τα παρατάω`);
+      job.stop?.();
+      hlsJobs.delete(streamPath);
+      return;
+    }
+    console.error(`HLS ffmpeg ${streamPath}: exit ${code}, respawn σε ${RESPAWN_MS}ms`);
+    job.timer = setTimeout(() => startFfmpeg(streamPath, job), RESPAWN_MS);
+  });
+}
+
+nms.on("postPublish", (session) => {
+  // δες PUBLISH_IDLE_MS. Το v4 βγάζει postPublish και για τον publisher που θα
+  // απορρίψει· εκείνου το socket το κλείνει έτσι κι αλλιώς μόνο του.
+  if (session.protocol === "rtmp") {
+    session.socket.setTimeout(PUBLISH_IDLE_MS, () => {
+      console.error(`RTMP publisher ${session.streamPath} ${session.ip}: ${PUBLISH_IDLE_MS}ms χωρίς δεδομένα, κλείσιμο`);
+      session.socket.destroy();
+    });
+  }
+
+  // Το nms βγάζει postPublish *πριν* ελέγξει αν το path έχει ήδη publisher
+  // (broadcast_server.js:159 πριν το :160), και ο δεύτερος απορρίπτεται: το
+  // isPublisher του δεν γίνεται ποτέ true, οπότε στο close καλείται donePlay και
+  // donePublish δεν βγαίνει ποτέ γι' αυτόν. Χωρίς αυτόν τον έλεγχο, κάθε
+  // reconnect του OBS πάνω σε session που δεν έχει κλείσει ακόμα αφήνει ένα
+  // ζόμπι ffmpeg να γράφει για πάντα στο ίδιο ff.m3u8 — το index.m3u8 παίζει
+  // πινγκ-πονγκ ανάμεσα σε δύο άσχετες σειρές segments και κανένας player δεν
+  // προλαβαίνει να χτίσει buffer.
+  if (hlsJobs.has(session.streamPath)) return;
+
+  const dir = `${config.static.root}${session.streamPath}`;
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
 
   const job = {
-    ff,
+    ff: null,
+    timer: null,
+    fails: 0,
     // Το bytes×θεατές τρέχει μέσα στο stats.js (αυτό ξέρει τους HLS θεατές) — το
-    // r2.js μόνο αναφέρει τι ανέβηκε, δεν κάνει require το stats.js.
+    // r2.js μόνο αναφέρει τι ανέβηκε, δεν κάνει require το stats.js. Ζει όσο ο
+    // publisher, όχι όσο ένας ffmpeg: το respawn γράφει στον ίδιο φάκελο.
     stop: r2 && startR2Sync(dir, session.streamPath, r2, (name, bytes) =>
       stats.addR2Out(session.streamPath, name, bytes)),
   };
   hlsJobs.set(session.streamPath, job);
-
-  // Αν ο ffmpeg πεθάνει μόνος του (σφάλμα στο RTMP, OOM), το job πρέπει να φύγει
-  // από τον χάρτη: αλλιώς ο έλεγχος παραπάνω μπλοκάρει κάθε νέο job και το HLS
-  // μένει νεκρό μέχρι να αποσυνδεθεί ο publisher — σιωπηλά, με τον watcher του R2
-  // ανοιχτό. Στο κανονικό κλείσιμο το donePublish έχει ήδη σβήσει το entry.
-  ff.on("exit", (code) => {
-    if (hlsJobs.get(session.streamPath) !== job) return;
-    console.error(`HLS ffmpeg ${session.streamPath}: exit ${code}`);
-    job.stop?.();
-    hlsJobs.delete(session.streamPath);
-  });
+  startFfmpeg(session.streamPath, job);
 });
 
 nms.on("donePublish", (session) => {
   const job = hlsJobs.get(session.streamPath);
-  job?.ff.kill("SIGKILL");
-  job?.stop?.();
+  if (!job) return;
+  clearTimeout(job.timer);
+  job.ff?.kill("SIGKILL");
+  job.stop?.();
   hlsJobs.delete(session.streamPath);
 });
 
@@ -137,7 +182,8 @@ nms.on("donePublish", (session) => {
 // δύο διαφορετικοί δρόμοι προς το ίδιο cleanup.
 function shutdown() {
   for (const job of hlsJobs.values()) {
-    job.ff.kill("SIGKILL");
+    clearTimeout(job.timer);
+    job.ff?.kill("SIGKILL");
     job.stop?.();
   }
   process.exit(0);
