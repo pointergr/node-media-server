@@ -171,6 +171,12 @@ nms.on("donePublish", (session) => {
   job.ff?.kill("SIGKILL");
   job.stop?.();
   hlsJobs.delete(session.streamPath);
+  // Χωρίς publisher το playlist λέει ψέματα: δείχνει ακόμα έξι segments χωρίς
+  // ENDLIST, οπότε ο player ξαναπαίζει την ουρά σε βρόχο νομίζοντας ότι είναι
+  // live. Το 404 είναι το ίδιο σήμα με το «δεν εκπέμπει ακόμα» — ο player μπαίνει
+  // στον υπάρχοντα δρόμο επανασύνδεσης και πιάνει την επόμενη εκπομπή μόλις
+  // εμφανιστεί. Τα .ts μένουν, τα καθαρίζει το rmSync του επόμενου postPublish.
+  fs.rmSync(`${config.static.root}${session.streamPath}/index.m3u8`, { force: true });
 });
 
 // Ο server δεν ξαναξεκινάει τον εαυτό του — τερματίζει καθαρά και τον ξανασηκώνει
