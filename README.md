@@ -305,16 +305,39 @@ Keyframe Interval = 2 που θέλει και το OBS.
 
 ### Segments στο R2 (προαιρετικό, αλλά ο σωστός τρόπος)
 
-Το ToS 2.8 της Cloudflare απαγορεύει το σερβίρισμα βίντεο μέσω του CDN σε non-Enterprise
-plan — δηλαδή ακριβώς το κασάρισμα των `.ts`, που όμως είναι όλο το bandwidth. Το R2 δεν
-είναι CDN αλλά storage με μηδενικό egress· το να φεύγει βίντεο από R2 custom domain είναι
-η προβλεπόμενη χρήση του.
+Η Cloudflare περιορίζει το σερβίρισμα βίντεο μέσω του CDN σε non-Enterprise plan — δηλαδή
+ακριβώς το κασάρισμα των `.ts`, που όμως είναι όλο το bandwidth. Το R2 δεν είναι CDN αλλά
+storage με μηδενικό egress· το να φεύγει βίντεο από R2 custom domain είναι η προβλεπόμενη
+χρήση του.
+
+<a name="tos"></a>
+**Το setup με R2 είναι ρητά εντός των όρων** — μην το ξαναψάχνεις. Ο παλιός όρος 2.8
+(«Limitation on Serving Non-HTML Content») [καταργήθηκε τον Μάιο 2023](https://blog.cloudflare.com/updated-tos)
+ακριβώς επειδή το R2 τον έκανε αντιφατικό. Η ανακοίνωση το λέει ονομαστικά:
+
+> customers can serve video and other large files using the CDN so long as that content is
+> hosted by a Cloudflare service like Stream, Images, or R2.
+
+Και το κατοπτρικό, που είναι το μόνο που πρέπει να προσέχεις:
+
+> Video and large files **hosted outside of Cloudflare** will still be restricted on our CDN.
+
+Δηλαδή η *χωρίς R2* παραλλαγή — `.ts` στον δικό μας δίσκο, cached από το πορτοκαλί σύννεφο
+(ο κανόνας #1 [παρακάτω](#cloudflare-cache-rules)) — είναι αυτή που πατάει στα όρια, όχι η
+R2. Ο ίδιος κανόνας επιβιώνει σήμερα στα
+[Service-Specific Terms](https://www.cloudflare.com/service-specific-terms-application-services/),
+διατυπωμένος ανάποδα: *«specific Paid Services (e.g., the Developer Platform, Images, and
+Stream) that you must use in order to serve video […] via the CDN»* — και το R2 **είναι**
+το Developer Platform.
+
+Το `index.m3u8` που μένει στο origin δεν αλλάζει τίποτα: κείμενο μερικών εκατοντάδων bytes,
+ούτε video ούτε large file.
 
 Γι' αυτό σπάμε το HLS στα δύο:
 
 | | Πού | Γιατί |
 |---|---|---|
-| `index.m3u8` | origin, όπως και πριν | ψίχουλα bytes, ήδη bypass cache — δεν αγγίζει το 2.8 |
+| `index.m3u8` | origin, όπως και πριν | ψίχουλα bytes, ήδη bypass cache — δεν είναι «large file» |
 | `*.ts` | R2 + custom domain | εδώ είναι το 100% του bandwidth |
 
 Το playlist **πρέπει** να μείνει στο origin: πάνω στα requests του μετράμε τους θεατές
@@ -401,8 +424,10 @@ playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί 
 - Το `rtmp.` υποdomain δεν αφορά καθόλου το cache: είναι DNS only, δεν περνάει από το Cloudflare.
 - Ποτέ «Cache Everything» σε όλο το domain, ποτέ Edge TTL override στα `.m3u8`.
 
-Το κασάρισμα των `.ts` στο CDN αντιβαίνει στο ToS 2.8 της Cloudflare σε non-Enterprise plan —
-η καθαρή λύση είναι το [R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος).
+Ο κανόνας #1 κασάρει στο CDN βίντεο που φιλοξενείται εκτός Cloudflare — αυτό ακριβώς που
+περιορίζουν οι όροι σε non-Enterprise plan. Η καθαρή λύση είναι το
+[R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος), που είναι
+[ρητά εντός των όρων](#tos) και κάνει τον κανόνα περιττό.
 
 ## Admin UI
 
