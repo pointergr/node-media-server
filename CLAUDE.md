@@ -8,22 +8,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Εντολές
 
+Το repo είναι npm workspaces monorepo — ο stream server ζει σε `apps/stream/`, οι εντολές
+παρακάτω τρέχουν από τη **ρίζα**:
+
 ```bash
-cp config.example.json config.json  # απαραίτητο πριν από οτιδήποτε άλλο
-npm start                           # node app.js
-npm test                            # test-stats.js && test-r2.js && test-passwords.js
-node test-stats.js                  # ένα μόνο test — σκέτα node scripts, χωρίς framework
+cp apps/stream/config.example.json apps/stream/config.json  # απαραίτητο πριν από οτιδήποτε άλλο
+npm start                           # -w apps/stream, δηλ. node app.js
+npm test                            # --workspaces, όλα τα workspaces· σήμερα μόνο apps/stream
+cd apps/stream && node test-stats.js   # ένα μόνο test — σκέτα node scripts, χωρίς framework
 npm run test-stream [-- <rtmp host>] # δοκιμαστική εκπομπή με ffmpeg testsrc, χωρίς OBS
-npm run generate-passwords <hostname>  # γράφει κωδικούς σε config.json + data/passwords.json
+npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps/stream/config.json + apps/stream/data/passwords.json
 ```
 
-Θέλει **Node 24** (το `node:sqlite` του `stats.js`) — pinned στο volta. Σε Docker: `docker compose exec stream npm test`.
+Θέλει **Node 24** (το `node:sqlite` του `stats.js`) — pinned στο volta. Σε Docker: `docker compose exec stream npm test` (μέσα στο container το cwd είναι ήδη `apps/stream`).
 
-Τα tests είναι `assert`-based scripts με χειροποίητα mocks (δες το fake `nms` στην αρχή του `test-stats.js`, το `globalThis.fetch` override στο `test-r2.js`). Νέο test = νέο `test-*.js` + μια γραμμή στο `npm test`.
+Τα tests είναι `assert`-based scripts με χειροποίητα mocks (δες το fake `nms` στην αρχή του `test-stats.js`, το `globalThis.fetch` override στο `test-r2.js`). Νέο test = νέο `test-*.js` + μια γραμμή στο `apps/stream/package.json`.
 
 ## Αρχιτεκτονική
 
-Λεπτό wrapper γύρω από το `node-media-server` v4. Τα τρία πράγματα που δεν κάνει το v4 και τα κάνουμε εμείς: HLS, στατιστικά, admin UI.
+Λεπτό wrapper γύρω από το `node-media-server` v4, στο workspace `apps/stream/`. Τα τρία πράγματα που δεν κάνει το v4 και τα κάνουμε εμείς: HLS, στατιστικά, admin UI.
 
 **`app.js`** — orchestrator. Το v4 δεν βγάζει HLS, οπότε σε κάθε `postPublish` σπρώχνει ένα `ffmpeg -c copy` (remux) που διαβάζει από το δικό μας RTMP στο loopback και γράφει segments στο `config.static.root`. Τα jobs κλειδώνονται με **`session.streamPath`, όχι `session.id`**: το v4 βγάζει `postPublish` πριν απορρίψει διπλό publisher, οπότε το reconnect του OBS αφήνει ζόμπι ffmpeg στον ίδιο φάκελο (δες το σχόλιο στο `app.js:35`).
 Το `ff.on("exit")` σβήνει το job από τον χάρτη: χωρίς αυτό, ένας ffmpeg που πεθαίνει μόνος
@@ -54,6 +57,6 @@ npm run generate-passwords <hostname>  # γράφει κωδικούς σε conf
 
 ## Deploy
 
-Ένα `./install <hostname> [--docker]` για bare metal (caddy + volta + pm2) και Docker (compose με caddy container). Ένα `Caddyfile` και για τα δύο — το `STREAM_HOST` πέφτει σε `localhost` χωρίς Docker. Τα `header` directives θέλουν **`defer`**, αλλιώς προστίθεται από πάνω το `Cache-Control` του `express.static` και βγαίνουν δύο τιμές στην ίδια απόκριση.
+Ένα `apps/stream/install <hostname> [--docker]` για bare metal (caddy + volta + pm2) και Docker (compose με caddy container). Ένα `Caddyfile` και για τα δύο — το `STREAM_HOST` πέφτει σε `localhost` χωρίς Docker. Τα `header` directives θέλουν **`defer`**, αλλιώς προστίθεται από πάνω το `Cache-Control` του `express.static` και βγαίνουν δύο τιμές στην ίδια απόκριση.
 
 `.m3u8` → ποτέ cache (αλλιώς σπάει η μέτρηση θεατών). `.ts` → immutable. Το `rtmp.<domain>` πρέπει να είναι DNS only στο Cloudflare — το proxy δεν περνάει το 1935.

@@ -9,6 +9,7 @@ apt install git -y
 git clone https://github.com/pointergr/node-media-server.git
 cd node-media-server
 git checkout master
+cd apps/stream
 ./install server.example.com            # ή: ./install server.example.com --docker
 ```
 
@@ -31,7 +32,7 @@ packages: [git]
 runcmd:
   - export HOME=/root
   - git clone -b master https://github.com/pointergr/node-media-server.git /opt/node-media-server
-  - cd /opt/node-media-server && ./install stream.example.com --docker
+  - cd /opt/node-media-server/apps/stream && ./install stream.example.com --docker
 ```
 
 - **Το `HOME=/root` το θέλει ρητά.** Το `runcmd` δεν εγγυάται `$HOME`· αν λείπει, το
@@ -52,6 +53,7 @@ runcmd:
 Docker και τα δύο DNS records. Χειροκίνητα, αν δεν χρησιμοποιήσεις το `./install --docker`:
 
 ```bash
+cd apps/stream
 cp .env.example .env               # βάλε μέσα το DOMAIN σου
 cp config.example.json config.json # χωρίς αυτό το bind mount φτιάχνει φάκελο
 docker compose up -d --build
@@ -177,7 +179,7 @@ volta install npm@bundled
 ### Εγκατάσταση του stream server
 ```bash
 git clone git@github.com:pointergr/node-media-server.git
-cd node-media-server
+cd node-media-server/apps/stream
 cp config.example.json config.json
 npm install
 ```
@@ -215,6 +217,7 @@ pm2 logs stream
 ```bash
 cd node-media-server
 git pull
+cd apps/stream
 npm install         # μόνο αν άλλαξαν dependencies
 pm2 restart stream
 ```
@@ -224,6 +227,7 @@ pm2 restart stream
 ```bash
 cd node-media-server
 git pull
+cd apps/stream
 docker compose up -d --build
 docker compose logs -f stream    # Ctrl-C· τα logs συνεχίζουν χωρίς αυτό
 ```

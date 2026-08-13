@@ -13,10 +13,15 @@ WORKDIR /app
 # αλλάζουν. `ci` και όχι `install`: δύο builds σε διαφορετικές μέρες πρέπει να
 # δίνουν τις ίδιες εκδόσεις — αλλιώς ένα σπασμένο minor release τρίτου πακέτου
 # εμφανίζεται μόνο στα καινούρια μηχανήματα.
+# Το context είναι η ρίζα του monorepo, όχι το apps/stream: με npm workspaces
+# υπάρχει ένα package-lock.json και ζει στη ρίζα — ένα context μέσα στο
+# apps/stream δεν θα το έβλεπε καθόλου.
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY apps/stream/package.json apps/stream/
+RUN npm ci --omit=dev -w apps/stream
 
-COPY . .
+COPY apps/stream/ apps/stream/
+WORKDIR /app/apps/stream
 
 EXPOSE 1935 8000 8001
 

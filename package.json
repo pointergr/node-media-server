@@ -1,24 +1,15 @@
 {
-  "name": "node-media-server",
-  "version": "1.1.0",
-  "description": "Node media server",
-  "main": "index.js",
+  "name": "node-media-server-monorepo",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
-    "test": "node test-stats.js && node test-r2.js && node test-passwords.js && node test-ertmp.js",
-    "generate-passwords": "node passwords.js",
-    "test-stream": "node test-stream.js",
-    "start": "node app.js"
+    "test": "npm test --workspaces --if-present",
+    "start": "npm start -w apps/stream",
+    "test-stream": "npm run test-stream -w apps/stream",
+    "generate-passwords": "npm run generate-passwords -w apps/stream"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@hosterai/passwords": "^1.1.0",
-    "aws4fetch": "^1.0.20",
-    "node-media-server": "^4.2.8",
-    "tslib": "^2.8.1"
-  },
-  "type": "module",
   "volta": {
     "node": "24.19.0"
   }

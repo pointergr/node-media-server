@@ -38,7 +38,7 @@ ufw --force enable
 # Το README λέει clone-και-μετά-./install, οπότε συνήθως είμαστε ήδη μέσα στο repo.
 if [ ! -f config.example.json ]; then
   git clone https://github.com/pointergr/node-media-server.git
-  cd node-media-server
+  cd node-media-server/apps/stream
 fi
 cp config.example.json config.json
 
@@ -73,7 +73,12 @@ sleep 3
 volta install node@24
 volta install npm@bundled
 
-npm ci
+# Το package-lock.json είναι ένα και ζει στη ρίζα του monorepo (npm workspaces).
+# Επαληθεύτηκε: σκέτο `npm ci` εδώ μέσα δουλεύει επίσης (το npm ανεβαίνει και
+# βρίσκει μόνο του τη ρίζα), αλλά εγκαθιστά ΟΛΑ τα workspaces· το -w από τη ρίζα
+# εγκαθιστά μόνο ό,τι αφορά το apps/stream — προτιμότερο όταν προστεθούν apps/api
+# και apps/panel.
+(cd ../.. && npm ci -w apps/stream)
 
 # Εγκατάσταση του pm2
 npm install pm2 -g
@@ -88,7 +93,9 @@ sed "s/{\\\$DOMAIN}/$HOSTNAME/g" Caddyfile > /etc/caddy/Caddyfile
 # Επανεκκίνηση του Caddy για να εφαρμοστούν οι αλλαγές
 systemctl restart caddy
 
-# Ξεκινάμε τον server σαν pm2 process
+# Ξεκινάμε τον server σαν pm2 process — τρέχει ήδη από μέσα από apps/stream (το cd
+# μετά το clone παραπάνω), γιατί όλα τα σχετικά paths του κώδικα (./config.json,
+# ./media, ./data) υπολογίζονται ως προς το cwd, όχι ως προς το αρχείο.
 pm2 start app.js --name stream
 
 # Επιβίωση μετά από reboot — το αντίστοιχο του restart policy του compose. Το

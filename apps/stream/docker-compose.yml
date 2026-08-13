@@ -1,6 +1,9 @@
 services:
   stream:
-    build: .
+    # Context η ρίζα του monorepo: το package-lock.json (npm workspaces) ζει εκεί.
+    build:
+      context: ../..
+      dockerfile: apps/stream/Dockerfile
     restart: unless-stopped
     # Το default json-file δεν κάνει rotate: ή σκάει ο δίσκος, ή —όταν σκάσει—
     # σβήνεις το container και μαζί όλο το ιστορικό. 250MB φτάνουν για μέρες.
@@ -23,9 +26,9 @@ services:
     volumes:
       # Ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται
       # σε κάθε recreate και ακυρώνονται όλα τα tokens.
-      - ./config.json:/app/config.json
-      - media:/app/media
-      - data:/app/data
+      - ./config.json:/app/apps/stream/config.json
+      - media:/app/apps/stream/media
+      - data:/app/apps/stream/data
 
   caddy:
     image: caddy:2
