@@ -73,7 +73,7 @@ sleep 3
 volta install node@24
 volta install npm@bundled
 
-npm install
+npm ci
 
 # Εγκατάσταση του pm2
 npm install pm2 -g

@@ -10,9 +10,11 @@ RUN apt-get update \
 WORKDIR /app
 
 # Χωριστά από τον υπόλοιπο κώδικα: το layer των dependencies μένει cached όσο δεν
-# αλλάζει το package.json. Το package-lock.json είναι στο .gitignore, οπότε install.
-COPY package.json ./
-RUN npm install --omit=dev
+# αλλάζουν. `ci` και όχι `install`: δύο builds σε διαφορετικές μέρες πρέπει να
+# δίνουν τις ίδιες εκδόσεις — αλλιώς ένα σπασμένο minor release τρίτου πακέτου
+# εμφανίζεται μόνο στα καινούρια μηχανήματα.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
 COPY . .
 
