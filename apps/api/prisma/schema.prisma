@@ -1,0 +1,63 @@
+// Ελάχιστο μοντέλο: πελάτες, paths, servers, χρήστες. Το ιστορικό (θεατές,
+// bitrate) μένει στο sqlite κάθε stream server — εδώ κρατάμε μόνο ό,τι
+// χρειάζεται το panel για να αποφασίζει «ποιος εκπέμπει πού».
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Server {
+  id        Int       @id @default(autoincrement())
+  host      String    @unique
+  // Bearer token που στέλνει ο stream server στο POST /servers/:host/sync.
+  token     String
+  adminUrl  String
+  adminUser String
+  adminPass String
+  lastSeen  DateTime?
+  clients   Client[]
+  paths     Path[]
+}
+
+model Client {
+  id       Int      @id @default(autoincrement())
+  name     String   @unique
+  // 0 = χωρίς όριο θεατών (αθροιστικά σε όλα τα paths του πελάτη).
+  limit    Int      @default(0)
+  disabled Boolean  @default(false)
+  serverId Int
+  server   Server   @relation(fields: [serverId], references: [id])
+  paths    Path[]
+  users    User[]
+}
+
+model Path {
+  id       Int    @id @default(autoincrement())
+  path     String
+  // Τυχαίο κλειδί εκπομπής (≥16 chars, base64url) — δες clients.service.ts.
+  key      String
+  clientId Int
+  client   Client @relation(fields: [clientId], references: [id])
+  // Denormalized ώστε το unique να δουλεύει σε επίπεδο server, όχι πελάτη:
+  // δύο πελάτες του ίδιου server δεν μπορούν να διεκδικήσουν το ίδιο path.
+  serverId Int
+  server   Server @relation(fields: [serverId], references: [id])
+
+  @@unique([serverId, path])
+}
+
+model User {
+  id       Int     @id @default(autoincrement())
+  username String  @unique
+  // scryptSync hash, μορφή "salt:hash" (δες auth/password.ts) — όχι bcrypt,
+  // ώστε να μη χρειάζεται native dependency στο image.
+  password String
+  role     String // "admin" | "customer"
+  // null για admin· ο customer βλέπει μόνο τα paths του δικού του πελάτη.
+  clientId Int?
+  client   Client? @relation(fields: [clientId], references: [id])
+}

@@ -1,0 +1,13 @@
+# Ίδιο σχήμα με apps/stream/Caddyfile: το DOMAIN έρχεται από .env, ο Caddy
+# βγάζει μόνος του certificate (Cloudflare SSL mode Full, όχι Flexible).
+{$DOMAIN} {
+	# Το Nuxt panel (PLAN-monorepo.md, αναβάλλεται) θα μπει εδώ ως στατικά
+	# αρχεία — file_server με SPA fallback στο index.html. Μέχρι τότε δεν
+	# υπάρχει τίποτα να σερβίρει το root, μόνο το /api.
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy {$API_HOST:localhost}:3000
+	}
+
+	log
+}
