@@ -11,3 +11,8 @@ stats.db
 stats.db-shm
 stats.db-wal
 .env
+
+# Nuxt panel: build artifacts
+.nuxt
+.output
+dist

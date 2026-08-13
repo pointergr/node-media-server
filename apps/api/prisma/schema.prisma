@@ -41,7 +41,10 @@ model Path {
   // Τυχαίο κλειδί εκπομπής (≥16 chars, base64url) — δες clients.service.ts.
   key      String
   clientId Int
-  client   Client @relation(fields: [clientId], references: [id])
+  // Cascade: σβήνοντας πελάτη φεύγουν και τα paths/κλειδιά του. Χωρίς αυτό το
+  // DELETE /clients/:id έσκαγε με FK constraint σε κάθε πελάτη που είχε path —
+  // δηλαδή σε κάθε πραγματικό πελάτη.
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
   // Denormalized ώστε το unique να δουλεύει σε επίπεδο server, όχι πελάτη:
   // δύο πελάτες του ίδιου server δεν μπορούν να διεκδικήσουν το ίδιο path.
   serverId Int
@@ -59,5 +62,5 @@ model User {
   role     String // "admin" | "customer"
   // null για admin· ο customer βλέπει μόνο τα paths του δικού του πελάτη.
   clientId Int?
-  client   Client? @relation(fields: [clientId], references: [id])
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }

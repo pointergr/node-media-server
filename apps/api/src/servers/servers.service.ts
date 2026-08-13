@@ -1,4 +1,4 @@
-import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -45,7 +45,17 @@ export class ServersService {
 
   async remove(id: number) {
     await this.get(id);
-    await this.prisma.server.delete({ where: { id } });
+    try {
+      await this.prisma.server.delete({ where: { id } });
+    } catch (e) {
+      // Οι πελάτες ΔΕΝ κάνουν cascade με τον server επίτηδες: το να σβήνεις
+      // server και να εξαφανίζονται σιωπηλά πελάτες με paths και κλειδιά είναι
+      // χειρότερο από ένα σφάλμα. Χωρίς αυτό το catch έβγαινε 500.
+      if (typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2003') {
+        throw new ConflictException('ο server έχει πελάτες — μετακίνησε ή σβήσε πρώτα αυτούς');
+      }
+      throw e;
+    }
   }
 
   // Proxy με basic auth προς το /admin/api του stream server — το ίδιο auth

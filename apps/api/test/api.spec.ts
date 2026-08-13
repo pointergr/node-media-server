@@ -153,12 +153,13 @@ test('/me/streams: ο πελάτης Α δεν βλέπει τα paths του Β
   const tokenA = await login('usera', 'passa');
   const resA = await fetch(`${base}/me/streams`, { headers: { authorization: `Bearer ${tokenA}` } });
   assert.equal(resA.status, 200);
-  const streamsA = (await resA.json()) as { path: string; key: string; streamKey: string; limit: number }[];
+  const streamsA = (await resA.json()) as { host: string; path: string; key: string; streamKey: string; limit: number }[];
   assert.equal(streamsA.length, 1);
   assert.equal(streamsA[0].path, '/live/kamera1');
   assert.equal(streamsA[0].key, 'KEYA1');
   assert.equal(streamsA[0].streamKey, 'kamera1?key=KEYA1');
   assert.equal(streamsA[0].limit, 5);
+  assert.equal(streamsA[0].host, 'server-a', 'το panel χτίζει από αυτό τα URL αναπαραγωγής/OBS');
   assert.ok(!streamsA.some((s) => s.path === '/live/kamerab'), 'δεν βλέπει το path του πελάτη Β');
 
   const tokenB = await login('userb', 'passb');
@@ -211,4 +212,47 @@ test('proxy: περνάει basic auth και method στον stream server', as
   assert.equal(seen[1].url, '/admin/api/restart');
 
   await new Promise<void>((r) => stub.close(() => r()));
+});
+
+// Διαγραφή πελάτη που έχει paths: χωρίς cascade το FK constraint έβγαζε 500 —
+// δηλαδή δεν σβηνόταν ποτέ κανένας πραγματικός πελάτης.
+test('DELETE /clients/:id: σβήνει και τα paths του', async () => {
+  const token = await login('admin', 'adminpass');
+  const auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const created = await fetch(`${base}/clients`, {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({ name: 'προς-διαγραφή', serverId: ids.serverA, limit: 1 }),
+  });
+  const client = (await created.json()) as { id: number };
+  const path = await fetch(`${base}/clients/${client.id}/paths`, {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({ path: '/live/prosdiagrafi' }),
+  });
+  assert.equal(path.status, 201);
+
+  const del = await fetch(`${base}/clients/${client.id}`, { method: 'DELETE', headers: auth });
+  assert.equal(del.status, 200, 'ο πελάτης σβήνει παρότι έχει path');
+
+  // Το path πρέπει να έχει φύγει μαζί, αλλιώς κρατάει το unique (serverId, path)
+  // δεσμευμένο για πάντα.
+  const reuse = await fetch(`${base}/clients/${ids.clientA}/paths`, {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({ path: '/live/prosdiagrafi' }),
+  });
+  assert.equal(reuse.status, 201, 'το path ελευθερώθηκε');
+});
+
+// Ο server ΔΕΝ κάνει cascade: καθαρό 409 αντί για 500, ώστε το panel να πει
+// στον διαχειριστή τι να κάνει.
+test('DELETE /servers/:id με πελάτες -> 409', async () => {
+  const token = await login('admin', 'adminpass');
+  const res = await fetch(`${base}/servers/${ids.serverA}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 409);
 });

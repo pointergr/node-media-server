@@ -1,0 +1,168 @@
+:root {
+  color-scheme: light;
+  --surface-1: #fcfcfb;
+  --plane: #eeede8; /* πιο σκούρο από τις κάρτες, αλλιώς #f9f9f7 vs #fcfcfb δεν ξεχωρίζει */
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, .1);
+  --good: #0ca30c;
+  --live: #d93a2b; /* ίδιο και στα δύο θέματα: πιο ανοιχτό κόκκινο πέφτει κάτω από 4.5:1 με λευκά γράμματα */
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme=light])) {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --plane: #0d0d0d;
+    --text-primary: #fff;
+    --text-secondary: #c3c2b7;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, .1);
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto;
+  max-width: 1600px; /* σε ultrawide τα charts γίνονται σύρματα και το preview τοίχος */
+  padding: 24px;
+  background: var(--plane);
+  color: var(--text-primary);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+h2 { font-size: 13px; margin: 0 0 12px; font-weight: 600; color: var(--text-secondary); }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--good); }
+.spacer { flex: 1; }
+.ranges { display: flex; gap: 4px; }
+button {
+  font: inherit; color: var(--text-secondary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer;
+}
+button:hover { color: var(--text-primary); }
+button[aria-pressed=true] { color: var(--text-primary); border-color: var(--axis); font-weight: 600; }
+/* Χωρίς δικό του padding/font-size: κληρονομεί των υπολοίπων, αλλιώς κάθεται πιο κοντό στη σειρά */
+.restart { color: #fff; background: var(--live); border-color: var(--live); }
+.restart:hover { color: #fff; filter: brightness(1.1); }
+.restart:disabled { opacity: .65; cursor: default; filter: none; }
+.card {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; margin-bottom: 16px;
+}
+/* Το min(100%,…) κρατάει το κάτω φράγμα κάτω από 400px σε κινητό, αλλιώς η
+   κάρτα ξεχειλίζει και σκάει οριζόντιο scroll. */
+.hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 16px; margin-bottom: 16px; }
+.hero:empty { display: none; }
+.hero .card { padding: 0; margin: 0; overflow: hidden; container-type: inline-size; }
+.head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.head a { color: inherit; font-weight: 600; text-decoration: none; }
+.head a:hover { text-decoration: underline; }
+.head .since { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.onair {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 5px;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; color: #fff; background: var(--live);
+}
+.onair::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #fff; animation: pulse 2s infinite; }
+@keyframes pulse { 50% { opacity: .2; } }
+/* Σταθερό άνω φράγμα στο preview, ό,τι περισσεύει πάει στα νούμερα: με ένα μόνο
+   stream σε μεγάλη οθόνη το preview έπιανε όλο το πλάτος της κάρτας. */
+/* minmax(0,1fr) και όχι 1fr: το αυτόματο κάτω φράγμα του 1fr είναι το min-content
+   του panel, δηλαδή και οι τέσσερις στήλες μαζί — έσπρωχνε το preview στα 276px. */
+.body { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 1fr); }
+.preview { position: relative; background: #000; aspect-ratio: 16 / 9; }
+.preview video { width: 100%; height: 100%; display: block; object-fit: contain; }
+.play {
+  position: absolute; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0;
+  background: transparent; color: #fff; font-size: 34px; opacity: .7; cursor: pointer;
+}
+.play:hover { opacity: 1; background: rgba(255, 255, 255, .07); color: #fff; }
+/* 2x2 δίπλα σε άλλη κάρτα, 4 σε σειρά όταν είναι μόνη της — και στις δύο
+   περιπτώσεις κεντραρισμένα στον χώρο δεξιά από το preview.
+   Ρητό πλήθος στηλών με φράγμα πλάτους, όχι auto-fit με 1fr: τα 1fr απλώνουν τα
+   νούμερα σε όλο το πλάτος της κάρτας, ενώ definite max μέσα σε auto-fit αλλάζει
+   και το πλήθος των tracks. Το κεντράρισμα θέλει justify-content — margin auto ή
+   justify-self κάνουν το κουτί shrink-to-fit και ξεχειλίζει στις στενές κάρτες. */
+.stat {
+  margin: 0; padding: 16px; align-content: center; justify-content: center;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 120px)); gap: 14px;
+}
+/* Container και όχι media query: το πλάτος της κάρτας το ορίζει το πλήθος των
+   streams, όχι μόνο το viewport. Το κατώφλι είναι εκεί που χωράνε 4 στήλες. */
+@container (min-width: 1120px) {
+  .stat { grid-template-columns: repeat(4, minmax(0, 140px)); }
+}
+.stat dt { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.stat dd { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.meta { padding: 10px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-secondary); }
+.quiet { color: var(--muted); text-align: center; padding: 30px; }
+@media (max-width: 560px) { .body { grid-template-columns: minmax(0, 1fr); } }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 16px; }
+.tile .label { font-size: 12px; color: var(--muted); }
+.tile .value { font-size: 22px; font-weight: 600; line-height: 1.2; }
+.tile .value small { font-size: 14px; font-weight: 400; color: var(--text-secondary); }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.chart { position: relative; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--text-secondary); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; }
+.tip {
+  position: absolute; pointer-events: none; opacity: 0; transition: opacity .1s;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; font-size: 12px; white-space: nowrap; z-index: 2;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+}
+.tip b { font-weight: 600; }
+.tip .row { display: flex; align-items: center; gap: 6px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th {
+  text-align: left; font-size: 12px; font-weight: 500; color: var(--muted);
+  padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid);
+}
+td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); }
+tr:last-child td { border-bottom: 0; }
+.num { text-align: right; padding-right: 16px; }
+.empty { color: var(--muted); padding: 8px 0; }
+.kill {
+  color: var(--text-secondary); border-color: var(--border);
+  padding: 2px 8px; font-size: 12px;
+}
+.scroll { overflow-x: auto; }
+
+/* --- προσθήκες του panel ---------------------------------------------------
+   Ό,τι παραπάνω χρειάζεται το κεντρικό panel σε σχέση με το παλιό per-server
+   dashboard: πλοήγηση, ταυτότητα του server σε κάθε νούμερο, φόρμα σύνδεσης. */
+nav { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+nav .brand { font-weight: 600; }
+nav a { color: var(--text-secondary); text-decoration: none; }
+nav a:hover, nav a.router-link-active { color: var(--text-primary); }
+nav .who { font-size: 12px; color: var(--muted); }
+
+/* Ίδιο σχήμα με το ON AIR — ο θεατής διαβάζει τη θέση, όχι το χρώμα. */
+.offair {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 7px; border-radius: 5px;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  color: var(--text-secondary); background: var(--plane); border: 1px solid var(--border);
+}
+.host { font-size: 12px; color: var(--muted); }
+.note { font-size: 12px; color: var(--muted); margin: -6px 0 12px; }
+.pickers { display: flex; gap: 4px; flex-wrap: wrap; }
+.pickers button { display: inline-flex; align-items: center; gap: 6px; }
+
+form.login { max-width: 320px; margin: 12vh auto 0; }
+form.login label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
+form.login input {
+  font: inherit; width: 100%; padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+}
+form.login button { margin-top: 16px; width: 100%; padding: 7px; }
+.error { color: var(--live); font-size: 13px; margin-top: 12px; }

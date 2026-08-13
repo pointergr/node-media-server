@@ -33,6 +33,10 @@ export class MeController {
     const viewersOf = (path: string) => live?.streams?.find((s) => s.stream === path)?.viewers ?? 0;
 
     return client.paths.map((p) => ({
+      // Το host το χρειάζεται το panel για να χτίσει και το URL αναπαραγωγής
+      // (https://<host><path>/index.m3u8) και το rtmp:// του OBS — χωρίς αυτό
+      // ο πελάτης βλέπει κλειδί που δεν ξέρει πού να το βάλει.
+      host: client.server.host,
       path: p.path,
       key: p.key,
       streamKey: `${p.path.split('/').pop()}?key=${p.key}`,
