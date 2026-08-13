@@ -18,7 +18,11 @@ npm test                            # --workspaces, όλα τα workspaces· σ�
 cd apps/stream && node test-stats.js   # ένα μόνο test — σκέτα node scripts, χωρίς framework
 npm run test-stream [-- <rtmp host>] # δοκιμαστική εκπομπή με ffmpeg testsrc, χωρίς OBS
 npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps/stream/config.json + apps/stream/data/passwords.json
+npm run seed -w apps/api            # φτιάχνει τον πρώτο admin χρήστη του κεντρικού panel
 ```
+
+Το `npm test` της ρίζας τρέχει **και τα δύο** workspaces — `apps/stream` (σκέτα scripts) και
+`apps/api` (`nest build && node --test dist/test/*.js`, δες [apps/api/README.md](apps/api/README.md)).
 
 Θέλει **Node 24** (το `node:sqlite` του `stats.js`) — pinned στο volta. Σε Docker: `docker compose exec stream npm test` (μέσα στο container το cwd είναι ήδη `apps/stream`).
 
@@ -55,10 +59,31 @@ npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps
 
 **Πελάτες (`data/clients.json`)** — `{ πελάτης: { limit, paths: { "/live/x": "KEY" } } }`, η μόνη τοπική πηγή αλήθειας· το γράφει το `panel.js`, το διαβάζουν όλοι με 5s cache (το playlist ζητιέται κάθε 2s ανά θεατή — χωρίς cache ο δίσκος το καταλαβαίνει).
 - Ο έλεγχος εκπομπής είναι δικός μας (`auth.publish: false`), σε **μία** συνάρτηση, την `publishAllowed`: την καλεί το `app.js` στο `postPublish` (τη στιγμή της σύνδεσης, με `session.rejected` ώστε να μην τον μετρήσει το `stats.js`) και το `stats.js` στο `sample()` (ανάκληση εν ώρα εκπομπής, ≤10s). Δύο αντίγραφα θα άφηναν τρύπα στο ένα από τα δύο σημεία.
-- **Άγνωστο path = μπλόκο**, αλλά **χωρίς πελάτες δεν επιβάλλεται τίποτα**: αρχείο που λείπει ή χάλασε δεν ρίχνει τις εκπομπές (δρόμος αναδίπλωσης). Γι' αυτό το `passwords.js` φτιάχνει πελάτη `default` στην πρώτη εγκατάσταση — αλλιώς καθαρός server = ορθάνοιχτος server.
+- **Άγνωστο path = μπλόκο.** Ο διακόπτης της επιβολής είναι η **ύπαρξη** του αρχείου, όχι το περιεχόμενό του: αρχείο που λείπει ή χάλασε δεν ρίχνει τις εκπομπές (δρόμος αναδίπλωσης), αλλά ένα έγκυρο `{}` σημαίνει «κανένας πελάτης σε αυτόν τον server» και κλείνει τα πάντα — αλλιώς ένας server που μόλις μπήκε στο panel, ή του οποίου απενεργοποιήθηκαν όλοι οι πελάτες, θα γινόταν ορθάνοιχτος με το πρώτο sync. Γι' αυτό το `passwords.js` φτιάχνει πελάτη `default` στην πρώτη εγκατάσταση — αλλιώς καθαρός server χωρίς αρχείο ακόμα = ορθάνοιχτος server.
 - Το `limit` είναι αθροιστικό σε όλα τα paths του πελάτη και επιβάλλεται στα δύο κανάλια αναπαραγωγής: `trackHls` (rewrite του `req.url` σε ανύπαρκτο αρχείο, γιατί δική μας απάντηση θα διπλογραφόταν με του express) και `postPlay`. Ο ήδη μετρημένος θεατής περνάει πάντα, και ο έλεγχος έρχεται **μετά** το `isLocal` — ο ffmpeg του HLS δεν κόβεται ποτέ από όριο, αλλιώς σταματά όλο το HLS του stream.
 
 **`panel.js`** — προαιρετικό, ενεργό μόνο αν `config.panel.url` δεν είναι κενό (ίδιο μοτίβο με το `hls.r2.accessKeyId`). POST ανά 10s με το `snapshot()`, η απάντηση γράφεται με tmp+rename στο `clients.json` (ο loader διαβάζει σύγχρονα και δεν πρέπει να δει μισό JSON). Σφάλμα = log και τίποτα άλλο: panel κάτω δεν σημαίνει εκπομπές κάτω.
+
+## apps/api
+
+Το κεντρικό panel: NestJS, διαχειρίζεται πολλούς stream servers, πελάτες, paths, κλειδιά
+εκπομπής και όρια θεατών — η άλλη άκρη του `panel.js` παραπάνω. Πλήρες συμβόλαιο των
+endpoints στο [apps/api/README.md](apps/api/README.md), δεν το ξαναγράφουμε εδώ.
+
+Sqlite με Prisma 6 (**όχι 7** — θα έφερνε driver adapters για ένα σχήμα λίγων πινάκων), και
+`prisma db push` σε **κάθε boot** αντί για migrations: δεν υπάρχει migrations directory, το
+`schema.prisma` είναι η μόνη πηγή αλήθειας — αρκεί όσο το σχήμα δεν έχει ιστορικό αλλαγών σε
+production. Auth σε δύο επίπεδα και κανένα passport: JWT (`@nestjs/jwt`) για χρήστες
+(admin/customer, global guard εκτός `@Public()`), και static bearer token ανά server μόνο
+για το `POST /servers/:host/sync` — ο stream server δεν συνδέεται ποτέ σαν χρήστης. Κωδικοί
+με `node:crypto` `scryptSync`/`timingSafeEqual`, όχι bcrypt — καμία native εξάρτηση στο
+image. Tests: `nest build` πρώτα, μετά σκέτο `node --test` πάνω στο compiled output
+(`dist/test/*.js`) — ίδια φιλοσοφία με τα `test-*.js` του `apps/stream`, όχι jest/supertest.
+
+Τα live snapshots (`GET /live`) ζουν **μόνο στη μνήμη** — μετά από restart του API είναι
+άδεια μέχρι το επόμενο sync tick (≤10s) από κάθε server. Δεν αποθηκεύονται στη sqlite: το
+ιστορικό (series) το κρατάει ήδη κάθε stream server στο δικό του `stats.db` και το API κάνει
+proxy σε αυτό, δεν το αντιγράφει κεντρικά.
 
 ## Deploy
 

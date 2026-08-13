@@ -6,6 +6,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "build": "nest build",
+    "db:push": "prisma db push --schema=prisma/schema.prisma",
     "start": "node --env-file=.env dist/src/main.js",
     "start:dev": "nest start --watch",
     "seed": "node --env-file=.env dist/src/seed.js",

@@ -10,13 +10,15 @@ NestJS API της κεντρικής διαχείρισης: πελάτες, pat
 
 ## Τοπικά
 
+Όλα από τη **ρίζα** του monorepo: το `-w apps/api` είναι σχετικό με αυτήν, και
+μέσα από το `apps/api` το npm δεν βρίσκει το workspace με αυτό το όνομα.
+
 ```bash
-cd apps/api
-cp .env.example .env      # DATABASE_URL, JWT_SECRET, PORT, DOMAIN (Docker)
-npm ci -w apps/api         # ή npm ci από τη ρίζα, εγκαθιστά όλα τα workspaces
-npm run build -w apps/api  # nest build (tsc) — χρειάζεται πρώτα, φτιάχνει και το @prisma/client
-node ../../node_modules/prisma/build/index.js db push -w apps/api --schema=prisma/schema.prisma
-npm run seed -w apps/api   # φτιάχνει τον πρώτο admin χρήστη
+cp apps/api/.env.example apps/api/.env  # DATABASE_URL, JWT_SECRET, PORT, DOMAIN (Docker)
+npm ci                                  # όλα τα workspaces, ένα lockfile
+npm run build -w apps/api               # nest build (tsc)· το @prisma/client το φτιάχνει το postinstall
+npm run db:push -w apps/api             # εφαρμόζει το schema.prisma στο sqlite
+npm run seed -w apps/api                # φτιάχνει τον πρώτο admin χρήστη
 npm start -w apps/api
 ```
 
