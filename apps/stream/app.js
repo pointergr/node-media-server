@@ -2,7 +2,8 @@ import NodeMediaServer from "node-media-server";
 import { spawn } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
-import { loadConfig, saveConfig } from "./config.js";
+import { loadConfig, saveConfig, publishAllowed } from "./config.js";
+import { startPanelSync } from "./panel.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
 import { patchAvc1 } from "./ertmp.js";
@@ -127,6 +128,21 @@ function startFfmpeg(streamPath, job) {
 }
 
 nms.on("postPublish", (session) => {
+  // Ο έλεγχος εκπομπής είναι δικός μας (auth.publish: false στο nms): κάθε path
+  // ανήκει σε πελάτη του clients.json και θέλει το δικό του κλειδί. Στο OBS
+  // μπαίνει στο Stream Key ως `stream?key=KEY` — το nms κόβει το query πριν
+  // φτιάξει το streamPath, οπότε φάκελος HLS, στατιστικά και hlsJobs μένουν ίδια.
+  // Πρώτος έλεγχος απ' όλους: ο απορριφθείς publisher δεν πρέπει να αφήσει πίσω
+  // του ούτε timeout ούτε φάκελο ούτε ffmpeg.
+  if (!publishAllowed(session.streamPath, session.streamQuery?.key)) {
+    console.error(`publish ${session.streamPath} ${session.ip}: άκυρο κλειδί`);
+    // Το ίδιο event το ακούει και το stats.js — χωρίς αυτό, ο απορριφθείς
+    // publisher θα εμφανιζόταν στο dashboard σαν κανονική εκπομπή.
+    session.rejected = true;
+    session.close();
+    return;
+  }
+
   // δες PUBLISH_IDLE_MS. Το v4 βγάζει postPublish και για τον publisher που θα
   // απορρίψει· εκείνου το socket το κλείνει έτσι κι αλλιώς μόνο του.
   if (session.protocol === "rtmp") {
@@ -198,5 +214,6 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 const stats = startStats(nms, config, { onRestart: shutdown });
+startPanelSync(config, stats.snapshot);
 
 nms.run();

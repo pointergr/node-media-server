@@ -5,7 +5,7 @@
 // ως κανονικός publisher στα στατιστικά — το local ffmpeg το εξαιρεί το stats.js.
 import { spawn } from "child_process";
 import crypto from "crypto";
-import { loadConfig } from "./config.js";
+import { loadConfig, clientOf } from "./config.js";
 
 const host = process.argv[2] ?? "127.0.0.1";
 const streamPath = "/live/stream";
@@ -19,8 +19,11 @@ const hash = crypto
   .update(`${streamPath}-${expire}-${config.auth.secret}`)
   .digest("hex");
 
-const sign = config.auth.publish ? `?sign=${expire}-${hash}` : "";
-const url = `rtmp://${host}:${config.rtmp.port}${streamPath}${sign}`;
+// Το κλειδί του path από το clients.json είναι ό,τι ελέγχει σήμερα ο server· το
+// sign μένει ως fallback για εγκατάσταση που τρέχει ακόμα με auth.publish: true.
+const key = clientOf(streamPath)?.paths[streamPath];
+const query = key ? `?key=${key}` : config.auth.publish ? `?sign=${expire}-${hash}` : "";
+const url = `rtmp://${host}:${config.rtmp.port}${streamPath}${query}`;
 
 console.log(`publish  -> rtmp://${host}:${config.rtmp.port}${streamPath}`);
 console.log(`playlist -> ${streamPath}/index.m3u8   (Ctrl-C για τερματισμό)`);

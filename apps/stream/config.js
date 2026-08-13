@@ -54,6 +54,48 @@ function migratePasswords() {
   }
 }
 
+// Η μόνη τοπική πηγή αλήθειας για τους πελάτες: το γράφει το sync με το panel
+// (panel.js), το διαβάζουν όλοι. Στο data volume, δίπλα στο passwords.json, ώστε
+// να επιβιώνει το recreate του container. Το env override υπάρχει για τον ίδιο
+// λόγο με το ADMIN_DB: να μη γράφουν τα tests στο πραγματικό data volume.
+export const CLIENTS = process.env.CLIENTS_FILE ?? "./data/clients.json";
+
+// Το playlist ζητιέται κάθε 2s ανά θεατή· 200 θεατές = 100 reads/s στον δίσκο.
+// 5s cache: ο admin βλέπει την αλλαγή του πρακτικά αμέσως, ο δίσκος δεν το καταλαβαίνει.
+let cache = { ts: 0, data: {} };
+
+// Σύγχρονο διάβασμα επίτηδες: καλείται μέσα στο trackHls και σε event handlers
+// που δεν είναι async.
+export function loadClients() {
+  if (Date.now() - cache.ts < 5000) return cache.data;
+  try {
+    cache = { ts: Date.now(), data: JSON.parse(fs.readFileSync(CLIENTS, "utf8")) };
+  } catch {
+    cache = { ts: Date.now(), data: {} }; // λείπει/χαλασμένο = χωρίς πελάτες
+  }
+  return cache.data;
+}
+
+// Μόνο για τα tests: αλλιώς θα έπρεπε να περιμένουν 5s σε κάθε αλλαγή αρχείου.
+export const clearClientsCache = () => (cache = { ts: 0, data: {} });
+
+export const clientOf = (path) =>
+  Object.values(loadClients()).find((c) => c.paths?.[path] !== undefined);
+
+// Ο έλεγχος ζει εδώ και μόνο εδώ: τον καλεί το app.js στο postPublish (τη στιγμή
+// της σύνδεσης) και το stats.js στο sample() (ανάκληση εν ώρα εκπομπής). Δύο
+// αντίγραφα θα απέκλιναν και το ένα από τα δύο σημεία θα άφηνε τρύπα.
+// Χωρίς πελάτες δεν επιβάλλεται τίποτα: αυτός είναι ο δρόμος αναδίπλωσης — ένα
+// clients.json που λείπει ή χάλασε δεν ρίχνει τις εκπομπές. Με έστω έναν πελάτη
+// όμως, path που δεν είναι δηλωμένο δεν εκπέμπει.
+export function publishAllowed(streamPath, key) {
+  if (!Object.keys(loadClients()).length) return true;
+  const expected = clientOf(streamPath)?.paths[streamPath];
+  // Ρητός έλεγχος για undefined: άγνωστο path με κλειδί undefined θα περνούσε
+  // από σκέτη σύγκριση (undefined === undefined).
+  return expected !== undefined && expected === key;
+}
+
 export function loadPasswords() {
   return new Promise((resolve, reject) => {
     migratePasswords();

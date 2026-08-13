@@ -4,6 +4,7 @@ import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { clientOf, publishAllowed } from "./config.js";
 
 // Το dashboard κάνει poll ανά 5s: με δείγμα ανά 60s το bitrate έδειχνε «0 bps»
 // για ένα ολόκληρο λεπτό μετά από κάθε restart ή νέο publish. Τα buckets των
@@ -115,6 +116,14 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     [...liveSessions.values()].filter((s) => !s.isPublisher && s.streamPath === stream).length +
     hlsViewersOf(stream);
 
+  // Το όριο είναι αθροιστικό σε όλα τα paths του πελάτη: το πακέτο πουλιέται ανά
+  // πελάτη, όχι ανά κάμερα. Χωρίς πελάτη ή με limit 0/απόν, κανένα όριο.
+  function overLimit(stream) {
+    const c = clientOf(stream);
+    if (!c?.limit) return false;
+    return Object.keys(c.paths).reduce((n, p) => n + viewersOf(p), 0) >= c.limit;
+  }
+
   // Ίδια συνθήκη ενεργοποίησης με το app.js/r2.js: χωρίς accessKeyId τα .ts
   // σερβίρονται ήδη από το origin, οπότε τα μετράει κανονικά το trackHls — ένας
   // δεύτερος πολλαπλασιασμός εδώ θα διπλομετρούσε.
@@ -163,6 +172,19 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     // ponytail: δύο tabs του ίδιου browser μετρούν ως ένας θεατής· για ακριβή
     // μέτρηση χρειάζεται token στο URL του playlist από τον player.
     const key = `${ip}|${req.headers["user-agent"] ?? ""}`;
+
+    // Πριν από κάθε seen.set, αλλιώς ο 201ος μπαίνει πρώτα στο σύνολο και μετά
+    // κόβεται κάποιος άλλος. Θεατής που μετριέται ήδη περνάει πάντα — και με το
+    // token του και με το IP+UA κλειδί του, γιατί ακριβώς σε αυτό το request
+    // μετακομίζει από το δεύτερο στο πρώτο. Ο καινούριος παίρνει 404: ίδιο σήμα
+    // με το «δεν εκπέμπει», οπότε ο player μπαίνει στον υπάρχοντα δρόμο
+    // επανασύνδεσης. Rewrite του url και όχι δική μας απάντηση: το express
+    // ακούει το ίδιο event και θα έγραφε δεύτερη απόκριση από πάνω.
+    if (!seen.has(token ?? key) && !seen.has(key) && overLimit(stream)) {
+      req.url = "/__full.m3u8";
+      return;
+    }
+
     if (token) {
       seen.delete(key); // το πρώτο request αυτού του player είχε μετρηθεί με IP+UA
       seen.set(token, Date.now());
@@ -205,7 +227,9 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
 
   // Το ffmpeg του HLS συνδέεται ως θεατής στο 127.0.0.1 — δεν είναι πραγματικός θεατής.
   nms.on("postPublish", (session) => {
-    if (isLocal(session)) return;
+    // rejected: το app.js απέρριψε το κλειδί. Το event βγαίνει μία φορά για
+    // όλους τους listeners, οπότε χωρίς αυτό ο απορριφθείς θα καταγραφόταν.
+    if (isLocal(session) || session.rejected) return;
     publishers.set(session.streamPath, session);
     liveSessions.set(session.id, session);
     // Χωρίς αρχικό δείγμα εδώ, το πρώτο sample() αυτού του stream έβγαζε πάντα 0
@@ -216,7 +240,11 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     }
   });
   nms.on("postPlay", (session) => {
+    // Η σειρά είναι κρίσιμη: ο ffmpeg του HLS συνδέεται ως θεατής από το
+    // 127.0.0.1 και δεν πρέπει ΠΟΤΕ να κοπεί από όριο — ένα γεμάτο stream θα
+    // σταματούσε να παράγει HLS συνολικά.
     if (isLocal(session)) return;
+    if (overLimit(session.streamPath)) return session.close();
     liveSessions.set(session.id, session);
   });
   nms.on("donePublish", finish);
@@ -228,6 +256,17 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     const dt = (now - prevTs) / 1000;
     prevTs = now;
     if (dt <= 0) return;
+
+    // Ο έλεγχος στο postPublish πιάνει μόνο τη στιγμή της σύνδεσης. Πελάτης που
+    // διαγράφηκε ή του άλλαξε το κλειδί ενώ εκπέμπει πρέπει να κοπεί χωρίς να
+    // περιμένουμε να σταματήσει μόνος του — και ο έλεγχος στο publish φροντίζει
+    // ώστε το reconnect του OBS να μην ξαναπεράσει.
+    for (const [stream, pub] of publishers) {
+      if (!publishAllowed(stream, pub.streamQuery?.key)) {
+        console.error(`publish ${stream} ${pub.ip}: ανακλήθηκε, κλείσιμο`);
+        pub.close();
+      }
+    }
 
     for (const stream of publishers.keys()) {
       const cur = curBytes(stream);

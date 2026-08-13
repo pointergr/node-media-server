@@ -1,6 +1,15 @@
 // Έλεγχος του collector: node test-stats.js
 import assert from "node:assert";
-import { startStats } from "./stats.js";
+import fs from "fs";
+import os from "os";
+
+// Προσωρινό clients.json (το config.js διαβάζει το env στο import, γι' αυτό
+// δυναμικό import). Όσο δεν υπάρχει, δεν υπάρχουν πελάτες και δεν επιβάλλεται
+// τίποτα — δηλαδή όλα τα παρακάτω τρέχουν στη σημερινή συμπεριφορά.
+const clientsFile = `${fs.mkdtempSync(`${os.tmpdir()}/stats-test-`)}/clients.json`;
+process.env.CLIENTS_FILE = clientsFile;
+const { startStats } = await import("./stats.js");
+const { clearClientsCache } = await import("./config.js");
 
 const nms = {
   h: {},
@@ -11,6 +20,7 @@ const nms = {
 
 // Ένα HTTP request στο HLS, όπως έρχεται από τον Caddy. Γυρνάει το cookie που
 // έστειλε ο server, ώστε το επόμενο request να μπορεί να το ξαναδώσει.
+// Γυρνάει και το τελικό req.url: το όριο θεατών κόβει αλλάζοντάς το.
 const hlsHit = (srv, url, ip, { cookie, bytes = 0, ua = "Chrome" } = {}) => {
   const out = {};
   const res = {
@@ -19,9 +29,10 @@ const hlsHit = (srv, url, ip, { cookie, bytes = 0, ua = "Chrome" } = {}) => {
     setHeader(k, v) { out[k] = v; },
     getHeader: () => bytes,
   };
-  srv.onRequest({ url, headers: { "x-forwarded-for": ip, cookie, "user-agent": ua }, socket: {} }, res);
+  const req = { url, headers: { "x-forwarded-for": ip, cookie, "user-agent": ua }, socket: {} };
+  srv.onRequest(req, res);
   res.h.forEach((fn) => fn());
-  return out["Set-Cookie"]?.split(";")[0];
+  return { cookie: out["Set-Cookie"]?.split(";")[0], url: req.url };
 };
 
 const session = (over) => ({
@@ -82,7 +93,7 @@ for (const row of db.prepare("SELECT * FROM samples").all()) {
 assert.equal(snapshot().streams[0].viewers, 0, "ο θεατής έφυγε");
 
 // Client χωρίς cookies (wrk, curl): όσα requests κι αν κάνει, μετράει ως ένας
-const cookie = hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5");
+const { cookie } = hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5");
 hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5");
 hlsHit(nms, "/live/stream/index.m3u8", "5.5.5.5");
 assert.ok(cookie?.startsWith("nmsv="), "το πρώτο request παίρνει cookie");
@@ -271,5 +282,82 @@ function freshStats(hls, opts) {
   s.server.close();
 }
 
+// --- πολλοί πελάτες: όριο θεατών, απόρριψη, ανάκληση ------------------------
+// Από εδώ και κάτω υπάρχει clients.json, οπότε οι έλεγχοι είναι ενεργοί.
+fs.writeFileSync(clientsFile, JSON.stringify({
+  pelatis: { limit: 3, paths: { "/live/k1": "K1", "/live/k2": "K2" } },
+}));
+clearClientsCache();
+
+// Το όριο είναι αθροιστικό σε όλα τα paths του πελάτη — το πακέτο πουλιέται ανά
+// πελάτη, όχι ανά κάμερα.
+{
+  const s = freshStats(null);
+  const first = hlsHit(s.nms, "/live/k1/index.m3u8", "1.1.1.1", { cookie: "nmsv=a" });
+  hlsHit(s.nms, "/live/k1/index.m3u8", "1.1.1.2", { cookie: "nmsv=b" });
+  hlsHit(s.nms, "/live/k2/index.m3u8", "1.1.1.3", { cookie: "nmsv=c" });
+  assert.equal(first.url, "/live/k1/index.m3u8", "οι πρώτοι τρεις θεατές περνάνε");
+
+  assert.equal(
+    hlsHit(s.nms, "/live/k2/index.m3u8", "1.1.1.4", { cookie: "nmsv=d" }).url,
+    "/__full.m3u8",
+    "ο τέταρτος θεατής του πελάτη κόβεται, σε οποιοδήποτε path του"
+  );
+  // Κρίσιμο: ο ήδη μετρημένος ζητάει το playlist κάθε 2s — αν κοβόταν κι αυτός,
+  // ένα γεμάτο stream θα έριχνε όσους ήδη βλέπουν.
+  assert.equal(
+    hlsHit(s.nms, "/live/k1/index.m3u8", "1.1.1.1", { cookie: "nmsv=a" }).url,
+    "/live/k1/index.m3u8",
+    "ο ήδη μετρημένος θεατής περνάει πάντα"
+  );
+  assert.equal(
+    hlsHit(s.nms, "/live/stream/index.m3u8", "1.1.1.5").url,
+    "/live/stream/index.m3u8",
+    "path χωρίς πελάτη δεν έχει όριο θεατών"
+  );
+
+  // RTMP/FLV θεατής πάνω από το όριο κλείνει — αλλά ο ffmpeg του HLS συνδέεται
+  // από 127.0.0.1 και δεν πρέπει ΠΟΤΕ να κοπεί: θα σταματούσε όλο το HLS.
+  let closed = 0;
+  s.nms.emit("postPlay", session({ streamPath: "/live/k1", close() { closed++; } }));
+  assert.equal(closed, 1, "ο θεατής πάνω από το όριο κλείνει");
+  assert.equal(s.snapshot().sessions.length, 0, "και δεν καταγράφεται");
+  s.nms.emit("postPlay", session({ ip: "127.0.0.1:9000", streamPath: "/live/k1", close() { closed++; } }));
+  assert.equal(closed, 1, "ο ffmpeg του HLS δεν κόβεται ποτέ από το όριο");
+  s.server.close();
+}
+
+// Ο publisher που απέρριψε το app.js δεν πρέπει να εμφανιστεί στο dashboard:
+// το postPublish βγαίνει μία φορά για όλους τους listeners.
+{
+  const s = freshStats(null);
+  s.nms.emit("postPublish", session({ isPublisher: true, streamPath: "/live/k1", rejected: true }));
+  assert.equal(s.snapshot().streams.length, 0, "ο απορριφθείς publisher δεν καταγράφεται");
+  assert.equal(s.snapshot().sessions.length, 0, "ούτε στη λίστα sessions");
+  s.server.close();
+}
+
+// Ανάκληση εν ώρα εκπομπής: αλλαγή κλειδιού ή διαγραφή πελάτη κόβει τον
+// publisher στο επόμενο tick, χωρίς να περιμένουμε να σταματήσει μόνος του.
+{
+  const s = freshStats(null);
+  let closed = 0;
+  s.nms.emit("postPublish", session({
+    isPublisher: true, streamPath: "/live/k1",
+    streamQuery: { key: "K1" }, close() { closed++; },
+  }));
+  await tick();
+  s.sample();
+  assert.equal(closed, 0, "με σωστό κλειδί δεν κόβεται");
+
+  fs.writeFileSync(clientsFile, JSON.stringify({ pelatis: { paths: { "/live/k1": "ΑΛΛΟ" } } }));
+  clearClientsCache();
+  await tick();
+  s.sample();
+  assert.equal(closed, 1, "αλλαγμένο κλειδί κόβει τον publisher μέσα σε ένα tick");
+  s.server.close();
+}
+
+fs.rmSync(clientsFile.slice(0, clientsFile.lastIndexOf("/")), { recursive: true, force: true });
 console.log("stats.js OK");
 process.exit(0);

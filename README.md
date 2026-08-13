@@ -82,7 +82,7 @@ sudo systemctl enable --now docker
 |---|---|
 | `./config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
 | `media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ. Named volume, όχι bind mount: ο φάκελος `media/` δίπλα στο compose μένει **πάντα άδειος** — τα αρχεία τα βλέπεις με `docker compose exec stream ls -R /app/media` |
-| `data` | το `stats.db` με τα στατιστικά 30 ημερών και το `passwords.json` |
+| `data` | το `stats.db` με τα στατιστικά 30 ημερών, το `passwords.json` και το `clients.json` |
 | `caddy-data` | τα certificates· χωρίς αυτό κάθε recreate ζητάει νέο cert και η Let's Encrypt κόβει στο rate limit |
 
 Δημοσιεύεται **μόνο** το 1935 (RTMP) πέρα από τα 80/443 του Caddy. Τα 8000/8001 μένουν
@@ -95,8 +95,10 @@ docker compose exec stream npm run generate-passwords stream.example.com
 docker compose restart stream
 ```
 
-Τυπώνει admin password, stream secret και τις έτοιμες ρυθμίσεις του OBS, και γράφει τα
-credentials στο mounted `config.json` — γι' αυτό χρειάζεται restart, διαβάζεται μόνο στο boot.
+Τυπώνει admin password, το έτοιμο Stream Key του OBS (`stream?key=...`) και τις υπόλοιπες
+ρυθμίσεις, γράφει τα credentials στο mounted `config.json` — γι' αυτό χρειάζεται restart,
+διαβάζεται μόνο στο boot — και φτιάχνει τον πελάτη `default` στο `data/clients.json`
+αν δεν υπάρχει ήδη (δες [Πελάτες](#πελάτες-κλειδιά-εκπομπής-και-όριο-θεατών)).
 
 **Μέχρι να τρέξει αυτό, ο server δουλεύει με τους κωδικούς-παραδείγματα του `config.example.json`.**
 
@@ -290,8 +292,8 @@ npm run test-stream                              # bare metal
 docker compose exec stream npm run test-stream   # Docker
 ```
 
-Εκπέμπει τις χρωματικές μπάρες του ffmpeg (`testsrc`) με συνθετικό ήχο, φτιάχνοντας μόνο
-του το `sign` από το `config.json`. Αποδεικνύει σε ένα βήμα ότι δουλεύουν RTMP, publish
+Εκπέμπει τις χρωματικές μπάρες του ffmpeg (`testsrc`) με συνθετικό ήχο, παίρνοντας μόνο
+του το κλειδί του `/live/stream` από το `clients.json`. Αποδεικνύει σε ένα βήμα ότι δουλεύουν RTMP, publish
 auth, ffmpeg και HLS — χωρίς να ανοίξεις OBS. Ctrl-C για τερματισμό.
 
 Με το δημόσιο hostname περνάει από έξω, οπότε ελέγχει και Caddy, DNS και στατιστικά:
@@ -432,6 +434,46 @@ playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί 
 περιορίζουν οι όροι σε non-Enterprise plan. Η καθαρή λύση είναι το
 [R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος), που είναι
 [ρητά εντός των όρων](#tos) και κάνει τον κανόνα περιττό.
+
+## Πελάτες, κλειδιά εκπομπής και όριο θεατών
+
+Ο έλεγχος της εκπομπής είναι δικός μας, όχι του nms (`auth.publish: false`). Κάθε path
+ανήκει σε έναν πελάτη και θέλει το δικό του τυχαίο κλειδί — όλα δηλωμένα στο
+`data/clients.json`:
+
+```json
+{
+  "pelatis-a": {
+    "limit": 200,
+    "paths": { "/live/kamera1": "KEY1", "/live/kamera2": "KEY2" }
+  }
+}
+```
+
+Στο OBS το κλειδί μπαίνει στο Stream Key: `kamera1?key=KEY1`. Το nms κόβει το query πριν
+φτιάξει το path, οπότε φάκελος HLS, στατιστικά και urls αναπαραγωγής δεν αλλάζουν.
+
+- **Άγνωστο path δεν εκπέμπει.** Περνάει μόνο ό,τι είναι δηλωμένο εδώ.
+- **Χωρίς `clients.json` (ή με άδειο) δεν επιβάλλεται τίποτα** — ο δρόμος αναδίπλωσης: ένα
+  αρχείο που λείπει ή χάλασε δεν ρίχνει τις εκπομπές. Γι' αυτό ακριβώς το
+  `generate-passwords` φτιάχνει στην πρώτη εγκατάσταση έναν πελάτη `default` για το
+  `/live/stream`: αλλιώς ένας καθαρός server θα ήταν ορθάνοιχτος σε όποιον ξέρει το URL.
+- Το `limit` είναι **αθροιστικό σε όλα τα paths του πελάτη** (το πακέτο πουλιέται ανά
+  πελάτη, όχι ανά κάμερα)· `0` ή απόν = χωρίς όριο. Ο θεατής πάνω από το όριο παίρνει 404
+  στο playlist — ίδιο σήμα με το «δεν εκπέμπει», οπότε ο player μπαίνει στον υπάρχοντα
+  δρόμο επανασύνδεσης — ενώ όποιος ήδη μετριέται δεν κόβεται ποτέ. Ο HLS θεατής
+  ελευθερώνει τη θέση του 30s μετά το κλείσιμο του player.
+- Αλλαγή κλειδιού ή διαγραφή πελάτη κόβει τον publisher **μέσα σε 10s**, χωρίς restart.
+
+### Sync με το panel
+
+Με συμπληρωμένο `panel.url` στο `config.json`, ο server κάνει ανά 10s POST
+`<url>/servers/<host>/sync` με το snapshot (τι παίζει, πόσοι θεατές) και γράφει την
+απάντηση στο `data/clients.json`. Pull αντί για push: ο server συγχρονίζεται μόνος του
+μετά από restart ή deploy, ενώ ένα push προς server εκτός λειτουργίας θα χανόταν και το
+panel θα έπρεπε να κρατάει ουρά. Αν το panel είναι κάτω, μένει σε ισχύ το τελευταίο
+`clients.json` — panel κάτω δεν σημαίνει εκπομπές κάτω. Κενό `url` = απενεργοποιημένο,
+το `clients.json` το γράφει το χέρι.
 
 ## Admin UI
 
