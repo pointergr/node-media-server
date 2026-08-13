@@ -46,5 +46,17 @@ assert.equal(publishAllowed("/live/k1", undefined), false, "χωρίς κλει�
 assert.equal(publishAllowed("/live/άγνωστο", "K1"), false, "άγνωστο path = μπλόκο");
 assert.equal(publishAllowed("/live/άγνωστο", undefined), false, "άγνωστο path χωρίς κλειδί = μπλόκο");
 
+// Ο διακόπτης είναι η ύπαρξη του αρχείου, όχι το πόσοι πελάτες υπάρχουν μέσα:
+// έγκυρο `{}` (server χωρίς πελάτες, ή με όλους απενεργοποιημένους) κλείνει —
+// αλλιώς το πρώτο κιόλας sync θα τον άφηνε ορθάνοιχτο.
+write({});
+clearClientsCache();
+assert.equal(publishAllowed("/live/stream", "οτιδήποτε"), false, "άδειο clients.json = κανείς δεν εκπέμπει");
+
+// Ενώ το αρχείο που λείπει ξαναγυρίζει στη σημερινή συμπεριφορά.
+fs.rmSync(file);
+clearClientsCache();
+assert.equal(publishAllowed("/live/stream", undefined), true, "αρχείο που λείπει = καμία επιβολή");
+
 fs.rmSync(file.slice(0, file.lastIndexOf("/")), { recursive: true, force: true });
 console.log("clients loader OK");

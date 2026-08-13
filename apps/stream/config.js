@@ -62,22 +62,22 @@ export const CLIENTS = process.env.CLIENTS_FILE ?? "./data/clients.json";
 
 // Το playlist ζητιέται κάθε 2s ανά θεατή· 200 θεατές = 100 reads/s στον δίσκο.
 // 5s cache: ο admin βλέπει την αλλαγή του πρακτικά αμέσως, ο δίσκος δεν το καταλαβαίνει.
-let cache = { ts: 0, data: {} };
+let cache = { ts: 0, data: {}, ok: false };
 
 // Σύγχρονο διάβασμα επίτηδες: καλείται μέσα στο trackHls και σε event handlers
 // που δεν είναι async.
 export function loadClients() {
   if (Date.now() - cache.ts < 5000) return cache.data;
   try {
-    cache = { ts: Date.now(), data: JSON.parse(fs.readFileSync(CLIENTS, "utf8")) };
+    cache = { ts: Date.now(), data: JSON.parse(fs.readFileSync(CLIENTS, "utf8")), ok: true };
   } catch {
-    cache = { ts: Date.now(), data: {} }; // λείπει/χαλασμένο = χωρίς πελάτες
+    cache = { ts: Date.now(), data: {}, ok: false }; // λείπει/χαλασμένο = χωρίς πελάτες
   }
   return cache.data;
 }
 
 // Μόνο για τα tests: αλλιώς θα έπρεπε να περιμένουν 5s σε κάθε αλλαγή αρχείου.
-export const clearClientsCache = () => (cache = { ts: 0, data: {} });
+export const clearClientsCache = () => (cache = { ts: 0, data: {}, ok: false });
 
 export const clientOf = (path) =>
   Object.values(loadClients()).find((c) => c.paths?.[path] !== undefined);
@@ -85,11 +85,14 @@ export const clientOf = (path) =>
 // Ο έλεγχος ζει εδώ και μόνο εδώ: τον καλεί το app.js στο postPublish (τη στιγμή
 // της σύνδεσης) και το stats.js στο sample() (ανάκληση εν ώρα εκπομπής). Δύο
 // αντίγραφα θα απέκλιναν και το ένα από τα δύο σημεία θα άφηνε τρύπα.
-// Χωρίς πελάτες δεν επιβάλλεται τίποτα: αυτός είναι ο δρόμος αναδίπλωσης — ένα
-// clients.json που λείπει ή χάλασε δεν ρίχνει τις εκπομπές. Με έστω έναν πελάτη
-// όμως, path που δεν είναι δηλωμένο δεν εκπέμπει.
+// Ο διακόπτης είναι η **ύπαρξη** του αρχείου, όχι το περιεχόμενό του: αρχείο
+// που λείπει ή χάλασε δεν ρίχνει τις εκπομπές (δρόμος αναδίπλωσης), αλλά ένα
+// έγκυρο `{}` σημαίνει «αυτός ο server δεν έχει κανέναν πελάτη» και κλείνει —
+// αλλιώς ένας server που μόλις μπήκε στο panel, ή του οποίου απενεργοποιήθηκαν
+// όλοι οι πελάτες, θα γινόταν ορθάνοιχτος με το πρώτο sync.
 export function publishAllowed(streamPath, key) {
-  if (!Object.keys(loadClients()).length) return true;
+  loadClients();
+  if (!cache.ok) return true;
   const expected = clientOf(streamPath)?.paths[streamPath];
   // Ρητός έλεγχος για undefined: άγνωστο path με κλειδί undefined θα περνούσε
   // από σκέτη σύγκριση (undefined === undefined).
