@@ -478,15 +478,39 @@ panel θα έπρεπε να κρατάει ουρά. Αν το panel είναι
 `clients.json` — panel κάτω δεν σημαίνει εκπομπές κάτω. Κενό `url` = απενεργοποιημένο,
 το `clients.json` το γράφει το χέρι.
 
+### Το κεντρικό panel
+
+`apps/api` (NestJS) + `apps/panel` (Nuxt SPA, στατικά αρχεία) — μία εφαρμογή διαχείρισης
+για όλους τους stream servers, ένα μόνο deployment (`docker compose up -d --build` μέσα στο
+`apps/api` σηκώνει Nest + Caddy με τα στατικά του panel). Το `Caddy` κάνει `/api/*` → Nest
+και ό,τι άλλο → `file_server` με SPA fallback στο `index.html` (client-side routing).
+
+- **Ο admin** βλέπει `/admin/servers` (προσθήκη/διαγραφή stream server, εδώ παράγεται και το
+  `panel: {...}` block για το `config.json` κάθε server), `/admin/clients` (πελάτες, paths,
+  κλειδιά, όριο θεατών) και `/admin` (live streams **όλων** των servers, θεατές, bitrate,
+  restart — ισοδύναμο του παλιού `admin/dashboard.html` αλλά συγκεντρωτικό).
+- **Ο πελάτης** βλέπει μόνο τα δικά του streams (`/`): stream key έτοιμο για αντιγραφή στο
+  OBS, μετρητή θεατών σε σχέση με το όριό του, player.
+
+Deployment του κεντρικού host:
+
+```bash
+cd apps/api
+cp .env.example .env      # DOMAIN=panel.example.com, JWT_SECRET
+docker compose up -d --build
+docker compose exec api node dist/src/seed.js   # πρώτος admin χρήστης
+```
+
 ### Σύνδεση με το κεντρικό panel
 
 Πλήρες συμβόλαιο των endpoints στο [`apps/api/README.md`](apps/api/README.md). Εδώ μόνο
 τα βήματα άκρη σε άκρη:
 
-1. Στο κεντρικό μηχάνημα: `cd apps/api && docker compose up -d --build`, μετά
-   `docker compose exec api node dist/src/seed.js` για τον πρώτο admin χρήστη.
-2. `POST /servers` με `host`, `adminUrl`, `adminUser`, `adminPass` (τα credentials του
-   `/admin` API αυτού του stream server) → η απάντηση έχει το `token` του server.
+1. Το κεντρικό panel είναι ήδη πάνω (δες «Το κεντρικό panel» παραπάνω) και έχεις συνδεθεί
+   ως admin.
+2. `/admin/servers` → πρόσθεσε τον server με `host`, `adminUrl`, `adminUser`, `adminPass`
+   (τα credentials του `/admin` API αυτού του stream server) — η οθόνη δείχνει, μία φορά,
+   το έτοιμο μπλοκ `panel: {...}` για το `config.json` (μαζί με το `token` του server).
 3. Στον stream server, `config.json`:
    ```json
    "panel": { "url": "https://panel.example.com/api", "token": "<το token>", "host": "<το host>" }

@@ -18,7 +18,9 @@ services:
       - data:/app/apps/api/data
 
   caddy:
-    image: caddy:2
+    build:
+      context: ../..
+      dockerfile: apps/panel/Dockerfile
     restart: unless-stopped
     ports:
       - "80:80"

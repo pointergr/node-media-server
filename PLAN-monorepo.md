@@ -1,7 +1,6 @@
 # Πλάνο: monorepo, NestJS API, Nuxt panels
 
-Κατάσταση: **Βήματα 0, 1, 2, 4 υλοποιήθηκαν (2026-08-13). Βήμα 3 (Nuxt admin) και 5
-(user panel) δεν έγιναν.** Γραμμένο 2026-08-13.
+Κατάσταση: **Όλα τα βήματα (0-5) υλοποιήθηκαν (2026-08-13).** Γραμμένο 2026-08-13.
 Συμπληρώνει το [PLAN-multitenant.md](PLAN-multitenant.md) — εκεί περιγράφεται *τι*
 κάνει η κεντρική διαχείριση, εδώ *πού ζει και πώς χτίζεται*.
 
@@ -180,14 +179,13 @@ stream server έχει ήδη ό,τι χρειάζεται.
 
 ### 3. Nuxt admin σε ισοδυναμία με το σημερινό dashboard
 
-**Δεν έγινε.** Αναβλήθηκε — δες Βήμα 4.
+**Έγινε**, αφότου έγινε πρώτα το Βήμα 4 (το παλιό dashboard είχε ήδη φύγει, οπότε η
+«ισοδυναμία» ελέγχθηκε πάνω στο ιστορικό σχόλιο, όχι live σύγκριση).
 
-`apps/panel` με `ssr: false`, login → JWT, `pages/admin/index.vue` που δείχνει ό,τι
-δείχνει σήμερα το `admin/dashboard.html` (live streams, θεατές, bitrate, πρόσφατες
-συνδέσεις, restart) αλλά για **όλους** τους servers, μέσω `GET /live`. Ο player
-(`admin/player.html`, hls.js) γίνεται σελίδα `/admin/streams/[id]`.
-
-Ισοδυναμία σημαίνει: δεν σβήνεις τίποτα πριν δεις τα ίδια νούμερα και στα δύο.
+`apps/panel` με `ssr: false`, login → JWT, `pages/admin/index.vue` που δείχνει live
+streams, θεατές, bitrate, πρόσφατες συνδέσεις, restart — αλλά για **όλους** τους servers,
+μέσω `GET /live`. Ο player είναι η σελίδα `/admin/streams/[id]`. Ξεχωριστές σελίδες
+`/admin/servers` και `/admin/clients` για CRUD.
 
 ### 4. Σβήσιμο του παλιού UI
 
@@ -202,7 +200,7 @@ IP του κεντρικού server· δεν είναι απαραίτητο, τ
 
 ### 5. User panel
 
-**Δεν έγινε.**
+**Έγινε.**
 
 `pages/index.vue`: τα streams του πελάτη, το stream key του (`όνομα?key=...`)
 έτοιμο για αντιγραφή στο OBS, ο μετρητής θεατών σε σχέση με το όριό του, και ο
@@ -226,8 +224,8 @@ GraphQL, microservices, μετατροπή του stream server σε TypeScript.
 
 ## Ανοιχτά
 
-- Ένα domain για το panel (`panel.example.com`) ή subdomain ανά πελάτη;
+- **Αποφασίστηκε: ένα domain για το panel** (`panel.example.com`), όχι subdomain ανά
+  πελάτη — admin και customer είναι το ίδιο Nuxt app με role guard (δες «Αποφάσεις»),
+  δεν υπάρχει λόγος για ξεχωριστό domain μέχρι να αλλάξει αυτό.
 - Ο Nest κρατάει τα snapshots μόνο στη μνήμη — μετά από restart το `/live` είναι
   άδειο μέχρι το επόμενο tick (≤10s). Αποδεκτό, αλλά να το ξέρει το UI.
-- Ενημέρωση `CLAUDE.md`: οι εντολές αλλάζουν (`npm start -w apps/stream`), και
-  ίσως θέλει δικό του `CLAUDE.md` κάθε app.

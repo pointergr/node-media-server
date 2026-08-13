@@ -1,5 +1,8 @@
 node_modules
 apps/*/node_modules
+apps/*/dist
+apps/panel/.nuxt
+apps/panel/.output
 media
 data
 stats.db*

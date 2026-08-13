@@ -5,8 +5,9 @@ NestJS API της κεντρικής διαχείρισης: πελάτες, pat
 (Βήμα 2) και [PLAN-multitenant.md](../../PLAN-multitenant.md) (Φάση 6) στη
 ρίζα του repo για το γιατί.
 
-Δεν υπάρχει UI εδώ — το Nuxt panel αναβάλλεται (PLAN-monorepo.md). Μέχρι τότε
-η διαχείριση γίνεται με curl/Postman ή το `npm run seed`.
+Το UI ζει στο `apps/panel` (Nuxt SPA, στατικά αρχεία που σερβίρει ο Caddy εδώ
+δίπλα) — δες [PLAN-monorepo.md](../../PLAN-monorepo.md). Ο πρώτος admin
+χρήστης φτιάχνεται πάντα με το `npm run seed`.
 
 ## Τοπικά
 
@@ -45,9 +46,10 @@ docker compose up -d --build
 docker compose exec api node dist/src/seed.js
 ```
 
-Δύο services: `api` (Nest, το sqlite σε named volume) και `caddy`
-(`/api/*` → Nest· τα στατικά του Nuxt panel θα μπουν εδώ αργότερα ως
-`file_server` με SPA fallback — δες σχόλιο στο `Caddyfile`).
+Δύο services: `api` (Nest, το sqlite σε named volume) και `caddy` (χτισμένο
+από το `apps/panel/Dockerfile` — κουβαλάει τα στατικά του Nuxt panel στο
+`/srv`)· `/api/*` → Nest, ό,τι άλλο → `file_server` με SPA fallback (δες
+`Caddyfile`).
 
 ## Auth
 
@@ -72,12 +74,19 @@ docker compose exec api node dist/src/seed.js
 | `GET /servers` / `POST /servers` | admin | CRUD server· το `token` παράγεται μόνο του αν δεν δοθεί |
 | `GET/PATCH/DELETE /servers/:id` | admin | |
 | `GET /servers/:host/series?range=` | admin | proxy → `/admin/api/series` του stream server (basic auth από το Server) |
+| `GET /servers/:host/sessions` | admin | proxy → `/admin/api/sessions` |
 | `DELETE /servers/:host/sessions/:id` | admin | proxy → `/admin/api/sessions/:id` |
+| `POST /servers/:host/restart` | admin | proxy → `/admin/api/restart` |
 | `GET /clients` / `POST /clients` | admin | `POST` δέχεται προαιρετικά `username`+`password` — φτιάχνει μαζί και τον customer χρήστη (δες «Αποφάσεις» παρακάτω) |
-| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `limit`, `disabled`, `name`, `serverId` |
+| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `limit`, `disabled`, `name`, `serverId`· `DELETE` σβήνει και τα paths του (cascade) |
 | `POST /clients/:id/paths` | admin | `{path}` → παράγει κλειδί (16 bytes, base64url) |
 | `DELETE /clients/:id/paths/:pathId` | admin | |
-| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `path`, `key`, `streamKey` (`όνομα?key=...`), `limit`, `viewers` (από το τελευταίο snapshot) |
+| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `limit`, `viewers` (από το τελευταίο snapshot) |
+
+`DELETE /servers/:id` με πελάτες ακόμα ανατεθειμένους σε αυτόν δίνει **409**:
+οι πελάτες δεν κάνουν cascade με τον server επίτηδες, το να σβήνεις έναν
+server δεν πρέπει να σβήνει σιωπηλά και τους πελάτες του — μετακίνησέ τους ή
+σβήσε τους πρώτα.
 
 ## Αποφάσεις
 
@@ -94,6 +103,8 @@ docker compose exec api node dist/src/seed.js
   `$transaction`.
 - **`db.$queryRaw`/migrations: όχι.** `prisma db push` αρκεί σε ένα μικρό
   σχήμα χωρίς ιστορικό αλλαγών σε production ακόμα.
-- **CORS ανοιχτό.** Δεν υπάρχει ακόμα Nuxt panel να ξέρουμε το origin του.
+- **Χωρίς CORS.** Το panel σερβίρεται από τον ίδιο Caddy (`/api/*` → εδώ) και
+  στο dev το ίδιο κάνει το proxy του Nuxt — δεν υπάρχει νόμιμο cross-origin
+  κάλεσμα να επιτραπεί.
 - **Χωρίς class-validator.** Ελάχιστος χειροκίνητος έλεγχος (`BadRequestException`
   σε λείποντα πεδία) — δεν αξίζει άλλη εξάρτηση για λίγα endpoints.

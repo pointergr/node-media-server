@@ -4,10 +4,9 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  // Ανοιχτό CORS: το Nuxt panel (αναβάλλεται, δες PLAN-monorepo.md) θα ζει σε
-  // άλλο origin/build, και η βάση παίκτη είναι λίγοι εσωτερικοί χρήστες —
-  // δεν αξίζει allowlist συντήρησης πριν υπάρξει καν το panel.
-  app.enableCors();
+  // Χωρίς CORS επίτηδες: το panel σερβίρεται από τον ίδιο Caddy με το API
+  // (`/api/*` → εδώ), και στο `npm run dev` το ίδιο κάνει το dev proxy του
+  // Nuxt. Δεν υπάρχει νόμιμο cross-origin κάλεσμα να επιτρέψουμε.
   const port = Number(process.env.PORT) || 3000;
   await app.listen(port);
   console.log(`API listening on :${port}`);

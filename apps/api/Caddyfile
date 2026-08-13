@@ -1,12 +1,43 @@
 # Ίδιο σχήμα με apps/stream/Caddyfile: το DOMAIN έρχεται από .env, ο Caddy
 # βγάζει μόνος του certificate (Cloudflare SSL mode Full, όχι Flexible).
 {$DOMAIN} {
-	# Το Nuxt panel (PLAN-monorepo.md, αναβάλλεται) θα μπει εδώ ως στατικά
-	# αρχεία — file_server με SPA fallback στο index.html. Μέχρι τότε δεν
-	# υπάρχει τίποτα να σερβίρει το root, μόνο το /api.
 	handle /api/* {
 		uri strip_prefix /api
 		reverse_proxy {$API_HOST:localhost}:3000
+	}
+
+	# Bare root/file_server (εκτός handle) ακολουθούν τη σταθερή σειρά
+	# directives του Caddy, όχι τη σειρά του αρχείου — θα πρόλαβαν το /api/*
+	# πριν καν φτάσει στο handle παραπάνω. Γι' αυτό το catch-all μπαίνει κι
+	# αυτό σε handle: πολλαπλά handle συγκρίνονται top-to-bottom, πρώτο match
+	# κερδίζει, ίδια λογική με τα route directives του nms.
+	handle {
+		# Το Nuxt panel: στατικά αρχεία (nuxt generate), τα κουβαλάει το ίδιο
+		# image του Caddy (apps/panel/Dockerfile) στο /srv. Το SPA κάνει
+		# client-side routing, οπότε κάθε άγνωστο path (π.χ. refresh στο
+		# /admin/clients) πρέπει να πέφτει στο index.html — χωρίς το
+		# try_files εδώ θα ήταν 404 του Caddy.
+		root * /srv
+		encode gzip
+
+		# Ίδιο σκεπτικό με τα .m3u8/.ts του apps/stream/Caddyfile — δες εκεί
+		# το σχόλιο για το γιατί χρειάζεται defer. Τα _nuxt/* είναι hashed
+		# στο όνομα (νέο build = νέο filename), οπότε ασφαλώς immutable· το
+		# index.html είναι πάντα το ίδιο filename και πρέπει να ξαναφέρνεται
+		# σε κάθε deploy.
+		@nuxt path /_nuxt/*
+		header @nuxt {
+			Cache-Control "public, max-age=31536000, immutable"
+			defer
+		}
+		@shell not path /_nuxt/*
+		header @shell {
+			Cache-Control "no-store"
+			defer
+		}
+
+		try_files {path} /index.html
+		file_server
 	}
 
 	log

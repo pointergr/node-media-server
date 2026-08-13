@@ -19,10 +19,13 @@ cd apps/stream && node test-stats.js   # ένα μόνο test — σκέτα nod
 npm run test-stream [-- <rtmp host>] # δοκιμαστική εκπομπή με ffmpeg testsrc, χωρίς OBS
 npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps/stream/config.json + apps/stream/data/passwords.json
 npm run seed -w apps/api            # φτιάχνει τον πρώτο admin χρήστη του κεντρικού panel
+npm run dev -w apps/panel           # Nuxt dev server, με devProxy /api -> localhost:3000 (χρειάζεται το apps/api να τρέχει)
+npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public, τα στατικά που σερβίρει ο Caddy
 ```
 
-Το `npm test` της ρίζας τρέχει **και τα δύο** workspaces — `apps/stream` (σκέτα scripts) και
-`apps/api` (`nest build && node --test dist/test/*.js`, δες [apps/api/README.md](apps/api/README.md)).
+Το `npm test` της ρίζας τρέχει **και τα τρία** workspaces — `apps/stream` (σκέτα scripts),
+`apps/api` (`nest build && node --test dist/test/*.js`, δες [apps/api/README.md](apps/api/README.md))
+και `apps/panel` (`test-dash.js`, σκέτο script).
 
 Θέλει **Node 24** (το `node:sqlite` του `stats.js`) — pinned στο volta. Σε Docker: `docker compose exec stream npm test` (μέσα στο container το cwd είναι ήδη `apps/stream`).
 
@@ -84,6 +87,24 @@ image. Tests: `nest build` πρώτα, μετά σκέτο `node --test` πάν�
 άδεια μέχρι το επόμενο sync tick (≤10s) από κάθε server. Δεν αποθηκεύονται στη sqlite: το
 ιστορικό (series) το κρατάει ήδη κάθε stream server στο δικό του `stats.db` και το API κάνει
 proxy σε αυτό, δεν το αντιγράφει κεντρικά.
+
+## apps/panel
+
+Nuxt SPA, `ssr: false` + `nuxt generate` → στατικά αρχεία (δες `apps/panel/Dockerfile`,
+`apps/api/Caddyfile`) — κανένα Node runtime για το UI, το build τρέχει μόνο στο image του
+Caddy. Καμία βιβλιοθήκη UI/chart/state: το CSS και τα SVG γραφήματα (`app/utils/dash.ts`)
+είναι μεταφορά αυτούσια από το παλιό `admin/dashboard.html`, μοναδική εξάρτηση το hls.js
+για τον player. Κάλυψη admin (`/admin/*`: servers, clients, live streams όλων των servers)
+και customer (`/`: τα streams του πελάτη, stream key έτοιμο για αντιγραφή) στην ίδια
+εφαρμογή — δες PLAN-monorepo.md για το γιατί όχι δύο apps.
+
+Auth: JWT σε localStorage (`POST /auth/login` του `apps/api`) και ένα global middleware
+που κόβει την πρόσβαση σε `/admin/*` χωρίς ρόλο admin. Ο πραγματικός έλεγχος είναι στο
+API — το middleware εδώ απλώς δεν δείχνει άδειες οθόνες πριν έρθει το 401.
+
+Series/sessions/restart είναι πάντα **ανά server** (`GET /servers/:host/...`), όχι
+συγκεντρωτικά: ζουν στο sqlite του κάθε stream server και το `apps/api` κάνει proxy, δεν τα
+αντιγράφει κεντρικά (ίδιο σκεπτικό με το `GET /live` — δες «apps/api» παραπάνω).
 
 ## Deploy
 
