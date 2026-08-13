@@ -63,6 +63,20 @@ export class ServersController {
     return this.servers.proxy(host, `/admin/api/series${qs}`);
   }
 
+  // Το ιστορικό συνδέσεων ζει στο sqlite του κάθε stream server — proxy, όχι
+  // αντιγραφή: server κάτω σημαίνει ούτως ή άλλως ότι δεν έχεις τι να δεις.
+  @Get('servers/:host/sessions')
+  sessions(@Param('host') host: string) {
+    return this.servers.proxy(host, '/admin/api/sessions');
+  }
+
+  // Ο stream server απαντάει 202 και τερματίζει μετά· τον ξανασηκώνει ο
+  // supervisor του (pm2 / restart policy), όχι εμείς.
+  @Post('servers/:host/restart')
+  restart(@Param('host') host: string) {
+    return this.servers.proxy(host, '/admin/api/restart', 'POST');
+  }
+
   @Delete('servers/:host/sessions/:id')
   killSession(@Param('host') host: string, @Param('id') id: string) {
     return this.servers.proxy(host, `/admin/api/sessions/${encodeURIComponent(id)}`, 'DELETE');

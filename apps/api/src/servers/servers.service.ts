@@ -50,7 +50,7 @@ export class ServersService {
 
   // Proxy με basic auth προς το /admin/api του stream server — το ίδιο auth
   // που χρησιμοποιεί το dashboard του (stats.js), βλέπε CLAUDE.md.
-  async proxy(host: string, path: string, method: 'GET' | 'DELETE' = 'GET'): Promise<unknown> {
+  async proxy(host: string, path: string, method: 'GET' | 'POST' | 'DELETE' = 'GET'): Promise<unknown> {
     const server = await this.byHost(host);
     const auth = Buffer.from(`${server.adminUser}:${server.adminPass}`).toString('base64');
     let res: Response;

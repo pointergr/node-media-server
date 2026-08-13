@@ -172,3 +172,43 @@ test('/me/streams: χωρίς token -> 401', async () => {
   const res = await fetch(`${base}/me/streams`);
   assert.equal(res.status, 401);
 });
+
+// Το proxy είναι το μοναδικό μονοπάτι του panel προς το ιστορικό και το restart
+// ενός stream server: αν σπάσει το basic auth ή το method, δεν το πιάνει τίποτα
+// άλλο. Στη θέση του stream server ένας σκέτος http server.
+test('proxy: περνάει basic auth και method στον stream server', async () => {
+  const seen: { url: string; method: string; auth?: string }[] = [];
+  const { createServer } = await import('node:http');
+  const stub = createServer((req, res) => {
+    seen.push({ url: req.url!, method: req.method!, auth: req.headers.authorization });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify([{ id: 'abc' }]));
+  });
+  await new Promise<void>((r) => stub.listen(0, '127.0.0.1', r));
+  const port = (stub.address() as { port: number }).port;
+
+  const token = await login('admin', 'adminpass');
+  const { PrismaClient } = await import('@prisma/client');
+  const prisma = new PrismaClient();
+  await prisma.server.update({
+    where: { host: 'server-a' },
+    data: { adminUrl: `http://127.0.0.1:${port}`, adminUser: 'u', adminPass: 'p' },
+  });
+
+  const sessions = await fetch(`${base}/servers/server-a/sessions`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(sessions.status, 200);
+  assert.deepEqual(await sessions.json(), [{ id: 'abc' }]);
+  assert.equal(seen[0].url, '/admin/api/sessions');
+  assert.equal(seen[0].auth, `Basic ${Buffer.from('u:p').toString('base64')}`);
+
+  await fetch(`${base}/servers/server-a/restart`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(seen[1].method, 'POST', 'το restart φτάνει ως POST');
+  assert.equal(seen[1].url, '/admin/api/restart');
+
+  await new Promise<void>((r) => stub.close(() => r()));
+});
