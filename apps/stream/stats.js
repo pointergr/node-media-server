@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
 import { clientOf, publishAllowed } from "./config.js";
 
 // Το dashboard κάνει poll ανά 5s: με δείγμα ανά 60s το bitrate έδειχνε «0 bps»
@@ -15,8 +14,6 @@ const RETENTION_DAYS = 30;
 // Ο player ξαναζητά το playlist κάθε ~2s (hls_time). 30s αντέχει και ένα stall.
 const HLS_TTL_MS = 30_000;
 const CLEANUP_MS = 24 * 60 * 60 * 1000;
-const ADMIN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "admin");
-const PAGES = { "/admin": "index.html", "/admin/": "index.html", "/admin/player": "player.html" };
 
 // range -> [πόσο πίσω σε δευτερόλεπτα, μέγεθος bucket σε δευτερόλεπτα]
 const RANGES = {
@@ -377,10 +374,6 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     if (p === "/admin/api/series") return json(res, 200, series(url.searchParams.get("range")));
     if (p === "/admin/api/sessions") {
       return json(res, 200, db.prepare("SELECT * FROM sessions ORDER BY end_ts DESC LIMIT 100").all());
-    }
-    if (PAGES[p]) {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      return res.end(fs.readFileSync(path.join(ADMIN_DIR, PAGES[p])));
     }
     json(res, 404, { error: "not found" });
   }

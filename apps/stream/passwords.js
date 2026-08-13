@@ -77,7 +77,7 @@ function ensureClient() {
 function printConfig(adminPassword, streamKey, hostname) {
   console.log(`Admin username: admin`);
   console.log(`Admin password: ${adminPassword}`);
-  console.log(`Admin UI:      https://${hostname}/admin`);
+  console.log(`Admin API:     https://${hostname}/admin/api/live  (JSON, βασικό auth — το UI ζει στο κεντρικό panel)`);
   console.log('');
   console.log(`=== ΕΚΠΟΜΠΗ (OBS) -> rtmp.${hostname} ===`);
   console.log('Το rtmp. πρέπει να είναι DNS only στο Cloudflare (γκρι σύννεφο):');

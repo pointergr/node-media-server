@@ -162,7 +162,7 @@ systemctl restart caddy
 
 Το `STREAM_HOST` μένει στο default (`localhost`) γιατί εδώ ο Caddy και ο server είναι
 στο ίδιο μηχάνημα. Δεν μπαίνει basic auth στο Caddyfile: το κάνει ο ίδιος ο admin server
-με τον κωδικό του `config.json` (δες [Admin UI](#admin-ui)).
+με τον κωδικό του `config.json` (δες [Στατιστικά](#στατιστικά-json-api)).
 
 ### Logs του Caddy
 ```bash
@@ -347,7 +347,7 @@ Stream) that you must use in order to serve video […] via the CDN»* — κα�
 | `*.ts` | R2 + custom domain | εδώ είναι το 100% του bandwidth |
 
 Το playlist **πρέπει** να μείνει στο origin: πάνω στα requests του μετράμε τους θεατές
-(δες [Admin UI](#admin-ui)). Αν πήγαινε κι αυτό στο R2, το admin UI θα έδειχνε μόνιμα μηδέν.
+(δες [Στατιστικά](#στατιστικά-json-api)). Αν πήγαινε κι αυτό στο R2, τα στατιστικά θα έδειχναν μόνιμα μηδέν.
 
 Ρύθμιση στο Cloudflare:
 
@@ -413,7 +413,7 @@ playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί 
 - **`.m3u8` — ποτέ.** Ξαναγράφεται κάθε ~2 δευτερόλεπτα. Ακόμα και 10 δευτερόλεπτα cache
   σημαίνει ότι ο player ζητάει segments που έχουν ήδη σβηστεί, δηλαδή 404 και κόλλημα.
   Είναι επίσης προϋπόθεση για τη μέτρηση θεατών: κάθε request στο playlist πρέπει να
-  φτάνει στο origin, αλλιώς το admin UI δείχνει μηδέν θεατές (δες [Admin UI](#admin-ui)).
+  φτάνει στο origin, αλλιώς τα στατιστικά δείχνουν μηδέν θεατές (δες [Στατιστικά](#στατιστικά-json-api)).
   Και το `Set-Cookie` του πρώτου request δεν πρέπει ποτέ να κασαριστεί, αλλιώς πολλοί
   players μοιράζονται το ίδιο cookie και μετράνε ως ένας.
 - **`.flv` — ποτέ.** Είναι ατέρμονο chunked response· αν το πιάσει κανόνας τύπου
@@ -425,7 +425,7 @@ playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί 
 - Caching → Configuration → Browser Cache TTL: **Respect Existing Headers**. Αλλιώς το
   Cloudflare επιβάλλει δικό του TTL στον browser και ακυρώνει το `no-store` του playlist.
 - **Tiered Cache: On** — με πολλούς θεατές μειώνει αισθητά τα requests στο origin. Σε
-  αντάλλαγμα, τα segments που σερβίρει το edge δεν μετράνε στο bitrate εξόδου του admin UI —
+  αντάλλαγμα, τα segments που σερβίρει το edge δεν μετράνε στο bitrate εξόδου των στατιστικών —
   το πραγματικό bandwidth προς τους θεατές το δείχνει το dashboard της Cloudflare.
 - Το `rtmp.` υποdomain δεν αφορά καθόλου το cache: είναι DNS only, δεν περνάει από το Cloudflare.
 - Ποτέ «Cache Everything» σε όλο το domain, ποτέ Edge TTL override στα `.m3u8`.
@@ -475,33 +475,36 @@ panel θα έπρεπε να κρατάει ουρά. Αν το panel είναι
 `clients.json` — panel κάτω δεν σημαίνει εκπομπές κάτω. Κενό `url` = απενεργοποιημένο,
 το `clients.json` το γράφει το χέρι.
 
-## Admin UI
+## Στατιστικά (JSON API)
 
-Στο `https://stream.example.com/admin` (χρήστης `admin`, ο κωδικός από το
-`generate-passwords`). Το v4 δεν έχει δικό του panel — αυτό είναι δικό μας.
+Ο stream server δεν σερβίρει πια δική του οθόνη διαχείρισης — αυτή μετακόμισε στο
+κεντρικό panel (`apps/api`). Το `/admin` εδώ μένει «χαζό» JSON API πίσω από basic auth
+(χρήστης `admin`, ο κωδικός από το `generate-passwords`), που το panel καταναλώνει:
+
+- `GET /admin/api/live` — τρέχον snapshot: ενεργά streams (θεατές, bitrate, codec,
+  ανάλυση, διάρκεια), ενεργές συνδέσεις, στατιστικά server.
+- `GET /admin/api/series?range=1h|24h|7d|30d` — ιστορικά δείγματα.
+- `GET /admin/api/sessions` — log των τελευταίων 100 συνδέσεων.
+- `DELETE /admin/api/sessions/<id>` — κόβει μια ενεργή σύνδεση.
+- `POST /admin/api/restart` — restart του server (δες παρακάτω).
 
 Το basic auth το κάνει ο ίδιος ο admin server, με τον κωδικό του `config.json`. Δεν
 μπαίνει hash στο Caddyfile: ένα δεύτερο αντίγραφο του κωδικού σε άλλο αρχείο σημαίνει
 σίγουρο 401 την πρώτη φορά που θα αλλάξουν οι κωδικοί και δεν θα ενημερωθεί.
 
-Δείχνει ενεργά streams (θεατές, bitrate, codec, ανάλυση, διάρκεια), γραφήματα για
-1h / 24h / 7d / 30d, ενεργές συνδέσεις με κουμπί kill, log πρόσφατων συνδέσεων, και
-κουμπί **Restart** στο header.
+Το `POST /admin/api/restart` δεν ξανασηκώνει τον server μόνο του: σκοτώνει πρώτα τα
+ffmpeg jobs του HLS (αλλιώς μένουν ορφανά και κλειδώνουν το streamPath για το επόμενο
+process) και μετά τερματίζει με `process.exit(0)`· τον ξανασηκώνει ο supervisor — pm2
+σε bare metal, `restart: unless-stopped` σε Docker. Απαντάει **202 πρώτα και exit μετά**:
+αν ο server τερματίσει πριν απαντήσει, ο caller βλέπει connection reset αντί για
+επιτυχία και δεν μπορεί να το ξεχωρίσει από πραγματική αποτυχία.
 
-Το Restart δεν ξανασηκώνει τον server μόνο του: κάνει `POST /admin/api/restart`,
-που σκοτώνει πρώτα τα ffmpeg jobs του HLS (αλλιώς μένουν ορφανά και κλειδώνουν το
-streamPath για το επόμενο process) και μετά τερματίζει με `process.exit(0)`· τον
-ξανασηκώνει ο supervisor — pm2 σε bare metal, `restart: unless-stopped` σε Docker.
-Το UI ζητάει επιβεβαίωση (και προειδοποιεί ρητά αν υπάρχει ενεργή εκπομπή), δείχνει
-«γίνεται restart…» και κάνει poll το `/admin/api/live` μέχρι να ξαναπαντήσει ο server,
-πριν κάνει reload τη σελίδα.
-
-Πώς δουλεύει:
+Πώς δουλεύει ο collector:
 
 - Ο collector στο `stats.js` κρεμιέται στα events του server και κρατάει δείγμα κάθε
   60 δευτερόλεπτα σε SQLite (`stats.db`), με διατήρηση 30 ημερών. Το bitrate δεν υπάρχει
   πουθενά στο API του v4 — βγαίνει από τη διαφορά δύο δειγμάτων.
-- Το UI σερβίρεται από δικό μας HTTP server στο `127.0.0.1:8001`. **Δεν** ακούει σε
+- Το API σερβίρεται από δικό μας HTTP server στο `127.0.0.1:8001`. **Δεν** ακούει σε
   εξωτερικό interface, οπότε δεν χρειάζεται άνοιγμα στο ufw· περνάει μόνο μέσω Caddy.
   Σε Docker ακούει στο `0.0.0.0` (`ADMIN_HOST`) γιατί ο Caddy είναι σε άλλο container,
   αλλά η θύρα δεν δημοσιεύεται στο host.
@@ -522,23 +525,6 @@ streamPath για το επόμενο process) και μετά τερματίζ�
   θεατών παραμένει σωστός· το πραγματικό bandwidth το δείχνουν τα R2 metrics.
 
 Το `stats.db` είναι στο `.gitignore`. Έλεγχος του collector: `node test-stats.js`.
-
-## Demo player
-
-Στο `https://stream.example.com/admin/player` — πίσω από το ίδιο basic auth με το admin UI.
-Κλικ στο όνομα ενός ενεργού stream στο admin το ανοίγει απευθείας.
-
-Παίζει το `<stream>/index.m3u8` με [hls.js](https://github.com/video-dev/hls.js) από CDN
-(σε Safari με το native HLS του browser) και ξαναδοκιμάζει κάθε 3 δευτερόλεπτα όσο δεν
-εκπέμπει κανείς — μπορείς να την αφήσεις ανοιχτή και να ξεκινήσεις το OBS μετά.
-Το stream path αλλάζει από το πεδίο πάνω δεξιά ή από το `?stream=`:
-
-```
-https://stream.example.com/admin/player?stream=/live/stream
-```
-
-Ο preview μετράει ως κανονικός θεατής στα στατιστικά — είναι ο ευκολότερος τρόπος να
-επαληθεύσεις ότι δουλεύει η μέτρηση, αλλά μην τον αφήνεις ανοιχτό όταν κοιτάς νούμερα.
 
 ## Admin API
 

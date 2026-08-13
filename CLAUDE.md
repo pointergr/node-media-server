@@ -26,7 +26,7 @@ npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps
 
 ## Αρχιτεκτονική
 
-Λεπτό wrapper γύρω από το `node-media-server` v4, στο workspace `apps/stream/`. Τα τρία πράγματα που δεν κάνει το v4 και τα κάνουμε εμείς: HLS, στατιστικά, admin UI.
+Λεπτό wrapper γύρω από το `node-media-server` v4, στο workspace `apps/stream/`. Τα δύο πράγματα που δεν κάνει το v4 και τα κάνουμε εμείς: HLS, στατιστικά (JSON API — η οθόνη διαχείρισης ζει στο κεντρικό panel, `apps/api`).
 
 **`app.js`** — orchestrator. Το v4 δεν βγάζει HLS, οπότε σε κάθε `postPublish` σπρώχνει ένα `ffmpeg -c copy` (remux) που διαβάζει από το δικό μας RTMP στο loopback και γράφει segments στο `config.static.root`. Τα jobs κλειδώνονται με **`session.streamPath`, όχι `session.id`**: το v4 βγάζει `postPublish` πριν απορρίψει διπλό publisher, οπότε το reconnect του OBS αφήνει ζόμπι ffmpeg στον ίδιο φάκελο (δες το σχόλιο στο `app.js:35`).
 Το `ff.on("exit")` σβήνει το job από τον χάρτη: χωρίς αυτό, ένας ffmpeg που πεθαίνει μόνος
@@ -59,8 +59,6 @@ npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps
 - Το `limit` είναι αθροιστικό σε όλα τα paths του πελάτη και επιβάλλεται στα δύο κανάλια αναπαραγωγής: `trackHls` (rewrite του `req.url` σε ανύπαρκτο αρχείο, γιατί δική μας απάντηση θα διπλογραφόταν με του express) και `postPlay`. Ο ήδη μετρημένος θεατής περνάει πάντα, και ο έλεγχος έρχεται **μετά** το `isLocal` — ο ffmpeg του HLS δεν κόβεται ποτέ από όριο, αλλιώς σταματά όλο το HLS του stream.
 
 **`panel.js`** — προαιρετικό, ενεργό μόνο αν `config.panel.url` δεν είναι κενό (ίδιο μοτίβο με το `hls.r2.accessKeyId`). POST ανά 10s με το `snapshot()`, η απάντηση γράφεται με tmp+rename στο `clients.json` (ο loader διαβάζει σύγχρονα και δεν πρέπει να δει μισό JSON). Σφάλμα = log και τίποτα άλλο: panel κάτω δεν σημαίνει εκπομπές κάτω.
-
-**`admin/`** — δύο στατικά HTML (dashboard + hls.js player) που σερβίρει το `stats.js` από το `PAGES` map και τρέφονται από `/admin/api/{live,series,sessions}`.
 
 ## Deploy
 
