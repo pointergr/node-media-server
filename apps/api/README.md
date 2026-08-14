@@ -81,7 +81,8 @@ docker compose exec api node dist/src/seed.js
 | `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `limit`, `disabled`, `name`, `serverId`· `DELETE` σβήνει και τα paths του (cascade) |
 | `POST /clients/:id/paths` | admin | `{path}` → παράγει κλειδί (16 bytes, base64url) |
 | `DELETE /clients/:id/paths/:pathId` | admin | |
-| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `limit`, `viewers` (από το τελευταίο snapshot) |
+| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `limit`, `viewers`, `since` (πότε συνδέθηκε ο publisher, `null` = δεν εκπέμπει) και `in_bps` — τα τρία τελευταία από το τελευταίο snapshot |
+| `GET /me/series?range=` | οποιοσδήποτε συνδεδεμένος | ίδιο proxy με το `/servers/:host/series`, αλλά **μόνο** για τα paths του πελάτη του token και χωρίς το `server` block (CPU/μνήμη). Ο server βγαίνει από τον πελάτη, δεν τον διαλέγει ο caller |
 
 `DELETE /servers/:id` με πελάτες ακόμα ανατεθειμένους σε αυτόν δίνει **409**:
 οι πελάτες δεν κάνουν cascade με τον server επίτηδες, το να σβήνεις έναν

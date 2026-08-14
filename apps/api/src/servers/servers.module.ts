@@ -7,5 +7,7 @@ import { SyncModule } from '../sync/sync.module';
   imports: [SyncModule],
   providers: [ServersService],
   controllers: [ServersController],
+  // Το /me/series κάνει το ίδιο proxy προς τον stream server, φιλτραρισμένο.
+  exports: [ServersService],
 })
 export class ServersModule {}

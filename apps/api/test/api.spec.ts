@@ -256,3 +256,46 @@ test('DELETE /servers/:id με πελάτες -> 409', async () => {
   });
   assert.equal(res.status, 409);
 });
+
+// Το /me/series είναι proxy στον ίδιο stream server με το admin endpoint, αλλά
+// για πελάτη: αν χαθεί το φιλτράρισμα, ο ένας πελάτης βλέπει τις χρονοσειρές του
+// άλλου (και το CPU του μηχανήματος). Δεν το πιάνει τίποτα άλλο.
+test('/me/series: μόνο τα paths του πελάτη, χωρίς το server block', async () => {
+  const { createServer } = await import('node:http');
+  const seen: string[] = [];
+  const stub = createServer((req, res) => {
+    seen.push(req.url!);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      bucket: 60,
+      from: 1000,
+      streams: [
+        { t: 1000, stream: '/live/kamera1', in_bps: 5, out_bps: 6, viewers: 2 },
+        { t: 1000, stream: '/live/allounou', in_bps: 9, out_bps: 9, viewers: 9 },
+      ],
+      server: [{ t: 1000, cpu_pct: 42, mem_mb: 100 }],
+    }));
+  });
+  await new Promise<void>((r) => stub.listen(0, '127.0.0.1', r));
+  const port = (stub.address() as { port: number }).port;
+
+  const { PrismaClient } = await import('@prisma/client');
+  const prisma = new PrismaClient();
+  await prisma.server.update({
+    where: { host: 'server-a' },
+    data: { adminUrl: `http://127.0.0.1:${port}` },
+  });
+
+  const tokenA = await login('usera', 'passa');
+  const res = await fetch(`${base}/me/series?range=24h`, {
+    headers: { authorization: `Bearer ${tokenA}` },
+  });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { streams: { stream: string }[]; server?: unknown };
+
+  assert.equal(seen[0], '/admin/api/series?range=24h', 'το range φτάνει στον stream server');
+  assert.deepEqual(body.streams.map((r) => r.stream), ['/live/kamera1']);
+  assert.equal(body.server, undefined, 'CPU/μνήμη του μηχανήματος δεν πάνε σε πελάτη');
+
+  await new Promise<void>((r) => stub.close(() => r()));
+});

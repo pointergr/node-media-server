@@ -92,11 +92,19 @@ proxy σε αυτό, δεν το αντιγράφει κεντρικά.
 
 Nuxt SPA, `ssr: false` + `nuxt generate` → στατικά αρχεία (δες `apps/panel/Dockerfile`,
 `apps/api/Caddyfile`) — κανένα Node runtime για το UI, το build τρέχει μόνο στο image του
-Caddy. Καμία βιβλιοθήκη UI/chart/state: το CSS και τα SVG γραφήματα (`app/utils/dash.ts`)
-είναι μεταφορά αυτούσια από το παλιό `admin/dashboard.html`, μοναδική εξάρτηση το hls.js
-για τον player. Κάλυψη admin (`/admin/*`: servers, clients, live streams όλων των servers)
-και customer (`/`: τα streams του πελάτη, stream key έτοιμο για αντιγραφή) στην ίδια
-εφαρμογή — δες PLAN-monorepo.md για το γιατί όχι δύο apps.
+Caddy. Το CSS και τα SVG γραφήματα του `/admin` (`app/utils/dash.ts`) είναι μεταφορά
+αυτούσια από το παλιό `admin/dashboard.html`. Κάλυψη admin (`/admin/*`: servers, clients,
+live streams όλων των servers) και customer (`/`: τα streams του πελάτη, stream key έτοιμο
+για αντιγραφή, κατάσταση εκπομπής και γραφήματα 24ώρου) στην ίδια εφαρμογή — δες
+PLAN-monorepo.md για το γιατί όχι δύο apps.
+
+Δύο συστήματα γραφημάτων, σκόπιμα: το `/admin` κρατάει το `lineChart` του `dash.ts` (SVG,
+πολλές γραμμές ανά chart, cross-hair), το user panel ζωγραφίζει με **Chart.js**
+(`app/components/MiniChart.vue`, μία γραμμή ανά chart). Το Chart.js μπαίνει με ρητό
+`Chart.register` μόνο των controllers που χρησιμοποιούμε, και ο άξονας x είναι `linear` με
+unix seconds — όχι `TimeScale`, που θα ζητούσε date adapter σαν δεύτερη εξάρτηση. Ο canvas
+δεν δέχεται `var(--s2)`: το `MiniChart` λύνει τα CSS variables με `getComputedStyle` σε κάθε
+render, αλλιώς το dark mode βγάζει αόρατες γραμμές.
 
 Auth: JWT σε localStorage (`POST /auth/login` του `apps/api`) και ένα global middleware
 που κόβει την πρόσβαση σε `/admin/*` χωρίς ρόλο admin. Ο πραγματικός έλεγχος είναι στο
@@ -105,6 +113,10 @@ API — το middleware εδώ απλώς δεν δείχνει άδειες ο�
 Series/sessions/restart είναι πάντα **ανά server** (`GET /servers/:host/...`), όχι
 συγκεντρωτικά: ζουν στο sqlite του κάθε stream server και το `apps/api` κάνει proxy, δεν τα
 αντιγράφει κεντρικά (ίδιο σκεπτικό με το `GET /live` — δες «apps/api» παραπάνω).
+
+Ο πελάτης **δεν** αγγίζει αυτά τα endpoints (είναι `@Roles('admin')` — θα έβλεπε τα streams
+των συγκατοίκων του στον ίδιο server): το `GET /me/series` κάνει το ίδιο proxy και κρατάει
+μόνο τα paths του `clientId` του token, χωρίς το `server` block (CPU/μνήμη του μηχανήματος).
 
 ## Deploy
 
