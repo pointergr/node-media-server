@@ -8,6 +8,11 @@ import os from "os";
 // τίποτα — δηλαδή όλα τα παρακάτω τρέχουν στη σημερινή συμπεριφορά.
 const clientsFile = `${fs.mkdtempSync(`${os.tmpdir()}/stats-test-`)}/clients.json`;
 process.env.CLIENTS_FILE = clientsFile;
+// Το ADMIN_DB του container υπερισχύει του config (stats.js:42), οπότε χωρίς αυτό
+// το `docker compose exec stream npm test` γράφει στην ΠΡΑΓΜΑΤΙΚΗ stats.db:
+// ψεύτικοι θεατές και bitrate στα γραφήματα του πελάτη, και το test σκάει επειδή
+// ο πίνακας δεν είναι άδειος.
+process.env.ADMIN_DB = ":memory:";
 const { startStats } = await import("./stats.js");
 const { clearClientsCache } = await import("./config.js");
 
