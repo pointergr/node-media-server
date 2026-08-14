@@ -90,6 +90,14 @@ server δεν πρέπει να σβήνει σιωπηλά και τους πε
 
 ## Αποφάσεις
 
+- **Το `DATABASE_URL` είναι απόλυτο path στο Docker.** Το Prisma λύνει τα
+  σχετικά sqlite paths ως προς το `schema.prisma`, όχι ως προς το cwd: με
+  `file:./data/api.db` η βάση έβγαινε στο `apps/api/prisma/data/`, δηλαδή έξω
+  από το named volume, και **χανόταν αθόρυβα σε κάθε recreate του container**.
+  Το compose δίνει `file:/app/apps/api/data/api.db`· τοπικά το `.env` δείχνει
+  `file:../data/api.db` (σχετικό ως προς το `prisma/`). Ένα `docker compose exec
+  api ls -la /app/apps/api/data` πρέπει να δείχνει το `api.db` — αν είναι άδειο,
+  τα δεδομένα δεν επιβιώνουν.
 - **Prisma 6, όχι 7.** Το Prisma 7 αφαιρεί το `datasource.url` από το schema
   και θέλει driver adapters + `prisma.config.ts` — πολύ βάρος για ένα sqlite
   με λίγους πίνακες. Prisma 6.19 κρατάει το κλασικό `env("DATABASE_URL")`.
