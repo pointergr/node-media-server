@@ -99,6 +99,20 @@ export function publishAllowed(streamPath, key) {
   return expected !== undefined && expected === key;
 }
 
+// Το close() του nms v4 είναι σκέτο socket.end(): μισό κλείσιμο. Στέλνει FIN αλλά
+// συνεχίζει να διαβάζει, και ο publisher που δεν διαβάζει το δικό του άκρο
+// (librtmp/OBS: μαθαίνει την αποσύνδεση μόνο όταν αποτύχει ένα write, και το write
+// δεν αποτυγχάνει όσο εμείς αδειάζουμε το παράθυρο) εκπέμπει σαν να μη συνέβη
+// τίποτα: το donePublish δεν βγαίνει ποτέ, ο ffmpeg του HLS ζει, οι θεατές βλέπουν
+// stream που έχει ανακληθεί. Ο ffmpeg τυχαίνει να το καταλαβαίνει και να πεθαίνει —
+// γι' αυτό η ανάκληση φαίνεται να δουλεύει σε δοκιμή με ffmpeg publisher.
+// destroySoon και όχι destroy: πρώτα φεύγει ό,τι είναι ήδη στην ουρά (το onStatus
+// της απόρριψης), μετά πέφτει και η κατεύθυνση της ανάγνωσης.
+export function closeSession(session) {
+  session.close();
+  session.socket?.destroySoon();
+}
+
 export function loadPasswords() {
   return new Promise((resolve, reject) => {
     migratePasswords();

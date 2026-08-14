@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { clientOf, publishAllowed } from "./config.js";
+import { clientOf, publishAllowed, closeSession } from "./config.js";
 
 // Το dashboard κάνει poll ανά 5s: με δείγμα ανά 60s το bitrate έδειχνε «0 bps»
 // για ένα ολόκληρο λεπτό μετά από κάθε restart ή νέο publish. Τα buckets των
@@ -241,7 +241,7 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     // 127.0.0.1 και δεν πρέπει ΠΟΤΕ να κοπεί από όριο — ένα γεμάτο stream θα
     // σταματούσε να παράγει HLS συνολικά.
     if (isLocal(session)) return;
-    if (overLimit(session.streamPath)) return session.close();
+    if (overLimit(session.streamPath)) return closeSession(session);
     liveSessions.set(session.id, session);
   });
   nms.on("donePublish", finish);
@@ -261,7 +261,7 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     for (const [stream, pub] of publishers) {
       if (!publishAllowed(stream, pub.streamQuery?.key)) {
         console.error(`publish ${stream} ${pub.ip}: ανακλήθηκε, κλείσιμο`);
-        pub.close();
+        closeSession(pub);
       }
     }
 

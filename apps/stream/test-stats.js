@@ -342,9 +342,13 @@ clearClientsCache();
 {
   const s = freshStats(null);
   let closed = 0;
+  // destroySoon και όχι μόνο close(): το close() του nms είναι socket.end() και ο
+  // publisher που αγνοεί το FIN συνεχίζει να εκπέμπει (δες closeSession).
+  let destroyed = 0;
   s.nms.emit("postPublish", session({
     isPublisher: true, streamPath: "/live/k1",
     streamQuery: { key: "K1" }, close() { closed++; },
+    socket: { destroySoon() { destroyed++; } },
   }));
   await tick();
   s.sample();
@@ -355,6 +359,7 @@ clearClientsCache();
   await tick();
   s.sample();
   assert.equal(closed, 1, "αλλαγμένο κλειδί κόβει τον publisher μέσα σε ένα tick");
+  assert.equal(destroyed, 1, "και το socket πέφτει, αλλιώς ο publisher συνεχίζει να εκπέμπει");
   s.server.close();
 }
 

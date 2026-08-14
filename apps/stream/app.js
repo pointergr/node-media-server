@@ -2,7 +2,7 @@ import NodeMediaServer from "node-media-server";
 import { spawn } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
-import { loadConfig, saveConfig, publishAllowed } from "./config.js";
+import { loadConfig, saveConfig, publishAllowed, closeSession } from "./config.js";
 import { startPanelSync } from "./panel.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
@@ -139,7 +139,7 @@ nms.on("postPublish", (session) => {
     // Το ίδιο event το ακούει και το stats.js — χωρίς αυτό, ο απορριφθείς
     // publisher θα εμφανιζόταν στο dashboard σαν κανονική εκπομπή.
     session.rejected = true;
-    session.close();
+    closeSession(session);
     return;
   }
 
