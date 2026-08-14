@@ -14,6 +14,7 @@ interface ClientRow {
 }
 
 const api = useApi()
+const ask = useConfirm()
 const clients = ref<ClientRow[]>([])
 const servers = ref<ServerOption[]>([])
 const error = ref('')
@@ -90,7 +91,11 @@ async function toggleDisabled(c: ClientRow) {
 }
 
 async function removeClient(c: ClientRow) {
-  if (!confirm(`Διαγραφή πελάτη «${c.name}»; Χάνονται και τα paths/κλειδιά του.`)) return
+  const ok = await ask({
+    title: `Διαγραφή πελάτη «${c.name}»;`,
+    description: 'Χάνονται και τα paths και τα κλειδιά εκπομπής του.',
+  })
+  if (!ok) return
   try {
     // Τα paths φεύγουν μαζί (cascade στο schema.prisma) — ένα request.
     await api(`/clients/${c.id}`, { method: 'DELETE' })
@@ -116,7 +121,11 @@ async function addPath(c: ClientRow) {
 }
 
 async function removePath(c: ClientRow, p: PathRow) {
-  if (!confirm(`Διαγραφή του path ${p.path}; Το OBS που εκπέμπει με αυτό το κλειδί θα κοπεί.`)) return
+  const ok = await ask({
+    title: `Διαγραφή του path ${p.path};`,
+    description: 'Το OBS που εκπέμπει με αυτό το κλειδί θα κοπεί.',
+  })
+  if (!ok) return
   try {
     await api(`/clients/${c.id}/paths/${p.id}`, { method: 'DELETE' })
     await load()

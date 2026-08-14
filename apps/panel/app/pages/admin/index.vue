@@ -12,6 +12,7 @@ import {
 // και το restart είναι **ανά server** — γι' αυτό υπάρχει επιλογέας παρακάτω,
 // ενώ οι ενεργές εκπομπές και συνδέσεις δείχνονται συνολικά.
 const api = useApi()
+const ask = useConfirm()
 
 const live = ref<LiveEntry[]>([])
 const past = ref<PastRow[]>([])
@@ -122,10 +123,14 @@ async function kill(host: string, id: string) {
 async function restart() {
   const host = selected.value
   const hasLive = streams.value.some(s => s.host === host)
-  const msg = hasLive
-    ? `Ο ${host} έχει ενεργή εκπομπή — το restart θα την κόψει. Συνέχεια;`
-    : `Restart του ${host};`
-  if (!confirm(msg)) return
+  const ok = await ask({
+    title: `Restart του ${host};`,
+    description: hasLive
+      ? 'Ο server έχει ενεργή εκπομπή αυτή τη στιγμή — το restart θα την κόψει.'
+      : 'Καμία ενεργή εκπομπή αυτή τη στιγμή.',
+    confirmLabel: 'Restart',
+  })
+  if (!ok) return
 
   restarting.value = true
   const since = Date.now()

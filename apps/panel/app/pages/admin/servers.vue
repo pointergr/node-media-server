@@ -12,6 +12,7 @@ interface ServerRow {
 }
 
 const api = useApi()
+const ask = useConfirm()
 const servers = ref<ServerRow[]>([])
 const error = ref('')
 const busy = ref(false)
@@ -65,7 +66,13 @@ async function saveServer(s: ServerRow) {
 }
 
 async function removeServer(s: ServerRow) {
-  if (!confirm(`Διαγραφή server «${s.host}»;`)) return
+  const ok = await ask({
+    title: `Διαγραφή server «${s.host}»;`,
+    // Οι πελάτες ΔΕΝ κάνουν cascade (servers.service.ts) — με πελάτες πάνω του
+    // το API απαντάει 409 και το μήνυμα βγαίνει στο UAlert.
+    description: 'Φεύγει μόνο από το panel — ο ίδιος ο server συνεχίζει να τρέχει. Αν έχει πελάτες, η διαγραφή απορρίπτεται.',
+  })
+  if (!ok) return
   try {
     await api(`/servers/${s.id}`, { method: 'DELETE' })
     await load()

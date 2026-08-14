@@ -53,6 +53,11 @@ export function useApi() {
       const body = await res.json().catch(() => null) as { message?: string } | null
       throw new Error(body?.message || `HTTP ${res.status}`)
     }
-    return res.json() as Promise<T>
+    // Κάθε DELETE του API απαντάει 200 με άδειο σώμα (Nest, handler χωρίς return):
+    // σκέτο res.json() έσκαγε με «Unexpected end of JSON input», δηλαδή η διαγραφή
+    // γινόταν κανονικά αλλά η οθόνη έδειχνε σφάλμα και τη λίστα αναλλοίωτη — το
+    // `await load()` της κάθε σελίδας δεν προλάβαινε να τρέξει.
+    const body = await res.text()
+    return (body ? JSON.parse(body) : null) as T
   }
 }
