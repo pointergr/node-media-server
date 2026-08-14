@@ -1,0 +1,17 @@
+# Ένα VPS για panel και stream server μαζί. Το compose φορτώνει μόνο του το
+# override όταν υπάρχει — σε host που τρέχει μόνο το panel, απλώς το σβήνεις.
+services:
+  caddy:
+    environment:
+      STREAM_DOMAIN: ${STREAM_DOMAIN:?βάλε STREAM_DOMAIN=stream.streamings.gr στο .env}
+    networks:
+      - default
+      - stream
+
+networks:
+  # Το δίκτυο του apps/stream stack, για να λύνεται το `stream` σαν hostname.
+  # Εδώ και όχι με `docker network connect`: το χειροκίνητο connect χάνεται σε
+  # κάθε recreate του container, δηλαδή σε κάθε `up -d --build`.
+  stream:
+    name: stream_default
+    external: true

@@ -42,3 +42,38 @@
 
 	log
 }
+
+# Ένα VPS για panel και stream server μαζί: δύο Caddy δεν χωράνε στο 80/443,
+# οπότε αυτός εδώ σερβίρει και το stream domain. Αντίγραφο του
+# apps/stream/Caddyfile (δεν γίνεται import: εκείνο δεσμεύει το {$DOMAIN}, που
+# εδώ είναι το panel). Το STREAM_DOMAIN και το δίκτυο του stream stack τα δίνει
+# το docker-compose.override.yml — χωρίς αυτό το default μένει αδρανές
+# (.localhost: ο Caddy βγάζει εσωτερικό cert, δεν χτυπάει Let's Encrypt).
+{$STREAM_DOMAIN:stream.localhost}, rtmp.{$STREAM_DOMAIN:stream.localhost} {
+	handle /admin* {
+		reverse_proxy {$STREAM_HOST:stream}:8001
+	}
+
+	handle {
+		reverse_proxy {$STREAM_HOST:stream}:8000
+	}
+
+	@m3u8 path *.m3u8
+	@ts path *.ts
+	@hls path *.m3u8 *.ts
+
+	header @m3u8 {
+		Cache-Control "no-store"
+		defer
+	}
+	header @ts {
+		Cache-Control "public, max-age=31536000, immutable"
+		defer
+	}
+	header @hls {
+		Access-Control-Allow-Origin "*"
+		defer
+	}
+
+	log
+}
