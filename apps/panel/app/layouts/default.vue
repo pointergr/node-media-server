@@ -1,7 +1,29 @@
 <script setup lang="ts">
+import type { NavigationMenuItem } from '@nuxt/ui'
+
 // Ο ρόλος διαβάζεται σε κάθε render του layout, όχι μία φορά στο boot: μετά το
 // login το layout ξαναμπαίνει και πρέπει να δείξει τα σωστά links.
 const session = computed(() => useSession())
+const admin = computed(() => session.value?.role === 'admin')
+
+const items = computed<NavigationMenuItem[]>(() => [
+  { label: 'Τα streams μου', icon: 'i-lucide-radio', to: '/' },
+  ...(admin.value
+    ? [
+        { label: 'Διαχείριση', icon: 'i-lucide-activity', to: '/admin' },
+        { label: 'Πελάτες', icon: 'i-lucide-users', to: '/admin/clients' },
+        { label: 'Servers', icon: 'i-lucide-server', to: '/admin/servers' },
+      ]
+    : []),
+])
+
+// Ο διακόπτης θέματος γράφει στο color-mode του Nuxt UI, που βάζει την κλάση
+// `.dark` — την ίδια που ακολουθούν και τα χρώματα των γραφημάτων (dashboard.css).
+const colorMode = useColorMode()
+const dark = computed({
+  get: () => colorMode.value === 'dark',
+  set: v => colorMode.preference = v ? 'dark' : 'light',
+})
 
 function logout() {
   clearToken()
@@ -11,16 +33,38 @@ function logout() {
 
 <template>
   <div>
-    <nav>
-      <span class="brand">Pointer</span>
-      <NuxtLink to="/">Τα streams μου</NuxtLink>
-      <NuxtLink v-if="session?.role === 'admin'" to="/admin">Διαχείριση</NuxtLink>
-      <NuxtLink v-if="session?.role === 'admin'" to="/admin/clients">Πελάτες</NuxtLink>
-      <NuxtLink v-if="session?.role === 'admin'" to="/admin/servers">Servers</NuxtLink>
-      <span class="spacer" />
-      <span class="who">{{ session?.role === 'admin' ? 'διαχειριστής' : 'πελάτης' }}</span>
-      <button @click="logout">Αποσύνδεση</button>
-    </nav>
-    <slot />
+    <UHeader :ui="{ container: 'max-w-(--ui-container)' }">
+      <template #title>
+        <span class="font-semibold">Pointer</span>
+      </template>
+
+      <UNavigationMenu :items="items" />
+
+      <template #right>
+        <UBadge variant="subtle" :color="admin ? 'primary' : 'neutral'" size="sm">
+          {{ admin ? 'διαχειριστής' : 'πελάτης' }}
+        </UBadge>
+        <UButton
+          :icon="dark ? 'i-lucide-moon' : 'i-lucide-sun'"
+          color="neutral" variant="ghost"
+          :aria-label="dark ? 'φωτεινό θέμα' : 'σκοτεινό θέμα'"
+          @click="dark = !dark"
+        />
+        <UButton icon="i-lucide-log-out" color="neutral" variant="ghost" @click="logout">
+          Αποσύνδεση
+        </UButton>
+      </template>
+
+      <!-- Το ίδιο μενού μέσα στο συρτάρι του κινητού: χωρίς αυτό το burger ανοίγει άδειο. -->
+      <template #body>
+        <UNavigationMenu :items="items" orientation="vertical" />
+      </template>
+    </UHeader>
+
+    <UMain>
+      <UContainer class="py-6">
+        <slot />
+      </UContainer>
+    </UMain>
   </div>
 </template>

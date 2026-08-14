@@ -15,31 +15,27 @@ const src = computed(() => `https://${host.value}/${stream.value.replace(/^\//, 
 </script>
 
 <template>
-  <div>
+  <div class="space-y-4">
     <header>
+      <UIcon name="i-lucide-monitor-play" class="text-primary size-5" />
       <h1>{{ stream }}</h1>
       <span class="host">{{ host }}</span>
       <span class="spacer" />
-      <NuxtLink to="/admin">στατιστικά</NuxtLink>
+      <UButton to="/admin" icon="i-lucide-chart-line" color="neutral" variant="subtle" size="sm">
+        στατιστικά
+      </UButton>
     </header>
 
-    <div v-if="!host" class="card">
+    <UCard v-if="!host">
       <div class="quiet">Λείπει ο server από τη διεύθυνση — άνοιξε τον player από το dashboard.</div>
-    </div>
-    <div v-else class="card player-card">
+    </UCard>
+    <UCard v-else :ui="{ body: 'p-0 sm:p-0' }" class="overflow-hidden">
       <PlayerStage :src="src" auto />
-    </div>
+    </UCard>
 
-    <p class="note">
-      Ο player μετράει ως κανονικός θεατής στα στατιστικά όσο παίζει — το Stop σταματάει
-      πραγματικά τη λήψη, το pause όχι. Το muted είναι απαραίτητο για να ξεκινάει η
-      αναπαραγωγή χωρίς κλικ· ήχος/παύση/fullscreen από τη μπάρα πάνω στο βίντεο (ή space,
-      m, f όταν ο player έχει το focus).
-    </p>
+    <UAlert
+      color="neutral" variant="subtle" icon="i-lucide-info"
+      description="Ο player μετράει ως κανονικός θεατής στα στατιστικά όσο παίζει — το Stop σταματάει πραγματικά τη λήψη, το pause όχι. Το muted είναι απαραίτητο για να ξεκινάει η αναπαραγωγή χωρίς κλικ· ήχος/παύση/fullscreen από τη μπάρα πάνω στο βίντεο (ή space, m, f όταν ο player έχει το focus)."
+    />
   </div>
 </template>
-
-<style scoped>
-/* Το βίντεο πιάνει όλο το πλάτος της κάρτας, τα paddings μόνο γύρω από το status. */
-.player-card { padding: 0; overflow: hidden; }
-</style>

@@ -28,7 +28,6 @@ interface MyStream {
 const streams = ref<MyStream[]>([])
 const series = ref<Series>({ bucket: 0, from: 0, streams: [], server: [] })
 const error = ref('')
-const copied = ref('')
 // Σε **χιλιοστά**, όπως το `since` του snapshot (createTime του nms) — το /admin
 // κάνει το ίδιο `(Date.now() - since) / 1000`. Σε δευτερόλεπτα η διαφορά έβγαινε
 // αρνητική και το dur() την πάτωνε στο «0λ 0δ».
@@ -57,19 +56,6 @@ const hls = (s: MyStream) => `https://${s.host}/${s.path.replace(/^\//, '')}/ind
 // Το RTMP ακούει στο `rtmp.<domain>` του ίδιου server (apps/stream/Caddyfile) και
 // το application είναι το πρώτο κομμάτι του path — `/live/foo` → `live`.
 const rtmp = (s: MyStream) => `rtmp://rtmp.${s.host}/${s.path.split('/')[1]}`
-
-async function copy(text: string, id: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    copied.value = id
-    setTimeout(() => copied.value === id && (copied.value = ''), 2000)
-  }
-  catch {
-    // http origin ή browser χωρίς Clipboard API: το πεδίο είναι επιλέξιμο ούτως
-    // ή άλλως, οπότε δεν μένει ο χρήστης χωρίς τρόπο.
-    error.value = 'η αντιγραφή απέτυχε — διάλεξε το κείμενο και αντίγραψέ το με Ctrl+C'
-  }
-}
 
 async function load() {
   try {
@@ -108,28 +94,37 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
-    <header>
+  <div class="space-y-4">
+    <div class="flex items-center gap-2">
+      <UIcon name="i-lucide-radio" class="text-primary size-5" />
       <h1>Τα streams μου</h1>
-    </header>
+    </div>
 
-    <p v-if="error" class="error">{{ error }}</p>
+    <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
 
     <div class="hero">
-      <div v-for="s in live" :key="s.path" class="card">
-        <div class="head">
-          <strong>{{ s.path }}</strong>
-          <!-- Η κατάσταση βγαίνει από το `since` του publisher: όσο δεν υπάρχει
-               publisher δεν υπάρχει εκπομπή, ό,τι κι αν δείχνει ο μετρητής.
-               Το `since` είναι σε χιλιοστά (createTime του nms). -->
-          <span class="badge on">εκπέμπει {{ dur((now - s.since!) / 1000) }}</span>
-          <span class="spacer" />
-          <span class="viewers">{{ bps(s.in_bps) }} είσοδος</span>
-          <span class="viewers">
-            {{ s.viewers }} <template v-if="s.limit">/ {{ s.limit }}</template> θεατές
-            <em v-if="!s.limit">(χωρίς όριο)</em>
-          </span>
-        </div>
+      <UCard
+        v-for="s in live" :key="s.path"
+        :ui="{ body: 'p-0 sm:p-0', header: 'px-4 py-3 sm:px-4' }"
+      >
+        <template #header>
+          <div class="head">
+            <strong>{{ s.path }}</strong>
+            <!-- Η κατάσταση βγαίνει από το `since` του publisher: όσο δεν υπάρχει
+                 publisher δεν υπάρχει εκπομπή, ό,τι κι αν δείχνει ο μετρητής.
+                 Το `since` είναι σε χιλιοστά (createTime του nms). -->
+            <UBadge color="error" variant="solid" icon="i-lucide-radio">
+              εκπέμπει {{ dur((now - s.since!) / 1000) }}
+            </UBadge>
+            <span class="spacer" />
+            <span class="viewers">{{ bps(s.in_bps) }} είσοδος</span>
+            <span class="viewers">
+              {{ s.viewers }} <template v-if="s.limit">/ {{ s.limit }}</template> θεατές
+              <em v-if="!s.limit">(χωρίς όριο)</em>
+            </span>
+          </div>
+        </template>
+
         <div class="body">
           <!-- Ο player δεν ξεκινάει μόνος του: όσο παίζει μετράει κι αυτός ως
                θεατής στο όριο του πελάτη. Το «δεν εκπέμπει» το λέει ο ίδιος ο
@@ -145,9 +140,7 @@ onBeforeUnmount(() => {
             <dt>Server</dt>
             <dd v-if="s.host">
               <code>{{ rtmp(s) }}</code>
-              <button @click="copy(rtmp(s), s.path + ':server')">
-                {{ copied === s.path + ':server' ? 'αντιγράφηκε' : 'αντιγραφή' }}
-              </button>
+              <CopyButton :text="rtmp(s)" label="" />
             </dd>
             <!-- Χωρίς τον server δεν υπάρχει διεύθυνση να αντιγραφεί· μια μαντεψιά
                  εδώ σημαίνει ο πελάτης να εκπέμπει σε λάθος μηχάνημα. -->
@@ -159,9 +152,7 @@ onBeforeUnmount(() => {
             <dt>Stream Key</dt>
             <dd>
               <code>{{ s.streamKey }}</code>
-              <button @click="copy(s.streamKey, s.path + ':key')">
-                {{ copied === s.path + ':key' ? 'αντιγράφηκε' : 'αντιγραφή' }}
-              </button>
+              <CopyButton :text="s.streamKey" label="" />
             </dd>
           </dl>
         </div>
@@ -169,7 +160,7 @@ onBeforeUnmount(() => {
         <!-- 24ωρο ιστορικό μόνο αυτού του path (το /me/series φιλτράρει με το
              token). CPU/μνήμη του μηχανήματος δεν δείχνουμε: αφορούν και τους
              υπόλοιπους πελάτες του ίδιου server. -->
-        <div class="charts">
+        <div class="charts border-t border-default">
           <div class="chart">
             <h2>Θεατές — 24 ώρες</h2>
             <MiniChart :points="points[s.path]?.viewers ?? []" color="--s1" :fmt="v => String(Math.round(v))" />
@@ -179,69 +170,66 @@ onBeforeUnmount(() => {
             <MiniChart :points="points[s.path]?.in ?? []" color="--s2" :fmt="bps" />
           </div>
         </div>
-      </div>
+      </UCard>
     </div>
 
-    <div v-if="!live.length && !error" class="card">
+    <UCard v-if="!live.length && !error">
       <div class="quiet">
         {{ streams.length ? 'Καμία ενεργή εκπομπή.' : 'Δεν υπάρχει stream στον λογαριασμό σου.' }}
       </div>
-    </div>
+    </UCard>
 
-    <!-- Τα paths που δεν εκπέμπουν: χωρίς κάρτα και χωρίς player, αλλά με το
-         κλειδί τους — από εδώ ξεκινάει ο πελάτης την εκπομπή. -->
-    <div v-if="idle.length" class="card idle">
-      <h2>Δεν εκπέμπουν</h2>
-      <div v-for="s in idle" :key="s.path" class="row">
-        <strong>{{ s.path }}</strong>
-        <code v-if="s.host">{{ rtmp(s) }}</code>
-        <code>{{ s.streamKey }}</code>
-        <button @click="copy(s.streamKey, s.path + ':key')">
-          {{ copied === s.path + ':key' ? 'αντιγράφηκε' : 'αντιγραφή' }}
-        </button>
+    <!-- Τα paths που δεν εκπέμπουν: χωρίς player, αλλά με το κλειδί τους — από εδώ
+         ξεκινάει ο πελάτης την εκπομπή. -->
+    <UCard v-if="idle.length">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-circle-pause" class="text-dimmed size-4" />
+          <h2 class="mb-0">Δεν εκπέμπουν</h2>
+        </div>
+      </template>
+      <div class="space-y-2">
+        <div v-for="s in idle" :key="s.path" class="flex items-center gap-2 flex-wrap">
+          <strong>{{ s.path }}</strong>
+          <code v-if="s.host">{{ rtmp(s) }}</code>
+          <code>{{ s.streamKey }}</code>
+          <CopyButton :text="s.streamKey" label="" />
+        </div>
       </div>
-    </div>
+    </UCard>
 
-    <p v-if="streams.length" class="note">
-      Στο OBS: Ρυθμίσεις → Εκπομπή → Υπηρεσία «Custom», και τα δύο πεδία από πάνω. Το
-      Stream Key είναι μυστικό — όποιος το έχει μπορεί να εκπέμψει στη θέση σου.
-    </p>
+    <UAlert
+      v-if="streams.length" color="neutral" variant="subtle" icon="i-lucide-monitor-play"
+      title="Ρύθμιση του OBS"
+      description="Ρυθμίσεις → Εκπομπή → Υπηρεσία «Custom», και τα δύο πεδία από πάνω. Το Stream Key είναι μυστικό — όποιος το έχει μπορεί να εκπέμψει στη θέση σου."
+    />
   </div>
 </template>
 
 <style scoped>
-/* Ο player είναι μεγάλος και τα δύο πεδία του OBS στενά: μία στήλη κάτω από την
-   άλλη σε κινητό, δίπλα-δίπλα όταν χωράει (το .body της κάρτας το ορίζει ήδη). */
 .viewers { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .viewers em { font-style: normal; }
-.badge {
-  font-size: 11px; padding: 2px 8px; border-radius: 999px;
-  border: 1px solid var(--border); font-variant-numeric: tabular-nums;
-}
-.badge.on { background: var(--live); border-color: transparent; color: #fff; }
-.badge.off { color: var(--muted); }
 /* Δύο γραφήματα δίπλα-δίπλα όταν χωράνε, το ένα κάτω από το άλλο σε κινητό. */
-.charts {
-  display: grid; gap: 16px; padding: 16px; border-top: 1px solid var(--border);
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-}
+.charts { padding: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .charts h2 { font-size: 12px; color: var(--muted); font-weight: 500; margin: 0 0 8px; }
-.idle { padding: 16px; }
-.idle h2 { font-size: 12px; color: var(--muted); font-weight: 500; margin: 0 0 10px; }
-.idle .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.idle .row:last-child { margin-bottom: 0; }
-.idle code {
-  overflow-x: auto; white-space: nowrap;
-  background: var(--plane); border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 8px; font-size: 12px;
+/* Πιο νωρίς από το γενικό κατώφλι του .body: τα πεδία του OBS θέλουν πλάτος για
+   να μη χρειάζονται κύλιση — με δύο κάρτες δίπλα-δίπλα η στήλη δεξιά από το
+   βίντεο δεν φτάνει, ενώ τα νούμερα του /admin στην ίδια θέση χωράνε άνετα. */
+@container (max-width: 820px) {
+  .body { grid-template-columns: minmax(0, 1fr); }
 }
 .obs { margin: 0; padding: 16px; align-content: center; }
 .obs dt { font-size: 12px; color: var(--muted); }
 .obs dd { display: flex; align-items: center; gap: 8px; margin: 4px 0 14px; flex-wrap: wrap; }
-.obs code {
+.obs code, .idle code {
   flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
   background: var(--plane); border: 1px solid var(--border); border-radius: 6px;
   padding: 5px 8px; font-size: 13px;
 }
 .obs .hint { font-size: 12px; color: var(--muted); }
+code {
+  overflow-x: auto; white-space: nowrap;
+  background: var(--plane); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; font-size: 12px;
+}
 </style>

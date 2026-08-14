@@ -92,11 +92,25 @@ proxy σε αυτό, δεν το αντιγράφει κεντρικά.
 
 Nuxt SPA, `ssr: false` + `nuxt generate` → στατικά αρχεία (δες `apps/panel/Dockerfile`,
 `apps/api/Caddyfile`) — κανένα Node runtime για το UI, το build τρέχει μόνο στο image του
-Caddy. Το CSS και τα SVG γραφήματα του `/admin` (`app/utils/dash.ts`) είναι μεταφορά
-αυτούσια από το παλιό `admin/dashboard.html`. Κάλυψη admin (`/admin/*`: servers, clients,
+Caddy. Τα SVG γραφήματα του `/admin` (`app/utils/dash.ts`) είναι μεταφορά αυτούσια από το
+παλιό `admin/dashboard.html`. Κάλυψη admin (`/admin/*`: servers, clients,
 live streams όλων των servers) και customer (`/`: τα streams του πελάτη, stream key έτοιμο
 για αντιγραφή, κατάσταση εκπομπής και γραφήματα 24ώρου) στην ίδια εφαρμογή — δες
 PLAN-monorepo.md για το γιατί όχι δύο apps.
+
+**Nuxt UI v4** (Tailwind v4 από κάτω) για ό,τι είναι διεπαφή: header/πλοήγηση, κάρτες,
+φόρμες, badges, ειδοποιήσεις. Το `app/assets/dashboard.css` κράτησε μόνο ό,τι δεν δίνει
+έτοιμο — τα πλέγματα της κάρτας εκπομπής, τα γραφήματα, τους πίνακες — και τα χρώματά του
+**δείχνουν** στα `--ui-*` tokens: μία παλέτα, ένα dark mode. Το dark mode είναι η κλάση
+`.dark` του color-mode και όχι `prefers-color-scheme`, αλλιώς ο διακόπτης θέματος στο
+header άλλαζε τα components και άφηνε γραφήματα και πίνακες στο θέμα του λειτουργικού.
+Οι πίνακες μένουν σκέτα `<table>` (όχι `UTable`): στατικές λίστες χωρίς ταξινόμηση ή
+σελιδοποίηση, το TanStack από κάτω θα ήταν εξάρτηση χωρίς αντίκρισμα.
+
+Το πλάτος της σελίδας το δίνει το `UContainer` με `--ui-container: 100rem` — κάτω από αυτό
+τα νούμερα δίπλα στο preview σπάνε σε δύο σειρές, πάνω από αυτό τα charts γίνονται σύρματα.
+Τα κατώφλια του `.body` (preview δίπλα ή πάνω από τα πεδία) είναι **container queries**, όχι
+media queries: με δύο κάρτες δίπλα-δίπλα η στήλη είναι στενή ακόμα και σε μεγάλη οθόνη.
 
 Δύο συστήματα γραφημάτων, σκόπιμα: το `/admin` κρατάει το `lineChart` του `dash.ts` (SVG,
 πολλές γραμμές ανά chart, cross-hair), το user panel ζωγραφίζει με **Chart.js**

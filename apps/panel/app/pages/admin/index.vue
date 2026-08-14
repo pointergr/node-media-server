@@ -45,6 +45,18 @@ const sessions = computed(() => live.value.flatMap(e =>
 const viewers = computed(() => streams.value.reduce((a, s) => a + s.viewers, 0))
 const onlineCount = computed(() => live.value.filter(e => e.online).length)
 
+// Τα αθροίσματα της γραμμής με τα νούμερα. Εδώ και όχι μέσα στο template: ένας
+// πίνακας από κυριολεκτικά αντικείμενα στο v-for παίρνει ένωση τύπων ανά στοιχείο,
+// οπότε το `unit` δεν υπάρχει σε όλα και ο typecheck σκάει.
+const tiles = computed(() => [
+  { label: 'Servers', value: String(onlineCount.value), unit: `/ ${live.value.length}` },
+  { label: 'Streams', value: String(streams.value.length), unit: '' },
+  { label: 'Θεατές', value: String(viewers.value), unit: '' },
+  { label: 'Συνδέσεις', value: String(sessions.value.length), unit: '' },
+  { label: `Uptime ${selected.value}`, value: current.value ? dur(current.value.snapshot.server.uptime) : '—', unit: '' },
+  { label: `Μνήμη ${selected.value}`, value: current.value ? String(current.value.snapshot.server.rss_mb) : '—', unit: 'MB' },
+])
+
 // Ο stream server σερβίρει το HLS από το ίδιο hostname με το οποίο δηλώνεται στο
 // panel (config.panel.host == το domain του Caddy του) — δες apps/stream/install.
 const hlsUrl = (host: string, stream: string) =>
@@ -159,45 +171,66 @@ watch([selected, range], () => {
 </script>
 
 <template>
-  <div>
+  <div class="space-y-4">
     <header>
       <span class="dot" :class="{ on: streams.length > 0 }" />
       <h1>Stream servers</h1>
       <span class="spacer" />
-      <div class="pickers">
-        <button
-          v-for="e in live" :key="e.host" :aria-pressed="e.host === selected"
+
+      <!-- Επιλογέας server: ό,τι ζει στο sqlite του καθενός (charts, ιστορικό,
+           restart) αφορά μόνο τον επιλεγμένο. -->
+      <div class="flex gap-1 flex-wrap">
+        <UButton
+          v-for="e in live" :key="e.host"
+          :color="e.host === selected ? 'primary' : 'neutral'"
+          :variant="e.host === selected ? 'subtle' : 'ghost'"
+          size="sm"
           :title="e.online ? 'σε σύνδεση' : 'χωρίς sync εδώ και >30s'"
           @click="selected = e.host"
         >
           <span class="dot" :class="{ on: e.online }" />{{ e.host }}
-        </button>
+        </UButton>
       </div>
-      <button class="restart" :disabled="restarting || !selected" @click="restart">
+
+      <UButton
+        icon="i-lucide-rotate-ccw" color="error" size="sm"
+        :loading="restarting" :disabled="!selected" @click="restart"
+      >
         {{ restarting ? 'γίνεται restart…' : 'Restart server' }}
-      </button>
-      <div class="ranges">
-        <button
+      </UButton>
+
+      <div class="flex gap-1">
+        <UButton
           v-for="r in ['1h', '24h', '7d', '30d']" :key="r"
-          :aria-pressed="r === range" @click="range = r"
-        >{{ r }}</button>
+          :color="r === range ? 'primary' : 'neutral'"
+          :variant="r === range ? 'subtle' : 'ghost'"
+          size="sm" @click="range = r"
+        >{{ r }}</UButton>
       </div>
     </header>
 
-    <p v-if="error" class="error">{{ error }}</p>
+    <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
 
     <div class="hero">
-      <div v-for="s in streams" :key="s.host + s.stream" class="card">
-        <div class="head">
-          <span v-if="s.online" class="onair">ON AIR</span>
-          <span v-else class="offair" title="ο server δεν έχει κάνει sync εδώ και >30s">ΕΚΤΟΣ</span>
-          <NuxtLink :to="`/admin/streams/${encodeURIComponent(s.stream)}?host=${s.host}`">
-            {{ s.stream }}
-          </NuxtLink>
-          <span class="host">{{ s.host }}</span>
-          <span class="spacer" />
-          <span class="since">{{ dur((Date.now() - s.since) / 1000) }}</span>
-        </div>
+      <UCard
+        v-for="s in streams" :key="s.host + s.stream"
+        :ui="{ body: 'p-0 sm:p-0', header: 'px-4 py-3 sm:px-4', footer: 'px-4 py-2 sm:px-4' }"
+      >
+        <template #header>
+          <div class="head">
+            <UBadge v-if="s.online" color="error" variant="solid" class="tracking-wider">ON AIR</UBadge>
+            <UBadge v-else color="neutral" variant="subtle" title="ο server δεν έχει κάνει sync εδώ και >30s">
+              ΕΚΤΟΣ
+            </UBadge>
+            <NuxtLink :to="`/admin/streams/${encodeURIComponent(s.stream)}?host=${s.host}`">
+              {{ s.stream }}
+            </NuxtLink>
+            <span class="host">{{ s.host }}</span>
+            <span class="spacer" />
+            <span class="since">{{ dur((Date.now() - s.since) / 1000) }}</span>
+          </div>
+        </template>
+
         <div class="body">
           <Preview :src="hlsUrl(s.host, s.stream)" />
           <dl class="stat">
@@ -215,39 +248,35 @@ watch([selected, range], () => {
             <div><dt>Ανάλυση</dt><dd>{{ s.resolution }}</dd></div>
           </dl>
         </div>
-        <div class="meta">{{ s.video }} · {{ s.audio }} · {{ s.protocol }} από {{ s.ip }}</div>
-      </div>
+
+        <template #footer>
+          <span class="host">{{ s.video }} · {{ s.audio }} · {{ s.protocol }} από {{ s.ip }}</span>
+        </template>
+      </UCard>
     </div>
-    <div v-if="!streams.length" class="card"><div class="quiet">Καμία ενεργή εκπομπή</div></div>
+    <UCard v-if="!streams.length">
+      <div class="quiet">Καμία ενεργή εκπομπή</div>
+    </UCard>
 
     <!-- Μόνο αθροίσματα εδώ — τα νούμερα ανά stream τα δείχνει η κάρτα. Το uptime
          και η μνήμη είναι ανά διεργασία, οπότε αφορούν τον επιλεγμένο server. -->
-    <div class="card tiles">
-      <div class="tile">
-        <div class="label">Servers</div>
-        <div class="value">{{ onlineCount }} <small>/ {{ live.length }}</small></div>
-      </div>
-      <div class="tile"><div class="label">Streams</div><div class="value">{{ streams.length }}</div></div>
-      <div class="tile"><div class="label">Θεατές</div><div class="value">{{ viewers }}</div></div>
-      <div class="tile"><div class="label">Συνδέσεις</div><div class="value">{{ sessions.length }}</div></div>
-      <div class="tile">
-        <div class="label">Uptime {{ selected }}</div>
-        <div class="value">{{ current ? dur(current.snapshot.server.uptime) : '—' }}</div>
-      </div>
-      <div class="tile">
-        <div class="label">Μνήμη {{ selected }}</div>
-        <div class="value">{{ current ? current.snapshot.server.rss_mb : '—' }} <small>MB</small></div>
-      </div>
+    <div class="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+      <UCard v-for="t in tiles" :key="t.label">
+        <div class="text-xs text-dimmed truncate">{{ t.label }}</div>
+        <div class="text-2xl font-semibold leading-tight tabular-nums">
+          {{ t.value }} <span v-if="t.unit" class="text-sm font-normal text-muted">{{ t.unit }}</span>
+        </div>
+      </UCard>
     </div>
 
     <div class="charts">
-      <div class="card"><h2>Bitrate εισόδου — {{ selected }}</h2><div ref="cIn" class="chart" /></div>
-      <div class="card"><h2>Bitrate εξόδου — {{ selected }}</h2><div ref="cOut" class="chart" /></div>
-      <div class="card"><h2>Θεατές — {{ selected }}</h2><div ref="cViewers" class="chart" /></div>
-      <div class="card"><h2>CPU — {{ selected }}</h2><div ref="cCpu" class="chart" /></div>
+      <UCard><h2>Bitrate εισόδου — {{ selected }}</h2><div ref="cIn" class="chart" /></UCard>
+      <UCard><h2>Bitrate εξόδου — {{ selected }}</h2><div ref="cOut" class="chart" /></UCard>
+      <UCard><h2>Θεατές — {{ selected }}</h2><div ref="cViewers" class="chart" /></UCard>
+      <UCard><h2>CPU — {{ selected }}</h2><div ref="cCpu" class="chart" /></UCard>
     </div>
 
-    <div class="card">
+    <UCard>
       <h2>Ενεργές συνδέσεις</h2>
       <div class="scroll">
         <table v-if="sessions.length">
@@ -267,15 +296,19 @@ watch([selected, range], () => {
               <td class="num">{{ bytes(s.inBytes) }}</td>
               <td class="num">{{ bytes(s.outBytes) }}</td>
               <td class="num">{{ dur((Date.now() - s.since) / 1000) }}</td>
-              <td><button class="kill" @click="kill(s.host, s.id)">kill</button></td>
+              <td>
+                <UButton size="xs" color="error" variant="ghost" icon="i-lucide-x" @click="kill(s.host, s.id)">
+                  kill
+                </UButton>
+              </td>
             </tr>
           </tbody>
         </table>
         <div v-else class="empty">Καμία εγγραφή</div>
       </div>
-    </div>
+    </UCard>
 
-    <div class="card">
+    <UCard>
       <h2>Πρόσφατες συνδέσεις — {{ selected }}</h2>
       <div class="scroll">
         <table v-if="past.length">
@@ -300,9 +333,12 @@ watch([selected, range], () => {
         </table>
         <div v-else class="empty">Καμία εγγραφή</div>
       </div>
-      <button v-if="past.length > pastLimit" @click="pastLimit = Infinity">
+      <UButton
+        v-if="past.length > pastLimit" class="mt-3" size="sm" color="neutral" variant="subtle"
+        @click="pastLimit = Infinity"
+      >
         περισσότερες συνδέσεις ({{ past.length - pastLimit }})
-      </button>
-    </div>
+      </UButton>
+    </UCard>
   </div>
 </template>

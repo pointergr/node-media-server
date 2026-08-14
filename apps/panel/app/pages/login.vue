@@ -33,13 +33,29 @@ async function submit() {
 </script>
 
 <template>
-  <form class="login card" @submit.prevent="submit">
-    <h1>Σύνδεση</h1>
-    <label for="u">Όνομα χρήστη</label>
-    <input id="u" v-model="username" autocomplete="username" autofocus required>
-    <label for="p">Κωδικός</label>
-    <input id="p" v-model="password" type="password" autocomplete="current-password" required>
-    <button :disabled="busy">{{ busy ? 'σύνδεση…' : 'Σύνδεση' }}</button>
-    <p v-if="error" class="error">{{ error }}</p>
-  </form>
+  <UContainer class="flex min-h-screen items-center justify-center">
+    <UCard class="w-full max-w-sm">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-radio" class="text-primary size-5" />
+          <h1>Pointer — Σύνδεση</h1>
+        </div>
+      </template>
+
+      <form class="space-y-4" @submit.prevent="submit">
+        <UFormField label="Όνομα χρήστη" name="username">
+          <UInput v-model="username" autocomplete="username" autofocus required class="w-full" />
+        </UFormField>
+        <UFormField label="Κωδικός" name="password">
+          <UInput v-model="password" type="password" autocomplete="current-password" required class="w-full" />
+        </UFormField>
+
+        <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
+
+        <UButton type="submit" block :loading="busy" icon="i-lucide-log-in">
+          Σύνδεση
+        </UButton>
+      </form>
+    </UCard>
+  </UContainer>
 </template>

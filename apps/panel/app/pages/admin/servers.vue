@@ -89,75 +89,104 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
-    <h1>Stream servers</h1>
-    <p v-if="error" class="error">{{ error }}</p>
-
-    <form class="card" @submit.prevent="createServer">
-      <h2>Νέος server</h2>
-      <div class="row">
-        <label>Host <input v-model="form.host" placeholder="stream1.example.com" required></label>
-        <label>Admin URL <input v-model="form.adminUrl" placeholder="https://stream1.example.com" required></label>
-        <label>Admin user <input v-model="form.adminUser" required></label>
-        <label>Admin κωδικός <input v-model="form.adminPass" type="password" autocomplete="new-password" required></label>
-      </div>
-      <p class="note">
-        Το host πρέπει να είναι το <b>δημόσιο domain</b> του stream server — το panel χτίζει από
-        αυτό τα URL αναπαραγωγής (<code>https://&lt;host&gt;/&lt;stream&gt;/index.m3u8</code>).
-        Το admin URL/user/κωδικός είναι το <code>/admin/api</code> του ίδιου server (βλ. stats.js).
-      </p>
-      <button :disabled="busy">{{ busy ? 'δημιουργία…' : 'Δημιουργία server' }}</button>
-    </form>
-
-    <div v-if="created" class="card highlight">
-      <div class="row-between">
-        <h2>Ο server «{{ created.host }}» δημιουργήθηκε</h2>
-        <button type="button" @click="created = null">Έκλεισε</button>
-      </div>
-      <p class="note">
-        Το token φαίνεται με context μόνο εδώ, τώρα — αντέγραψέ το πριν κλείσεις. Το μπλοκ
-        παρακάτω πάει στο <code>config.json</code> του stream server (κλειδί <code>panel</code>)
-        και θέλει restart του server για να πιάσει.
-      </p>
-      <div class="row">
-        <span>Token: <code>{{ created.token }}</code></span>
-        <AdminCopyButton :text="created.token" />
-      </div>
-      <pre>{{ configBlock(created) }}</pre>
-      <AdminCopyButton :text="configBlock(created)" />
+  <div class="space-y-4">
+    <div class="flex items-center gap-2">
+      <UIcon name="i-lucide-server" class="text-primary size-5" />
+      <h1>Stream servers</h1>
     </div>
 
-    <div v-for="s in servers" :key="s.id" class="card">
-      <div class="row">
-        <label>Host <input v-model="s.host"></label>
-        <label>Admin URL <input v-model="s.adminUrl"></label>
-        <label>Admin user <input v-model="s.adminUser"></label>
-        <label>Νέος κωδικός <input v-model="editPass[s.id]" type="password" placeholder="κενό = ίδιος"></label>
+    <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
+
+    <UCard>
+      <template #header>
+        <h2 class="mb-0">Νέος server</h2>
+      </template>
+
+      <form class="space-y-4" @submit.prevent="createServer">
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <UFormField label="Host">
+            <UInput v-model="form.host" placeholder="stream1.example.com" required class="w-full" />
+          </UFormField>
+          <UFormField label="Admin URL">
+            <UInput v-model="form.adminUrl" placeholder="https://stream1.example.com" required class="w-full" />
+          </UFormField>
+          <UFormField label="Admin user">
+            <UInput v-model="form.adminUser" required class="w-full" />
+          </UFormField>
+          <UFormField label="Admin κωδικός">
+            <UInput v-model="form.adminPass" type="password" autocomplete="new-password" required class="w-full" />
+          </UFormField>
+        </div>
+
+        <p class="note">
+          Το host πρέπει να είναι το <b>δημόσιο domain</b> του stream server — το panel χτίζει από
+          αυτό τα URL αναπαραγωγής (<code>https://&lt;host&gt;/&lt;stream&gt;/index.m3u8</code>).
+          Το admin URL/user/κωδικός είναι το <code>/admin/api</code> του ίδιου server (βλ. stats.js).
+        </p>
+
+        <UButton type="submit" icon="i-lucide-plus" :loading="busy">Δημιουργία server</UButton>
+      </form>
+    </UCard>
+
+    <UCard v-if="created" :ui="{ root: 'ring-2 ring-primary' }">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <h2 class="mb-0 grow">Ο server «{{ created.host }}» δημιουργήθηκε</h2>
+          <UButton icon="i-lucide-x" size="xs" color="neutral" variant="ghost" @click="created = null" />
+        </div>
+      </template>
+
+      <div class="space-y-3">
+        <UAlert
+          color="warning" variant="subtle" icon="i-lucide-key"
+          description="Το token φαίνεται με context μόνο εδώ, τώρα — αντέγραψέ το πριν κλείσεις. Το μπλοκ παρακάτω πάει στο config.json του stream server (κλειδί panel) και θέλει restart του server για να πιάσει."
+        />
+        <div class="flex items-center gap-2 flex-wrap">
+          <span>Token: <code>{{ created.token }}</code></span>
+          <CopyButton :text="created.token" />
+        </div>
+        <pre>{{ configBlock(created) }}</pre>
+        <CopyButton :text="configBlock(created)" label="Αντιγραφή μπλοκ" />
       </div>
-      <div class="row-between">
-        <span class="note">Τελευταίο sync: {{ fmtDate(s.lastSeen) }} · πελάτες: {{ s._count.clients }}</span>
-        <div class="row">
-          <button @click="saveServer(s)">Αποθήκευση</button>
-          <button class="kill" @click="removeServer(s)">Διαγραφή</button>
+    </UCard>
+
+    <UCard v-for="s in servers" :key="s.id">
+      <div class="space-y-4">
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <UFormField label="Host">
+            <UInput v-model="s.host" class="w-full" />
+          </UFormField>
+          <UFormField label="Admin URL">
+            <UInput v-model="s.adminUrl" class="w-full" />
+          </UFormField>
+          <UFormField label="Admin user">
+            <UInput v-model="s.adminUser" class="w-full" />
+          </UFormField>
+          <UFormField label="Νέος κωδικός">
+            <UInput v-model="editPass[s.id]" type="password" placeholder="κενό = ίδιος" class="w-full" />
+          </UFormField>
+        </div>
+
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <span class="note">Τελευταίο sync: {{ fmtDate(s.lastSeen) }} · πελάτες: {{ s._count.clients }}</span>
+          <div class="flex gap-2">
+            <UButton icon="i-lucide-save" color="neutral" variant="subtle" @click="saveServer(s)">Αποθήκευση</UButton>
+            <UButton icon="i-lucide-trash-2" color="error" variant="ghost" @click="removeServer(s)">Διαγραφή</UButton>
+          </div>
         </div>
       </div>
-    </div>
-    <div v-if="!servers.length" class="card"><div class="quiet">Κανένας server ακόμα</div></div>
+    </UCard>
+
+    <UCard v-if="!servers.length">
+      <div class="quiet">Κανένας server ακόμα</div>
+    </UCard>
   </div>
 </template>
 
 <style scoped>
-.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 10px; }
-.row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-input {
-  font: inherit; padding: 6px 10px; border-radius: 6px;
-  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
-}
 code { font-size: 12px; background: var(--plane); padding: 2px 6px; border-radius: 4px; }
-.highlight { border-color: var(--s1); }
 pre {
   background: var(--plane); border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px 12px; font-size: 12px; overflow-x: auto; margin: 10px 0;
+  padding: 10px 12px; font-size: 12px; overflow-x: auto;
 }
 </style>

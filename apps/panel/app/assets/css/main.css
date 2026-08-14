@@ -1,0 +1,11 @@
+/* Nuxt UI v4 = Tailwind v4 + τα components. Μπαίνει **πριν** το dashboard.css
+   (nuxt.config.ts), ώστε τα δικά μας styles των γραφημάτων να γράφουν από πάνω. */
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+:root {
+  /* Το UContainer έχει προεπιλογή 80rem· κρατάμε το πλάτος που είχε το panel
+     (1600px): σε στενότερο, τα νούμερα δίπλα στο preview σπάνε σε δύο σειρές.
+     Πάνω από αυτό τα charts γίνονται σύρματα και το preview τοίχος. */
+  --ui-container: 100rem;
+}

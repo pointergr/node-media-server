@@ -4,7 +4,11 @@ export default defineNuxtConfig({
   ssr: false,
   compatibilityDate: '2026-08-13',
   devtools: { enabled: false },
-  css: ['~/assets/dashboard.css'],
+  modules: ['@nuxt/ui'],
+  // Σειρά: πρώτα το Nuxt UI (Tailwind), μετά τα δικά μας. Το dashboard.css
+  // κρατάει πια μόνο ό,τι δεν καλύπτει το Nuxt UI — γραφήματα, πίνακες, κάρτες
+  // εκπομπής — και δανείζεται τα χρώματά του από τα --ui-* tokens.
+  css: ['~/assets/css/main.css', '~/assets/dashboard.css'],
 
   runtimeConfig: {
     public: {

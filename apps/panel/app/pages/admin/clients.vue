@@ -19,8 +19,11 @@ const servers = ref<ServerOption[]>([])
 const error = ref('')
 const busy = ref(false)
 
-const form = reactive<{ name: string, serverId: number | '', limit: number, username: string, password: string }>({
-  name: '', serverId: '', limit: 0, username: '', password: '',
+// Έτοιμο για το USelect: {label, value} — το v-model κρατάει το id του server.
+const serverItems = computed(() => servers.value.map(s => ({ label: s.host, value: s.id })))
+
+const form = reactive<{ name: string, serverId: number | undefined, limit: number, username: string, password: string }>({
+  name: '', serverId: undefined, limit: 0, username: '', password: '',
 })
 // Ένα πεδίο "νέο path" ανά πελάτη, όχι ξεχωριστό ref το καθένα — key = client.id.
 const newPath = reactive<Record<number, string>>({})
@@ -46,7 +49,7 @@ async function createClient() {
     // Και τα δύο μαζί ή τίποτα — μισή φόρμα σημαίνει πελάτη χωρίς τρόπο σύνδεσης.
     if (form.username && form.password) Object.assign(body, { username: form.username, password: form.password })
     await api('/clients', { method: 'POST', body: JSON.stringify(body) })
-    Object.assign(form, { name: '', serverId: '', limit: 0, username: '', password: '' })
+    Object.assign(form, { name: '', serverId: undefined, limit: 0, username: '', password: '' })
     await load()
   }
   catch (e) {
@@ -131,90 +134,132 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
-    <h1>Πελάτες</h1>
-    <p v-if="error" class="error">{{ error }}</p>
-
-    <form class="card" @submit.prevent="createClient">
-      <h2>Νέος πελάτης</h2>
-      <div class="row">
-        <label>Όνομα <input v-model="form.name" required></label>
-        <label>Server
-          <select v-model="form.serverId" required>
-            <option value="" disabled>— επιλογή —</option>
-            <option v-for="s in servers" :key="s.id" :value="s.id">{{ s.host }}</option>
-          </select>
-        </label>
-        <label>Όριο θεατών <input v-model.number="form.limit" type="number" min="0"></label>
-      </div>
-      <p class="note">0 = χωρίς όριο θεατών, αθροιστικά σε όλα τα paths του πελάτη.</p>
-      <div class="row">
-        <label>Όνομα χρήστη (προαιρετικό) <input v-model="form.username" autocomplete="off"></label>
-        <label>Κωδικός (προαιρετικό) <input v-model="form.password" type="password" autocomplete="new-password"></label>
-      </div>
-      <p class="note">
-        Αν συμπληρώσεις και τα δύο, φτιάχνεται μαζί με τον πελάτη ο χρήστης με τον οποίο θα
-        συνδέεται ο ίδιος στο δικό του panel. Χωρίς αυτά ο πελάτης δεν έχει σύνδεση — μόνο ο
-        διαχειριστής βλέπει/αλλάζει τα paths του.
-      </p>
-      <button :disabled="busy">{{ busy ? 'δημιουργία…' : 'Δημιουργία πελάτη' }}</button>
-    </form>
-
-    <div v-for="c in clients" :key="c.id" class="card">
-      <div class="row client-head">
-        <span v-if="c.disabled" class="offair">ΑΝΕΝΕΡΓΟΣ</span>
-        <span v-else class="onair">ΕΝΕΡΓΟΣ</span>
-        <label>Όνομα <input v-model="c.name"></label>
-        <label>Server
-          <select v-model="c.serverId">
-            <option v-for="s in servers" :key="s.id" :value="s.id">{{ s.host }}</option>
-          </select>
-        </label>
-        <label>Όριο θεατών <input v-model.number="c.limit" type="number" min="0" class="narrow"></label>
-        <span class="spacer" />
-        <button @click="saveClient(c)">Αποθήκευση</button>
-        <button @click="toggleDisabled(c)">{{ c.disabled ? 'Ενεργοποίηση' : 'Απενεργοποίηση' }}</button>
-        <button class="kill" @click="removeClient(c)">Διαγραφή</button>
-      </div>
-      <p class="note">
-        Το disable/enable κόβει ή ξαναφέρνει τις εκπομπές του πελάτη μέσα σε ≤10s — όσο κάνει ο
-        server να ξανασυγχρονίσει τη λίστα των πελατών του.
-      </p>
-
-      <table v-if="c.paths.length">
-        <thead>
-          <tr><th>Path</th><th>Stream Key (OBS)</th><th /></tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in c.paths" :key="p.id">
-            <td>{{ p.path }}</td>
-            <td><code>{{ streamKey(p) }}</code> <AdminCopyButton :text="streamKey(p)" /></td>
-            <td><button class="kill" @click="removePath(c, p)">Διαγραφή</button></td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-else class="empty">Κανένα path ακόμα</div>
-
-      <form class="row add-path" @submit.prevent="addPath(c)">
-        <input v-model="newPath[c.id]" placeholder="/live/kamera1" required>
-        <button>Προσθήκη path</button>
-      </form>
+  <div class="space-y-4">
+    <div class="flex items-center gap-2">
+      <UIcon name="i-lucide-users" class="text-primary size-5" />
+      <h1>Πελάτες</h1>
     </div>
-    <div v-if="!clients.length" class="card"><div class="quiet">Κανένας πελάτης ακόμα</div></div>
+
+    <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
+
+    <UCard>
+      <template #header>
+        <h2 class="mb-0">Νέος πελάτης</h2>
+      </template>
+
+      <form class="space-y-4" @submit.prevent="createClient">
+        <div class="grid gap-4 sm:grid-cols-3">
+          <UFormField label="Όνομα">
+            <UInput v-model="form.name" required class="w-full" />
+          </UFormField>
+          <UFormField label="Server">
+            <USelect v-model="form.serverId" :items="serverItems" placeholder="— επιλογή —" class="w-full" />
+          </UFormField>
+          <UFormField label="Όριο θεατών" help="0 = χωρίς όριο, αθροιστικά σε όλα τα paths του πελάτη">
+            <UInputNumber v-model="form.limit" :min="0" class="w-full" />
+          </UFormField>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="Όνομα χρήστη (προαιρετικό)">
+            <UInput v-model="form.username" autocomplete="off" class="w-full" />
+          </UFormField>
+          <UFormField label="Κωδικός (προαιρετικό)">
+            <UInput v-model="form.password" type="password" autocomplete="new-password" class="w-full" />
+          </UFormField>
+        </div>
+
+        <p class="note">
+          Αν συμπληρώσεις και τα δύο, φτιάχνεται μαζί με τον πελάτη ο χρήστης με τον οποίο θα
+          συνδέεται ο ίδιος στο δικό του panel. Χωρίς αυτά ο πελάτης δεν έχει σύνδεση — μόνο ο
+          διαχειριστής βλέπει/αλλάζει τα paths του.
+        </p>
+
+        <UButton type="submit" icon="i-lucide-plus" :loading="busy">Δημιουργία πελάτη</UButton>
+      </form>
+    </UCard>
+
+    <UCard v-for="c in clients" :key="c.id">
+      <template #header>
+        <div class="flex items-center gap-3 flex-wrap">
+          <UBadge
+            :color="c.disabled ? 'neutral' : 'success'" variant="subtle"
+            :icon="c.disabled ? 'i-lucide-ban' : 'i-lucide-circle-check'"
+          >
+            {{ c.disabled ? 'ΑΝΕΝΕΡΓΟΣ' : 'ΕΝΕΡΓΟΣ' }}
+          </UBadge>
+          <span class="font-semibold">{{ c.name }}</span>
+          <span class="host">{{ c.server.host }}</span>
+          <span class="grow" />
+          <UButton icon="i-lucide-save" color="neutral" variant="subtle" @click="saveClient(c)">Αποθήκευση</UButton>
+          <UButton
+            :icon="c.disabled ? 'i-lucide-power' : 'i-lucide-ban'"
+            :color="c.disabled ? 'success' : 'warning'" variant="subtle"
+            @click="toggleDisabled(c)"
+          >
+            {{ c.disabled ? 'Ενεργοποίηση' : 'Απενεργοποίηση' }}
+          </UButton>
+          <UButton icon="i-lucide-trash-2" color="error" variant="ghost" @click="removeClient(c)">Διαγραφή</UButton>
+        </div>
+      </template>
+
+      <div class="space-y-4">
+        <div class="grid gap-4 sm:grid-cols-3">
+          <UFormField label="Όνομα">
+            <UInput v-model="c.name" class="w-full" />
+          </UFormField>
+          <UFormField label="Server">
+            <USelect v-model="c.serverId" :items="serverItems" class="w-full" />
+          </UFormField>
+          <UFormField label="Όριο θεατών">
+            <UInputNumber v-model="c.limit" :min="0" class="w-full" />
+          </UFormField>
+        </div>
+
+        <p class="note">
+          Το disable/enable κόβει ή ξαναφέρνει τις εκπομπές του πελάτη μέσα σε ≤10s — όσο κάνει ο
+          server να ξανασυγχρονίσει τη λίστα των πελατών του.
+        </p>
+
+        <div class="scroll">
+          <table v-if="c.paths.length">
+            <thead>
+              <tr><th>Path</th><th>Stream Key (OBS)</th><th /></tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in c.paths" :key="p.id">
+                <td>{{ p.path }}</td>
+                <td>
+                  <div class="flex items-center gap-2">
+                    <code>{{ streamKey(p) }}</code>
+                    <CopyButton :text="streamKey(p)" label="" />
+                  </div>
+                </td>
+                <td>
+                  <UButton
+                    icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
+                    aria-label="Διαγραφή path" @click="removePath(c, p)"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else class="empty">Κανένα path ακόμα</div>
+        </div>
+
+        <form class="flex gap-2 flex-wrap" @submit.prevent="addPath(c)">
+          <UInput v-model="newPath[c.id]" placeholder="/live/kamera1" required class="grow min-w-45" />
+          <UButton type="submit" icon="i-lucide-plus" color="neutral" variant="subtle">Προσθήκη path</UButton>
+        </form>
+      </div>
+    </UCard>
+
+    <UCard v-if="!clients.length">
+      <div class="quiet">Κανένας πελάτης ακόμα</div>
+    </UCard>
   </div>
 </template>
 
 <style scoped>
-.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin-bottom: 10px; }
-.row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
-.client-head { align-items: center; margin-bottom: 4px; }
-.client-head label { flex-direction: row; align-items: center; gap: 6px; }
-input, select {
-  font: inherit; padding: 6px 10px; border-radius: 6px;
-  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
-}
-.narrow { width: 70px; }
-.add-path { margin-top: 12px; }
-.add-path input { flex: 1; min-width: 180px; }
 code { font-size: 12px; background: var(--plane); padding: 2px 6px; border-radius: 4px; }
 </style>
