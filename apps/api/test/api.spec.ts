@@ -169,6 +169,33 @@ test('/me/streams: ο πελάτης Α δεν βλέπει τα paths του Β
   assert.equal(streamsB[0].path, '/live/kamerab');
 });
 
+// Τα ζωντανά νούμερα του πελάτη βγαίνουν από το snapshot του τελευταίου sync, όχι
+// από τη βάση: χωρίς αυτό, ένα πεδίο που ξεχνιέται στο mapping (όπως έλειπε το
+// out_bps) φαίνεται μόνο ως μόνιμο μηδέν στην οθόνη του πελάτη.
+test('/me/streams: τα νούμερα του τελευταίου sync φτάνουν στον πελάτη', async () => {
+  const since = Date.now() - 60_000;
+  await fetch(`${base}/servers/server-a/sync`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer tok-a', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      streams: [{ stream: '/live/kamera1', viewers: 3, since, in_bps: 4_000_000, out_bps: 12_000_000 }],
+      r2Estimate: true,
+    }),
+  });
+
+  const token = await login('usera', 'passa');
+  const res = await fetch(`${base}/me/streams`, { headers: { authorization: `Bearer ${token}` } });
+  const [mine] = (await res.json()) as {
+    viewers: number; since: number; in_bps: number; out_bps: number; r2Estimate: boolean;
+  }[];
+
+  assert.equal(mine.viewers, 3);
+  assert.equal(mine.since, since);
+  assert.equal(mine.in_bps, 4_000_000);
+  assert.equal(mine.out_bps, 12_000_000, 'το bitrate εξόδου το δείχνει και το panel του πελάτη');
+  assert.equal(mine.r2Estimate, true, 'με R2 η έξοδος είναι εκτίμηση — ο αστερίσκος θέλει τη σημαία');
+});
+
 test('/me/streams: χωρίς token -> 401', async () => {
   const res = await fetch(`${base}/me/streams`);
   assert.equal(res.status, 401);

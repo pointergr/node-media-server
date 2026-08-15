@@ -7,7 +7,10 @@ import { ServersService } from '../servers/servers.service';
 // Ελάχιστο σχήμα του snapshot που στέλνει ο stream server (stats.js#snapshot) —
 // μόνο ό,τι χρειάζεται εδώ, όχι όλο το contract.
 interface StreamSnapshot {
-  streams?: { stream: string; viewers: number; since?: number; in_bps?: number }[];
+  streams?: { stream: string; viewers: number; since?: number; in_bps?: number; out_bps?: number }[];
+  // Με R2 ενεργό το out_bps είναι εκτίμηση (bytes segment × θεατές): τα .ts
+  // σερβίρονται από το CDN και δεν περνάνε ποτέ από τον stream server.
+  r2Estimate?: boolean;
 }
 
 // Ό,τι γυρίζει το /admin/api/series του stream server. Το `server` (CPU, μνήμη)
@@ -63,6 +66,11 @@ export class MeController {
         // ή null. Χωριστό flag θα μπορούσε να διαφωνήσει με το since.
         since: now?.since ?? null,
         in_bps: now?.in_bps ?? 0,
+        out_bps: now?.out_bps ?? 0,
+        // Ταξιδεύει μαζί με το out_bps και μόνο γι' αυτό: χωρίς αυτό ο πελάτης
+        // διαβάζει μια εκτίμηση σαν μετρημένη κίνηση (ίδιος αστερίσκος με το
+        // /admin — δες apps/stream/stats.js#addR2Out).
+        r2Estimate: live?.r2Estimate ?? false,
       };
     });
   }

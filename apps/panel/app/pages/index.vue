@@ -19,6 +19,10 @@ interface MyStream {
   viewers: number
   since: number | null // unix seconds· null = δεν εκπέμπει αυτή τη στιγμή
   in_bps: number
+  out_bps: number
+  // Με R2 ενεργό η έξοδος είναι εκτίμηση, όχι μέτρηση — ίδιος αστερίσκος με το
+  // /admin (τα .ts σερβίρονται από το CDN και δεν περνάνε από τον stream server).
+  r2Estimate?: boolean
   // Ο server δεν έρχεται σήμερα από το /me/streams. Χωρίς αυτόν δεν υπάρχει
   // διεύθυνση ούτε για το HLS ούτε για το RTMP — δείχνουμε οδηγία αντί για
   // μαντεψιά (δες σχόλιο στο template).
@@ -41,11 +45,12 @@ const idle = computed(() => streams.value.filter(s => !s.since))
 // Σημεία ανά path, μία φορά ανά φόρτωση: υπολογισμός μέσα στο template θα έφτιαχνε
 // νέο array σε κάθε render και το MiniChart θα ξαναζωγράφιζε χωρίς λόγο.
 const points = computed(() => {
-  const m: Record<string, { viewers: [number, number][], in: [number, number][] }> = {}
-  for (const s of streams.value) m[s.path] = { viewers: [], in: [] }
+  const m: Record<string, { viewers: [number, number][], in: [number, number][], out: [number, number][] }> = {}
+  for (const s of streams.value) m[s.path] = { viewers: [], in: [], out: [] }
   for (const r of series.value.streams) {
     m[r.stream]?.viewers.push([r.t, r.viewers])
     m[r.stream]?.in.push([r.t, r.in_bps])
+    m[r.stream]?.out.push([r.t, r.out_bps])
   }
   return m
 })
@@ -118,6 +123,10 @@ onBeforeUnmount(() => {
             </UBadge>
             <span class="spacer" />
             <span class="viewers">{{ bps(s.in_bps) }} είσοδος</span>
+            <span
+              class="viewers"
+              :title="s.r2Estimate ? 'Εκτίμηση: τα segments σερβίρονται από CDN, δεν μετριούνται στον stream server' : ''"
+            >{{ bps(s.out_bps) }} έξοδος{{ s.r2Estimate ? ' *' : '' }}</span>
             <span class="viewers">
               {{ s.viewers }} <template v-if="s.limit">/ {{ s.limit }}</template> θεατές
               <em v-if="!s.limit">(χωρίς όριο)</em>
@@ -168,6 +177,10 @@ onBeforeUnmount(() => {
           <div class="chart">
             <h2>Bitrate εισόδου — 24 ώρες</h2>
             <MiniChart :points="points[s.path]?.in ?? []" color="--s2" :fmt="bps" />
+          </div>
+          <div class="chart">
+            <h2>Bitrate εξόδου — 24 ώρες{{ s.r2Estimate ? ' *' : '' }}</h2>
+            <MiniChart :points="points[s.path]?.out ?? []" color="--s3" :fmt="bps" />
           </div>
         </div>
       </UCard>
