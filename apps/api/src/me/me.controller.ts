@@ -3,6 +3,7 @@ import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from '../sync/sync.service';
 import { ServersService } from '../servers/servers.service';
+import { maxViewersOf, withPackages } from '../clients/clients.service';
 
 // Ελάχιστο σχήμα του snapshot που στέλνει ο stream server (stats.js#snapshot) —
 // μόνο ό,τι χρειάζεται εδώ, όχι όλο το contract.
@@ -36,7 +37,7 @@ export class MeController {
     if (!clientId) return null;
     return this.prisma.client.findUnique({
       where: { id: clientId },
-      include: { paths: true, server: true },
+      include: { paths: true, server: true, ...withPackages },
     });
   }
 
@@ -60,7 +61,9 @@ export class MeController {
         path: p.path,
         key: p.key,
         streamKey: `${p.path.split('/').pop()}?key=${p.key}`,
-        limit: client.limit,
+        // Άθροισμα των πακέτων του πελάτη — το ίδιο νούμερο που παίρνει και ο
+        // stream server στο clients.json. 0 = χωρίς όριο, όπως πάντα.
+        limit: maxViewersOf(client.packages),
         viewers: now?.viewers ?? 0,
         // Η ύπαρξη publisher ΕΙΝΑΙ η κατάσταση: `since` (πότε συνδέθηκε το OBS)
         // ή null. Χωριστό flag θα μπορούσε να διαφωνήσει με το since.

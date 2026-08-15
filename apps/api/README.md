@@ -78,11 +78,22 @@ docker compose exec api node dist/src/seed.js
 | `DELETE /servers/:host/sessions/:id` | admin | proxy → `/admin/api/sessions/:id` |
 | `POST /servers/:host/restart` | admin | proxy → `/admin/api/restart` |
 | `GET /clients` / `POST /clients` | admin | `POST` δέχεται προαιρετικά `username`+`password` — φτιάχνει μαζί και τον customer χρήστη (δες «Αποφάσεις» παρακάτω) |
-| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `limit`, `disabled`, `name`, `serverId`· `DELETE` σβήνει και τα paths του (cascade) |
-| `POST /clients/:id/paths` | admin | `{path}` → παράγει κλειδί (16 bytes, base64url) |
+| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `disabled`, `name`, `serverId` και `packages` (η **τελική** λίστα `[{packageId, qty}]` — ό,τι λείπει αφαιρείται)· `DELETE` σβήνει και τα paths του (cascade) |
+| `GET /packages` / `POST /packages` | admin | `{name, maxViewers, maxStreams}`, και τα δύο όρια ακέραιοι **≥1** |
+| `PATCH/DELETE /packages/:id` | admin | `DELETE` με πελάτες που το κρατούν → **409** |
+| `POST /clients/:id/paths` | admin | `{path}` → παράγει κλειδί (16 bytes, base64url)· **409** αν τα πακέτα του πελάτη δεν χωράνε άλλο stream |
 | `DELETE /clients/:id/paths/:pathId` | admin | |
-| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `limit`, `viewers`, `since` (πότε συνδέθηκε ο publisher, `null` = δεν εκπέμπει) και `in_bps` — τα τρία τελευταία από το τελευταίο snapshot |
+| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `limit` (άθροισμα των πακέτων του, `0` = χωρίς όριο), `viewers`, `since` (πότε συνδέθηκε ο publisher, `null` = δεν εκπέμπει), `in_bps`, `out_bps` και `r2Estimate` (η έξοδος είναι εκτίμηση όταν τα segments φεύγουν από CDN) — τα πέντε τελευταία από το τελευταίο snapshot |
 | `GET /me/series?range=` | οποιοσδήποτε συνδεδεμένος | ίδιο proxy με το `/servers/:host/series`, αλλά **μόνο** για τα paths του πελάτη του token και χωρίς το `server` block (CPU/μνήμη). Ο server βγαίνει από τον πελάτη, δεν τον διαλέγει ο caller |
+
+**Πακέτα:** τα όρια δεν ζουν στον πελάτη — είναι το άθροισμα των πακέτων του επί
+την ποσότητα (`Σ qty × maxViewers`, ίδιο για τα streams). Πελάτης χωρίς πακέτα
+βγάζει `0`, δηλαδή **χωρίς όριο** — ακριβώς η σημασία του `0` σε όλη τη διαδρομή
+ως τον stream server, ο οποίος δεν μαθαίνει ποτέ τι είναι πακέτο: παίρνει έτοιμο
+`limit` στο clients.json, με το ίδιο σχήμα όπως πάντα. Το όριο streams μετράει
+**paths** (πόσα μπορεί να έχει ο πελάτης) και επιβάλλεται μόνο στο
+`POST /clients/:id/paths` — paths που υπάρχουν ήδη δεν κόβονται αν αργότερα
+μικρύνει το πακέτο.
 
 `DELETE /servers/:id` με πελάτες ακόμα ανατεθειμένους σε αυτόν δίνει **409**:
 οι πελάτες δεν κάνουν cascade με τον server επίτηδες, το να σβήνεις έναν

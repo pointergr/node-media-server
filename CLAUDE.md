@@ -70,7 +70,15 @@ npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public
 ## apps/api
 
 Το κεντρικό panel: NestJS, διαχειρίζεται πολλούς stream servers, πελάτες, paths, κλειδιά
-εκπομπής και όρια θεατών — η άλλη άκρη του `panel.js` παραπάνω. Πλήρες συμβόλαιο των
+εκπομπής και **πακέτα** — η άλλη άκρη του `panel.js` παραπάνω.
+
+Τα όρια ενός πελάτη δεν είναι δικό του πεδίο: βγαίνουν από τα πακέτα του
+(`Σ qty × maxViewers`, ίδιο για τα streams — `clients.service.ts#maxViewersOf`, ο κανόνας
+ζει σε ένα σημείο και τον καλούν sync, `/me/streams` και ο έλεγχος των paths). Πελάτης
+χωρίς πακέτα δίνει `0`, δηλαδή χωρίς όριο — η ίδια σημασία του `0` που έχει ήδη όλη η
+διαδρομή, γι' αυτό και **ο stream server δεν άλλαξε ούτε γραμμή**: παίρνει έτοιμο `limit`
+στο `clients.json` με το ίδιο σχήμα. Το όριο streams μετράει paths και επιβάλλεται μόνο
+στο `POST /clients/:id/paths`. Πλήρες συμβόλαιο των
 endpoints στο [apps/api/README.md](apps/api/README.md), δεν το ξαναγράφουμε εδώ.
 
 Sqlite με Prisma 6 (**όχι 7** — θα έφερνε driver adapters για ένα σχήμα λίγων πινάκων), και

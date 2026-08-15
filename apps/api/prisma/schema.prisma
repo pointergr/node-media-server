@@ -26,13 +26,43 @@ model Server {
 model Client {
   id       Int      @id @default(autoincrement())
   name     String   @unique
-  // 0 = χωρίς όριο θεατών (αθροιστικά σε όλα τα paths του πελάτη).
-  limit    Int      @default(0)
   disabled Boolean  @default(false)
   serverId Int
   server   Server   @relation(fields: [serverId], references: [id])
   paths    Path[]
   users    User[]
+  // Τα όρια του πελάτη δεν ζουν εδώ: βγαίνουν από τα πακέτα του (ClientPackage).
+  packages ClientPackage[]
+}
+
+// Ό,τι πουλάμε: όρια θεατών και πλήθους streams. Τα νούμερα είναι ≥1 — «πακέτο
+// του μηδενός» δεν πουλάει κανείς, και θα ζητούσε τον κανόνα «0 = απεριόριστο»
+// μέσα σε άθροισμα (100 + 0 = ∞), που κανείς δεν θα θυμόταν στις 3 τη νύχτα.
+// Απεριόριστος πελάτης = πελάτης χωρίς πακέτα.
+model Package {
+  id         Int             @id @default(autoincrement())
+  name       String          @unique
+  maxViewers Int
+  // Μετράει paths, δηλαδή πόσα streams μπορεί να ΕΧΕΙ ο πελάτης — όχι πόσα
+  // εκπέμπουν ταυτόχρονα. Επιβάλλεται στο POST /clients/:id/paths.
+  maxStreams Int
+  clients    ClientPackage[]
+}
+
+// Ρητό μοντέλο σύνδεσης και όχι implicit many-to-many: το implicit βάζει unique
+// (client, package) και δεν χωράει «3× Basic» — ο πελάτης μπορεί να αγοράσει το
+// ίδιο πακέτο πολλές φορές.
+model ClientPackage {
+  clientId  Int
+  packageId Int
+  qty       Int     @default(1)
+  // Cascade μόνο προς τον πελάτη: σβήνοντας πελάτη φεύγουν οι γραμμές του, όπως
+  // ήδη τα paths του. Το πακέτο προστατεύεται αλλού (409 αν το χρησιμοποιεί
+  // κάποιος) — αλλιώς μια διαγραφή θα άλλαζε σιωπηλά όρια πελατών.
+  client    Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  package   Package @relation(fields: [packageId], references: [id])
+
+  @@id([clientId, packageId])
 }
 
 model Path {

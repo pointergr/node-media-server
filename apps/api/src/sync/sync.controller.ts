@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Param, Post, Req, UseGuards } from '@nestjs
 import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from './sync.service';
+import { maxViewersOf, withPackages } from '../clients/clients.service';
 import { ServerTokenGuard } from './server-token.guard';
 import { Public } from '../auth/public.decorator';
 
@@ -28,13 +29,15 @@ export class SyncController {
 
     const clients = await this.prisma.client.findMany({
       where: { serverId: server.id, disabled: false },
-      include: { paths: true },
+      include: { paths: true, ...withPackages },
     });
 
     const body: ClientsJson = {};
     for (const c of clients) {
       body[c.name] = {
-        limit: c.limit,
+        // Ο stream server δεν ξέρει τι είναι πακέτο: παίρνει έτοιμο νούμερο, όπως
+        // πάντα. Το σχήμα του clients.json δεν άλλαξε ποτέ γι' αυτόν.
+        limit: maxViewersOf(c.packages),
         paths: Object.fromEntries(c.paths.map((p) => [p.path, p.key])),
       };
     }

@@ -12,6 +12,7 @@ const items = computed<NavigationMenuItem[]>(() => [
     ? [
         { label: 'Διαχείριση', icon: 'i-lucide-activity', to: '/admin' },
         { label: 'Πελάτες', icon: 'i-lucide-users', to: '/admin/clients' },
+        { label: 'Πακέτα', icon: 'i-lucide-package', to: '/admin/packages' },
         { label: 'Servers', icon: 'i-lucide-server', to: '/admin/servers' },
       ]
     : []),

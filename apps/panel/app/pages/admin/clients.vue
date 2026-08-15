@@ -1,40 +1,72 @@
 <script setup lang="ts">
-// CRUD πελατών: server, όριο θεατών, paths (= κλειδιά εκπομπής) και disable/enable.
-// Συμβόλαιο των endpoints: apps/api/README.md.
+// CRUD πελατών: server, πακέτα (= τα όριά του), paths (= κλειδιά εκπομπής) και
+// disable/enable. Συμβόλαιο των endpoints: apps/api/README.md.
 interface PathRow { id: number, path: string, key: string }
 interface ServerOption { id: number, host: string }
+interface PackageRow { id: number, name: string, maxViewers: number, maxStreams: number }
 interface ClientRow {
   id: number
   name: string
-  limit: number
   disabled: boolean
   serverId: number
   server: ServerOption
   paths: PathRow[]
+  packages: { packageId: number, qty: number }[]
 }
 
 const api = useApi()
 const ask = useConfirm()
 const clients = ref<ClientRow[]>([])
 const servers = ref<ServerOption[]>([])
+const catalog = ref<PackageRow[]>([])
 const error = ref('')
 const busy = ref(false)
 
 // Έτοιμο για το USelect: {label, value} — το v-model κρατάει το id του server.
 const serverItems = computed(() => servers.value.map(s => ({ label: s.host, value: s.id })))
 
-const form = reactive<{ name: string, serverId: number | undefined, limit: number, username: string, password: string }>({
-  name: '', serverId: undefined, limit: 0, username: '', password: '',
+const form = reactive<{ name: string, serverId: number | undefined, username: string, password: string }>({
+  name: '', serverId: undefined, username: '', password: '',
 })
+// Ποσότητες ανά πελάτη (clientId -> packageId -> qty) και μία ξεχωριστή για τη
+// φόρμα δημιουργίας. 0 = δεν το έχει.
+const qty = reactive<Record<number, Record<number, number>>>({})
+const newQty = reactive<Record<number, number>>({})
 // Ένα πεδίο "νέο path" ανά πελάτη, όχι ξεχωριστό ref το καθένα — key = client.id.
 const newPath = reactive<Record<number, string>>({})
 
+// Τα όρια είναι άθροισμα επί ποσότητα — ο ίδιος κανόνας με το API
+// (clients.service.ts#maxViewersOf). Εδώ μόνο για να βλέπει ο διαχειριστής τι
+// αγοράζει· η επιβολή γίνεται εκεί.
+function totals(get: (packageId: number) => number) {
+  return catalog.value.reduce(
+    (t, p) => {
+      const n = get(p.id) || 0
+      return { viewers: t.viewers + n * p.maxViewers, streams: t.streams + n * p.maxStreams }
+    },
+    { viewers: 0, streams: 0 },
+  )
+}
+const totalsOf = (c: ClientRow) => totals(id => qty[c.id]?.[id] ?? 0)
+const newTotals = computed(() => totals(id => newQty[id] ?? 0))
+
+const packagesBody = (get: (packageId: number) => number) =>
+  catalog.value.map(p => ({ packageId: p.id, qty: get(p.id) || 0 })).filter(r => r.qty > 0)
+
 async function load() {
   try {
-    [clients.value, servers.value] = await Promise.all([
+    [clients.value, servers.value, catalog.value] = await Promise.all([
       api<ClientRow[]>('/clients'),
       api<ServerOption[]>('/servers'),
+      api<PackageRow[]>('/packages'),
     ])
+    // Οι ποσότητες ξαναχτίζονται σε κάθε φόρτωση: αλλιώς μια αποτυχημένη
+    // αποθήκευση θα άφηνε στην οθόνη νούμερα που δεν ισχύουν.
+    for (const c of clients.value) {
+      qty[c.id] = Object.fromEntries(
+        catalog.value.map(p => [p.id, c.packages.find(x => x.packageId === p.id)?.qty ?? 0]),
+      )
+    }
     error.value = ''
   }
   catch (e) {
@@ -46,11 +78,16 @@ async function createClient() {
   if (!form.name || !form.serverId) return
   busy.value = true
   try {
-    const body: Record<string, unknown> = { name: form.name, serverId: form.serverId, limit: form.limit }
+    const body: Record<string, unknown> = {
+      name: form.name,
+      serverId: form.serverId,
+      packages: packagesBody(id => newQty[id]!),
+    }
     // Και τα δύο μαζί ή τίποτα — μισή φόρμα σημαίνει πελάτη χωρίς τρόπο σύνδεσης.
     if (form.username && form.password) Object.assign(body, { username: form.username, password: form.password })
     await api('/clients', { method: 'POST', body: JSON.stringify(body) })
-    Object.assign(form, { name: '', serverId: undefined, limit: 0, username: '', password: '' })
+    Object.assign(form, { name: '', serverId: undefined, username: '', password: '' })
+    for (const p of catalog.value) newQty[p.id] = 0
     await load()
   }
   catch (e) {
@@ -67,7 +104,12 @@ async function saveClient(c: ClientRow) {
   try {
     await api(`/clients/${c.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ name: c.name, limit: c.limit, serverId: c.serverId }),
+      body: JSON.stringify({
+        name: c.name,
+        serverId: c.serverId,
+        // Η λίστα είναι η τελική: ό,τι λείπει, αφαιρείται από τον πελάτη.
+        packages: packagesBody(id => qty[c.id]?.[id] ?? 0),
+      }),
     })
   }
   catch (e) {
@@ -157,17 +199,16 @@ onMounted(load)
       </template>
 
       <form class="space-y-4" @submit.prevent="createClient">
-        <div class="grid gap-4 sm:grid-cols-3">
+        <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Όνομα">
             <UInput v-model="form.name" required class="w-full" />
           </UFormField>
           <UFormField label="Server">
             <USelect v-model="form.serverId" :items="serverItems" placeholder="— επιλογή —" class="w-full" />
           </UFormField>
-          <UFormField label="Όριο θεατών" help="0 = χωρίς όριο, αθροιστικά σε όλα τα paths του πελάτη">
-            <UInputNumber v-model="form.limit" :min="0" class="w-full" />
-          </UFormField>
         </div>
+
+        <PackagePicker v-model="newQty" :catalog="catalog" :totals="newTotals" />
 
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Όνομα χρήστη (προαιρετικό)">
@@ -213,27 +254,32 @@ onMounted(load)
       </template>
 
       <div class="space-y-4">
-        <div class="grid gap-4 sm:grid-cols-3">
+        <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Όνομα">
             <UInput v-model="c.name" class="w-full" />
           </UFormField>
           <UFormField label="Server">
             <USelect v-model="c.serverId" :items="serverItems" class="w-full" />
           </UFormField>
-          <UFormField label="Όριο θεατών">
-            <UInputNumber v-model="c.limit" :min="0" class="w-full" />
-          </UFormField>
         </div>
+
+        <PackagePicker v-if="qty[c.id]" v-model="qty[c.id]!" :catalog="catalog" :totals="totalsOf(c)" />
 
         <p class="note">
           Το disable/enable κόβει ή ξαναφέρνει τις εκπομπές του πελάτη μέσα σε ≤10s — όσο κάνει ο
-          server να ξανασυγχρονίσει τη λίστα των πελατών του.
+          server να ξανασυγχρονίσει τη λίστα των πελατών του. Οι αλλαγές στα πακέτα θέλουν
+          «Αποθήκευση».
         </p>
 
         <div class="scroll">
           <table v-if="c.paths.length">
             <thead>
-              <tr><th>Path</th><th>Stream Key (OBS)</th><th /></tr>
+              <tr>
+                <!-- Πόσα paths επιτρέπουν τα πακέτα του: το 409 του API έρχεται
+                     αλλιώς σαν έκπληξη τη στιγμή της προσθήκης. -->
+                <th>Path{{ totalsOf(c).streams ? ` (${c.paths.length} / ${totalsOf(c).streams})` : '' }}</th>
+                <th>Stream Key (OBS)</th><th />
+              </tr>
             </thead>
             <tbody>
               <tr v-for="p in c.paths" :key="p.id">
