@@ -42,6 +42,13 @@ const now = ref(Date.now())
 const live = computed(() => streams.value.filter(s => s.since))
 const idle = computed(() => streams.value.filter(s => !s.since))
 
+// Το όριο θεατών είναι **του πελάτη**, αθροιστικά σε όλα τα paths του — έτσι το
+// επιβάλλει και ο stream server (config.js#publishAllowed / stats.js#overLimit).
+// Δίπλα σε μία μόνο εκπομπή έλεγε ψέματα: «12 / 50» σε κάθε κάρτα, ενώ οι δύο
+// μαζί είχαν ήδη πιάσει 15. Το σύνολο ζει τώρα μία φορά, στην κορυφή.
+const totalViewers = computed(() => streams.value.reduce((n, s) => n + s.viewers, 0))
+const limit = computed(() => streams.value[0]?.limit ?? 0)
+
 // Σημεία ανά path, μία φορά ανά φόρτωση: υπολογισμός μέσα στο template θα έφτιαχνε
 // νέο array σε κάθε render και το MiniChart θα ξαναζωγράφιζε χωρίς λόγο.
 const points = computed(() => {
@@ -100,9 +107,16 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="space-y-4">
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-3 flex-wrap">
       <UIcon name="i-lucide-radio" class="text-primary size-5" />
       <h1>Τα streams μου</h1>
+      <span class="grow" />
+      <!-- Ένα νούμερο για όλο τον λογαριασμό: το όριο πιάνεται από το άθροισμα
+           των εκπομπών, όχι από την καθεμία χωριστά. -->
+      <UBadge v-if="streams.length" color="neutral" variant="subtle" icon="i-lucide-users">
+        {{ totalViewers }}<template v-if="limit"> / {{ limit }}</template> θεατές συνολικά
+        <template v-if="!limit">(χωρίς όριο)</template>
+      </UBadge>
     </div>
 
     <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
@@ -127,10 +141,9 @@ onBeforeUnmount(() => {
               class="viewers"
               :title="s.r2Estimate ? 'Εκτίμηση: τα segments σερβίρονται από CDN, δεν μετριούνται στον stream server' : ''"
             >{{ bps(s.out_bps) }} έξοδος{{ s.r2Estimate ? ' *' : '' }}</span>
-            <span class="viewers">
-              {{ s.viewers }} <template v-if="s.limit">/ {{ s.limit }}</template> θεατές
-              <em v-if="!s.limit">(χωρίς όριο)</em>
-            </span>
+            <!-- Χωρίς το όριο εδώ: αφορά το άθροισμα των εκπομπών, δες την
+                 κεφαλίδα της σελίδας. -->
+            <span class="viewers">{{ s.viewers }} θεατές</span>
           </div>
         </template>
 
