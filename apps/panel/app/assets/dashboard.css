@@ -39,6 +39,11 @@ body {
 }
 h1 { font-size: 18px; margin: 0; font-weight: 600; }
 h2 { font-size: 13px; margin: 0 0 12px; font-weight: 600; color: var(--text-secondary); }
+/* Το αρχείο ζει **εκτός** @layer, οπότε νικάει τα utilities του Tailwind v4 (τα
+   layered χάνουν πάντα από τα unlayered, ανεξάρτητα από specificity): σκέτο
+   `class="mb-0"` σε h2 δεν έκανε τίποτα, και το περίσσιο περιθώριο χάλαγε την
+   κάθετη στοίχιση δίπλα σε εικονίδιο μέσα σε flex. */
+h2.mb-0 { margin-bottom: 0; }
 header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .dot.on { background: var(--good); }
