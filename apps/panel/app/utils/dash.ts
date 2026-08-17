@@ -88,6 +88,17 @@ export const dur = (s: number) => {
   return d ? `${d}μ ${h}ω` : h ? `${h}ω ${m}λ` : `${m}λ ${s % 60}δ`
 }
 
+// Τα κλειδιά τα ορίζει το apps/stream/stats.js#RANGES (πόσο πίσω, τι bucket) —
+// εδώ μόνο η ελληνική ετικέτα τους. Κοινά σε /admin και user panel: άγνωστο
+// range δεν βγάζει σφάλμα, ο stream server πέφτει σιωπηλά στο 24ωρο και ο
+// χρήστης βλέπει λάθος τίτλο πάνω από σωστό γράφημα.
+export const RANGES: Record<string, string> = {
+  '1h': '1 ώρα',
+  '24h': '24 ώρες',
+  '7d': '7 ημέρες',
+  '30d': '30 ημέρες',
+}
+
 export const clock = (ts: number) => new Date(ts * 1000)
   .toLocaleString('el-GR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 

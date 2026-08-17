@@ -2,7 +2,7 @@
 // Ρητά imports και όχι auto-import: οι helpers χρησιμοποιούνται και μέσα στο
 // template, όπου μόνο τα bindings του <script setup> είναι σίγουρα ορατά.
 import {
-  bps, bytes, clock, colorOf, dur, lineChart,
+  bps, bytes, clock, colorOf, dur, lineChart, RANGES,
   type Line, type LiveEntry, type PastRow, type Series,
 } from '~/utils/dash'
 
@@ -206,10 +206,10 @@ watch([selected, range], () => {
 
       <div class="flex gap-1">
         <UButton
-          v-for="r in ['1h', '24h', '7d', '30d']" :key="r"
+          v-for="(label, r) in RANGES" :key="r"
           :color="r === range ? 'primary' : 'neutral'"
           :variant="r === range ? 'subtle' : 'ghost'"
-          size="sm" @click="range = r"
+          size="sm" :title="label" @click="range = r"
         >{{ r }}</UButton>
       </div>
     </header>

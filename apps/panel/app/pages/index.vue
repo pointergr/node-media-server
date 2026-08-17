@@ -7,7 +7,7 @@
 // Ρητά imports και όχι auto-import, ίδιος λόγος με το /admin: χρησιμοποιούνται
 // και μέσα στο template. Τα γραφήματα εδώ τα κάνει το Chart.js (MiniChart), όχι
 // το lineChart του dash.ts — το dash.ts μένει για τους τύπους και τη μορφοποίηση.
-import { bps, dur, type Series } from '~/utils/dash'
+import { bps, dur, RANGES, type Series } from '~/utils/dash'
 
 const api = useApi()
 const ask = useConfirm()
@@ -41,6 +41,10 @@ interface MyStream {
 
 const streams = ref<MyStream[]>([])
 const series = ref<Series>({ bucket: 0, from: 0, streams: [], server: [] })
+// Το ιστορικό κρατιέται 30 μέρες στον stream server (stats.js#RETENTION_DAYS),
+// οπότε τα ίδια διαστήματα με το /admin — δεν υπάρχει λόγος ο πελάτης να βλέπει
+// λιγότερα από τον διαχειριστή για τα δικά του streams.
+const range = ref('24h')
 const error = ref('')
 // Σε **χιλιοστά**, όπως το `since` του snapshot (createTime του nms) — το /admin
 // κάνει το ίδιο `(Date.now() - since) / 1000`. Σε δευτερόλεπτα η διαφορά έβγαινε
@@ -114,13 +118,14 @@ async function refreshKey(s: MyStream) {
   }
 }
 
-// Ξεχωριστά από το load(): το ιστορικό 24ώρου το φέρνει το API κάνοντας proxy
-// στον stream server — δεν αξίζει κάθε 10s. Server κάτω σημαίνει άδεια γραφήματα,
+// Ξεχωριστά από το load(): το ιστορικό το φέρνει το API κάνοντας proxy στον
+// stream server — δεν αξίζει κάθε 10s. Server κάτω σημαίνει άδεια γραφήματα,
 // όχι σφάλμα σε όλη τη σελίδα: το stream key και οι ρυθμίσεις του OBS ισχύουν.
 async function loadSeries() {
-  series.value = await api<Series>('/me/series?range=24h')
+  series.value = await api<Series>(`/me/series?range=${range.value}`)
     .catch(() => ({ bucket: 0, from: 0, streams: [], server: [] }))
 }
+watch(range, loadSeries)
 
 // Ο admin δεν έχει clientId, άρα το /me/streams του είναι άδειο — δεν έχει τι να
 // δει εδώ.
@@ -151,6 +156,17 @@ onBeforeUnmount(() => {
         <template v-if="totals.length > 1"> ({{ t.plan }})</template>
         <template v-if="!t.limit">(χωρίς όριο)</template>
       </UBadge>
+
+      <!-- Μόνο όταν υπάρχουν γραφήματα να αλλάξουν: τα γραφήματα ζουν στην κάρτα
+           της ενεργής εκπομπής. -->
+      <div v-if="live.length" class="flex gap-1">
+        <UButton
+          v-for="(label, r) in RANGES" :key="r"
+          :color="r === range ? 'primary' : 'neutral'"
+          :variant="r === range ? 'subtle' : 'ghost'"
+          size="sm" :title="label" @click="range = r"
+        >{{ r }}</UButton>
+      </div>
     </div>
 
     <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
@@ -229,20 +245,20 @@ onBeforeUnmount(() => {
           </dl>
         </div>
 
-        <!-- 24ωρο ιστορικό μόνο αυτού του path (το /me/series φιλτράρει με το
-             token). CPU/μνήμη του μηχανήματος δεν δείχνουμε: αφορούν και τους
-             υπόλοιπους πελάτες του ίδιου server. -->
+        <!-- Ιστορικό μόνο αυτού του path (το /me/series φιλτράρει με το token),
+             στο διάστημα που διάλεξε ο πελάτης. CPU/μνήμη του μηχανήματος δεν
+             δείχνουμε: αφορούν και τους υπόλοιπους πελάτες του ίδιου server. -->
         <div class="charts border-t border-default">
           <div class="chart">
-            <h2>Θεατές — 24 ώρες</h2>
+            <h2>Θεατές — {{ RANGES[range] }}</h2>
             <MiniChart :points="points[s.path]?.viewers ?? []" color="--s1" :fmt="v => String(Math.round(v))" />
           </div>
           <div class="chart">
-            <h2>Bitrate εισόδου — 24 ώρες</h2>
+            <h2>Bitrate εισόδου — {{ RANGES[range] }}</h2>
             <MiniChart :points="points[s.path]?.in ?? []" color="--s2" :fmt="bps" />
           </div>
           <div class="chart">
-            <h2>Bitrate εξόδου — 24 ώρες{{ s.r2Estimate ? ' *' : '' }}</h2>
+            <h2>Bitrate εξόδου — {{ RANGES[range] }}{{ s.r2Estimate ? ' *' : '' }}</h2>
             <MiniChart :points="points[s.path]?.out ?? []" color="--s3" :fmt="bps" />
           </div>
         </div>
