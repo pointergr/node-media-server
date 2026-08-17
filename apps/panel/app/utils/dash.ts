@@ -99,6 +99,16 @@ export const RANGES: Record<string, string> = {
   '30d': '30 ημέρες',
 }
 
+// Το Chart.js με άξονα `linear` και χωρίς όρια μαζεύει τον άξονα x γύρω από τα
+// σημεία: μία ώρα εκπομπής ζωγραφίζεται ίδια είτε ζητήθηκε 1 ώρα είτε 30 μέρες,
+// και ο επιλογέας διαστήματος φαίνεται χαλασμένος ενώ τα δεδομένα είναι σωστά.
+// Ο άξονας δείχνει το ΖΗΤΟΥΜΕΝΟ παράθυρο (το `from` της απάντησης έως τώρα) —
+// το ίδιο κάνει και το lineChart του /admin, γι' αυτό εκεί δεν φάνηκε ποτέ.
+// Χωρίς `from` (server κάτω, πριν την πρώτη απάντηση) κανένα όριο: min=0
+// σημαίνει άξονας από το 1970 και γράφημα οπτικά άδειο.
+export const xWindow = (from: number, now = Math.floor(Date.now() / 1000)) =>
+  from > 0 ? { min: from, max: now } : {}
+
 export const clock = (ts: number) => new Date(ts * 1000)
   .toLocaleString('el-GR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 

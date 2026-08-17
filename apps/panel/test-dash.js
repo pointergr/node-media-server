@@ -2,7 +2,7 @@
 // παλιό dashboard και είναι εύκολο να σπάσουν σιωπηλά σε ένα refactor. Το
 // lineChart θέλει DOM και δεν δοκιμάζεται εδώ. Node 24: import .ts κατευθείαν.
 import assert from "node:assert";
-import { bps, bytes, dur, curve, niceMax, RANGES } from "./app/utils/dash.ts";
+import { bps, bytes, dur, curve, niceMax, RANGES, xWindow } from "./app/utils/dash.ts";
 
 assert.equal(bps(2_500_000), "2.5 Mbps");
 assert.equal(bps(999), "999 bps");
@@ -22,6 +22,13 @@ assert.equal(curve([[0, 1], [2, 3]]), "M0.0,1.0 L2.0,3.0");
 // αναγνωρίζει ο stream server πέφτει σιωπηλά πίσω στο 24ωρο.
 assert.deepEqual(Object.keys(RANGES), ["1h", "24h", "7d", "30d"]);
 assert.equal(RANGES["7d"], "7 ημέρες");
+
+// Ο άξονας δείχνει το επιλεγμένο διάστημα, όχι το εύρος των δειγμάτων: μία ώρα
+// εκπομπής μέσα σε παράθυρο 30 ημερών πρέπει να φαίνεται σαν μία ώρα.
+assert.deepEqual(xWindow(100, 200), { min: 100, max: 200 });
+// Χωρίς from (server κάτω, ή πριν την πρώτη απάντηση) κανένα όριο — αλλιώς ο
+// άξονας ξεκινάει από το 1970 και το γράφημα βγαίνει άδειο.
+assert.deepEqual(xWindow(0, 200), {});
 
 assert.equal(niceMax(2_400_000), 2_500_000);
 assert.equal(niceMax(7.3), 7.5); // στρογγυλοποιεί στο μισό της δύναμης του 10, όχι στην επόμενη

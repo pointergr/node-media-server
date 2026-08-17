@@ -251,15 +251,15 @@ onBeforeUnmount(() => {
         <div class="charts border-t border-default">
           <div class="chart">
             <h2>Θεατές — {{ RANGES[range] }}</h2>
-            <MiniChart :points="points[s.path]?.viewers ?? []" color="--s1" :fmt="v => String(Math.round(v))" />
+            <MiniChart :points="points[s.path]?.viewers ?? []" :from="series.from" color="--s1" :fmt="v => String(Math.round(v))" />
           </div>
           <div class="chart">
             <h2>Bitrate εισόδου — {{ RANGES[range] }}</h2>
-            <MiniChart :points="points[s.path]?.in ?? []" color="--s2" :fmt="bps" />
+            <MiniChart :points="points[s.path]?.in ?? []" :from="series.from" color="--s2" :fmt="bps" />
           </div>
           <div class="chart">
             <h2>Bitrate εξόδου — {{ RANGES[range] }}{{ s.r2Estimate ? ' *' : '' }}</h2>
-            <MiniChart :points="points[s.path]?.out ?? []" color="--s3" :fmt="bps" />
+            <MiniChart :points="points[s.path]?.out ?? []" :from="series.from" color="--s3" :fmt="bps" />
           </div>
         </div>
       </UCard>

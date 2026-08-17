@@ -6,7 +6,7 @@
 import {
   Chart, Filler, LineController, LineElement, LinearScale, PointElement, Tooltip,
 } from 'chart.js'
-import { clock } from '~/utils/dash'
+import { clock, xWindow } from '~/utils/dash'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, Filler, Tooltip)
 
@@ -14,6 +14,10 @@ const props = defineProps<{
   points: [number, number][] // [unix seconds, τιμή]
   color: string // όνομα CSS variable, π.χ. '--s2'
   fmt: (v: number) => string
+  // Αρχή του ζητούμενου παραθύρου (unix seconds, το `from` του /me/series) — δες
+  // xWindow(). Χωρίς αυτό ο άξονας ακολουθεί τα δεδομένα και ο επιλογέας
+  // διαστήματος δεν αλλάζει τίποτα ορατό.
+  from: number
 }>()
 
 const canvas = ref<HTMLCanvasElement>()
@@ -28,10 +32,16 @@ function render() {
   if (!canvas.value) return
   const line = resolve(props.color)
   const data = props.points.map(([t, v]) => ({ x: t, y: v }))
+  const win = xWindow(props.from)
 
   if (chart) {
     chart.data.datasets[0]!.data = data
     chart.data.datasets[0]!.borderColor = line
+    // Και τα όρια του άξονα, όχι μόνο τα σημεία: το chart φτιάχνεται μία φορά και
+    // ζει όσο η κάρτα — αλλαγή διαστήματος περνάει πάντα από εδώ, ποτέ από το
+    // `new Chart` παρακάτω. `undefined` = ξανά αυτόματος άξονας.
+    chart.options.scales!.x!.min = win.min
+    chart.options.scales!.x!.max = win.max
     chart.update('none') // χωρίς animation: το refresh είναι ανά 10s, θα «χόρευε» συνεχώς
     return
   }
@@ -49,6 +59,7 @@ function render() {
       scales: {
         x: {
           type: 'linear',
+          ...win,
           grid: { color: resolve('--grid') },
           ticks: { color: resolve('--muted'), maxTicksLimit: 5, callback: v => clock(Number(v)) },
         },
@@ -72,7 +83,9 @@ function render() {
 }
 
 onMounted(render)
-watch(() => props.points, render)
+// Και το `from`: το ίδιο άδειο stream σε δύο διαστήματα δίνει τα ίδια (άδεια)
+// σημεία, οπότε ο άξονας θα κόλλαγε στο παλιό παράθυρο.
+watch([() => props.points, () => props.from], render)
 onBeforeUnmount(() => chart?.destroy())
 </script>
 
