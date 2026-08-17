@@ -415,6 +415,24 @@ test('συνδρομές: path πάνω από το maxStreams -> 409, με χώ
   assert.equal((await post(auth, `/clients/${client.id}/paths`, { path: '/live/dio', subscriptionId: extra.id })).status, 201);
 });
 
+// Path χωρίς path: η αρίθμηση δεν πρέπει να ξαναδώσει ό,τι υπάρχει ήδη — μετά από
+// διαγραφή, ένα «πλήθος+1» θα έπεφτε πάνω στο τελευταίο.
+test('paths: χωρίς path -> αυτόματο ανά συνδρομή, χωρίς σύγκρουση μετά από διαγραφή', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'auto-path', 10, 5, ids.serverA);
+  const client = await mkClient(auth, 'auto-path-pelatis');
+  const sub = await mkSub(auth, client.id, plan.id);
+
+  const mk = async () => (await (await post(auth, `/clients/${client.id}/paths`, { subscriptionId: sub.id })).json()) as { id: number; path: string };
+  const first = await mk();
+  const second = await mk();
+  assert.equal(first.path, `/live/c${client.id}-s${sub.id}-1`);
+  assert.equal(second.path, `/live/c${client.id}-s${sub.id}-2`);
+
+  await fetch(`${base}/clients/${client.id}/paths/${first.id}`, { method: 'DELETE', headers: auth });
+  assert.equal((await mk()).path, `/live/c${client.id}-s${sub.id}-3`);
+});
+
 // Η συνδρομή άλλου πελάτη δεν είναι δρόμος για path: χωρίς τον έλεγχο, ένα id
 // από άλλον πελάτη θα έγραφε path μέσα στο πλάνο του.
 test('συνδρομές: id άλλου πελάτη -> 404', async () => {

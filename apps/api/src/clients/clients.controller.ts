@@ -72,7 +72,8 @@ export class ClientsController {
     // clients.json. Ένα "live/kamera1" χωρίς αρχική κάθετο, ή με query/κενά,
     // δεν θα ταίριαζε ποτέ — και η αποτυχία θα φαινόταν μόνο ως «άκυρο κλειδί»
     // στα logs του server, ώρες αργότερα.
-    if (!body.path || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.path)) {
+    // Χωρίς path το φτιάχνει το service από τα ids — δες nextPath().
+    if (body.path && !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.path)) {
       throw new BadRequestException('path της μορφής /app/stream (π.χ. /live/kamera1)');
     }
     // Το path ανήκει σε συνδρομή, όχι στον πελάτη: από εκεί βγαίνει ο server και

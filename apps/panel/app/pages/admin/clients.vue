@@ -210,9 +210,10 @@ async function removeSubscription(c: ClientRow, s: SubscriptionRow) {
 async function addPath(c: ClientRow) {
   const path = newPath[c.id]?.trim()
   const subscriptionId = newPathSub[c.id]
-  if (!path || !subscriptionId) return
+  if (!subscriptionId) return
   try {
-    await api(`/clients/${c.id}/paths`, { method: 'POST', body: JSON.stringify({ path, subscriptionId }) })
+    // Κενό path = το ονομάζει το API (δες clients.service.ts#nextPath).
+    await api(`/clients/${c.id}/paths`, { method: 'POST', body: JSON.stringify({ path: path || undefined, subscriptionId }) })
     newPath[c.id] = ''
     await load()
   }
@@ -419,7 +420,7 @@ onMounted(load)
         </div>
 
         <form class="flex gap-2 flex-wrap" @submit.prevent="addPath(c)">
-          <UInput v-model="newPath[c.id]" placeholder="/live/kamera1" required class="grow min-w-45" />
+          <UInput v-model="newPath[c.id]" placeholder="/live/kamera1 — κενό για αυτόματο" class="grow min-w-45" />
           <!-- Το stream ανήκει σε πλάνο: από εκεί παίρνει server και όριο θεατών.
                Γεμάτο πλάνο εμφανίζεται απενεργοποιημένο αντί για σίγουρο 409. -->
           <USelect v-model="newPathSub[c.id]" :items="subItems(c)" placeholder="— πλάνο —" class="min-w-60" />

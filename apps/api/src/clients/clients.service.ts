@@ -134,7 +134,7 @@ export class ClientsService {
     await this.prisma.subscription.delete({ where: { id: subscriptionId } });
   }
 
-  async addPath(clientId: number, path: string, subscriptionId: number) {
+  async addPath(clientId: number, path: string | undefined, subscriptionId: number) {
     const sub = await this.subscriptionOf(clientId, subscriptionId);
 
     // Το όριο streams μετράει paths, όχι ταυτόχρονες εκπομπές — ο stream server
@@ -146,6 +146,7 @@ export class ClientsService {
 
     // ≥16 chars base64url, δες PLAN-multitenant.md #2 — 16 bytes -> 22 χαρακτήρες.
     const key = randomBytes(16).toString('base64url');
+    path ||= nextPath(clientId, sub.id, sub.paths);
     try {
       // Ο server έρχεται από τη συνδρομή, ποτέ από τον caller: αλλιώς θα υπήρχε
       // path σε μηχάνημα που δεν πλήρωσε κανείς.
@@ -176,6 +177,17 @@ export class ClientsService {
     if (!sub || sub.clientId !== clientId) throw new NotFoundException('subscription not found');
     return sub;
   }
+}
+
+// Path χωρίς να το σκεφτεί κανείς: `/live/c3-s7-1`. Τα ids αντί για το όνομα του
+// πελάτη γιατί το όνομα είναι ελληνικό (το path δέχεται μόνο ASCII) και αλλάζει,
+// ενώ το path που ήδη το ξέρει ένα OBS δεν αλλάζει ποτέ. Η αρίθμηση συνεχίζει από
+// το μεγαλύτερο υπάρχον, όχι από το πλήθος — αλλιώς μετά από διαγραφή το επόμενο
+// θα έπεφτε πάνω σε path που υπάρχει (409).
+function nextPath(clientId: number, subscriptionId: number, paths: { path: string }[]): string {
+  const prefix = `/live/c${clientId}-s${subscriptionId}-`;
+  const used = paths.filter((p) => p.path.startsWith(prefix)).map((p) => Number(p.path.slice(prefix.length)) || 0);
+  return prefix + (Math.max(0, ...used) + 1);
 }
 
 function isUniqueConstraintError(e: unknown): boolean {
