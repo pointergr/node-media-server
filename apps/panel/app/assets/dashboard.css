@@ -37,11 +37,6 @@ body {
   color: var(--ui-text);
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-/* Λίγο πιο σκούρα η επιφάνεια στο ανοιχτό θέμα, ώστε οι λευκές κάρτες να
-   ξεχωρίζουν από κάτω τους. Παράγωγο του token και όχι σταθερό χρώμα: αν αλλάξει
-   η παλέτα, ακολουθεί. Μόνο στο light — στο dark η ίδια πράξη θα έσβηνε τη
-   διαφορά κάρτας/φόντου αντί να τη μεγαλώσει. */
-html:not(.dark) body { background: color-mix(in oklch, var(--ui-bg-muted), black 10%); }
 h1 { font-size: 18px; margin: 0; font-weight: 600; }
 h2 { font-size: 13px; margin: 0 0 12px; font-weight: 600; color: var(--text-secondary); }
 /* Το αρχείο ζει **εκτός** @layer, οπότε νικάει τα utilities του Tailwind v4 (τα
