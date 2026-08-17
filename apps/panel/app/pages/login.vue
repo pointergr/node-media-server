@@ -39,11 +39,21 @@ const submit = () => enter('/auth/login', { username: username.value, password: 
 // Link μιας χρήσης από το billing: `/login#t=<token>` (POST /auth/login-link).
 // Στο fragment, οπότε δεν έφτασε ποτέ σε log του server — και το σβήνουμε από το
 // URL πριν το ανταλλάξουμε, ώστε να μη μείνει στο ιστορικό ή σε copy-paste.
-onMounted(() => {
-  const t = new URLSearchParams(location.hash.slice(1)).get('t')
-  if (!t) return
+//
+// Το διαβάζουμε **στο setup** και όχι στο onMounted: με `ssr: false` το
+// location υπάρχει ήδη, οπότε η φόρμα δεν προλαβαίνει να ζωγραφιστεί καθόλου.
+// Αλλιώς ο χρήστης με αργή σύνδεση έβλεπε «Σύνδεση» και μετά redirect — δηλαδή
+// νόμιζε ότι του ζητήθηκε κωδικός.
+const linkToken = import.meta.client ? new URLSearchParams(location.hash.slice(1)).get('t') : null
+const exchanging = ref(!!linkToken)
+
+onMounted(async () => {
+  if (!linkToken) return
   history.replaceState(null, '', location.pathname)
-  enter('/auth/exchange', { token: t }, 'ο σύνδεσμος σύνδεσης έληξε — μπες με τα στοιχεία σου')
+  await enter('/auth/exchange', { token: linkToken }, 'ο σύνδεσμος σύνδεσης έληξε — μπες με τα στοιχεία σου')
+  // Φτάνουμε εδώ μόνο αν η ανταλλαγή απέτυχε (αλλιώς έχει γίνει navigate): τότε
+  // δείχνουμε τη φόρμα, με το μήνυμα λήξης από πάνω.
+  exchanging.value = false
 })
 </script>
 
@@ -58,7 +68,12 @@ onMounted(() => {
         </div>
       </template>
 
-      <form class="space-y-4" @submit.prevent="submit">
+      <div v-if="exchanging" class="flex flex-col items-center gap-3 py-4 text-muted">
+        <UIcon name="i-lucide-loader-circle" class="size-8 animate-spin" />
+        <p>Σε συνδέουμε…</p>
+      </div>
+
+      <form v-else class="space-y-4" @submit.prevent="submit">
         <UFormField label="Όνομα χρήστη" name="username">
           <UInput v-model="username" autocomplete="username" autofocus required class="w-full" />
         </UFormField>
