@@ -69,16 +69,37 @@ username θα προήγαγε σιωπηλά πελάτη σε admin.
 
 ## Auth
 
-Δύο ξεχωριστοί μηχανισμοί, κανένας passport:
+Τρεις ξεχωριστοί μηχανισμοί, κανένας passport:
 
 - **JWT** (`@nestjs/jwt`) για χρήστες: `POST /auth/login` → `access_token`.
   Global guard σε κάθε route εκτός `@Public()`. Payload: `sub` (user id),
   `role` (`admin`/`customer`), `clientId` (`null` για admin).
+- **API key** (`ApiKey`) για εξωτερικές υπηρεσίες που κάνουν provisioning:
+  `Authorization: Bearer pk_…` στα ίδια endpoints, χωρίς login και χωρίς λήξη.
+  Ο ίδιος guard το ξεχωρίζει από το πρόθεμα `pk_` και γεμίζει το ίδιο `req.user`
+  με `role: "admin"`, οπότε τίποτα κατάντη (`@Roles`, `/me`) δεν αλλάζει.
 - **Static bearer token ανά server** (`Server.token`) μόνο για το
   `POST /servers/:host/sync` — ο stream server δεν συνδέεται ποτέ σαν χρήστης.
 
 Κωδικοί: `node:crypto` `scryptSync` + `timingSafeEqual` (`src/auth/password.ts`),
-όχι bcrypt/argon — καμία native εξάρτηση στο image.
+όχι bcrypt/argon — καμία native εξάρτηση στο image. Τα API keys όμως με **sha256**
+(`src/auth/apikey.ts`): το scrypt είναι σκόπιμα αργό και εδώ θα το πλήρωνε κάθε
+αίτημα, ενώ 24 τυχαία bytes δεν έχουν λεξικό να τα μαντέψει.
+
+### API keys
+
+```bash
+docker compose exec api node dist/src/apikey.js "e-shop"     # τυπώνει το κλειδί ΜΙΑ φορά
+docker compose exec api node dist/src/apikey.js list         # ποια υπάρχουν, πότε χρησιμοποιήθηκαν
+docker compose exec api node dist/src/apikey.js revoke 3     # ή revoke "e-shop" (όλα του ονόματος)
+```
+
+Αποθηκεύεται μόνο το sha256, οπότε χαμένο κλειδί σημαίνει καινούργιο κλειδί.
+Η ανάκληση είναι μία διαγραφή γραμμής και δεν αγγίζει κανέναν χρήστη — σε
+αντίθεση με μακρόβιο JWT, που για να ακυρωθεί θέλει αλλαγή του `JWT_SECRET`,
+δηλαδή αποσύνδεση όλων. Το κλειδί έχει **πλήρη δικαιώματα admin**: δώσε ένα ανά
+υπηρεσία, ώστε η ανάκληση του ενός να μη σταματάει τις άλλες. (Scoped keys ανά
+πελάτη θα ήθελαν `role`/`clientId` στο μοντέλο — δεν μπήκαν μέχρι να χρειαστούν.)
 
 ## Endpoints
 
@@ -107,6 +128,10 @@ username θα προήγαγε σιωπηλά πελάτη σε admin.
 | `POST /me/streams/:id/key` | οποιοσδήποτε συνδεδεμένος | το ίδιο, από τον ίδιο τον πελάτη — το `id` έρχεται από το `GET /me/streams` και ελέγχεται με το `clientId` του token (ξένο path → **404**, admin χωρίς `clientId` → **404**) |
 | `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `id` (του path, για την ανανέωση κλειδιού), `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `plan` και `subscriptionId` (σε ποιο αγορασμένο πλάνο ανήκει), `suspended` (η συνδρομή είναι σε αναστολή — το stream φαίνεται αλλά δεν εκπέμπει), `limit` (το όριο **αυτού του πλάνου**), `viewers`, `since` (πότε συνδέθηκε ο publisher, `null` = δεν εκπέμπει), `in_bps`, `out_bps` και `r2Estimate` (η έξοδος είναι εκτίμηση όταν τα segments φεύγουν από CDN) — τα πέντε τελευταία από το τελευταίο snapshot |
 | `GET /me/series?range=` | οποιοσδήποτε συνδεδεμένος | ίδιο proxy με το `/servers/:host/series`, αλλά **μόνο** για τα paths του πελάτη του token και χωρίς το `server` block (CPU/μνήμη). Οι servers βγαίνουν από τις συνδρομές του, δεν τους διαλέγει ο caller — με paths σε δύο μηχανήματα ρωτάει και τα δύο και ενώνει (ένα πεσμένο δεν ρίχνει το γράφημα του άλλου) |
+
+Όπου ο πίνακας λέει `admin`, περνάει και **API key** (`Bearer pk_…`) — το ίδιο
+δικαίωμα από άλλη πόρτα. Το `PATCH /auth/me` είναι η μόνη εξαίρεση: το key δεν
+έχει λογαριασμό να αλλάξει και παίρνει **401**.
 
 **Πλάνα και συνδρομές:** ο κατάλογος (`Plan`) είναι ό,τι πουλάμε· η **συνδρομή**
 (`Subscription`) είναι μία αγορά ενός πλάνου και η μονάδα των πάντων. Ο πελάτης

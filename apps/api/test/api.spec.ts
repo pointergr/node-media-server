@@ -737,3 +737,46 @@ test('συνδρομές: suspend μόνο της μίας, οι υπόλοιπ�
   });
   assert.deepEqual(Object.keys((await syncOf('server-a', 'tok-a'))[`me-anastoli#${expired.id}`]!.paths), ['/live/ligomeno']);
 });
+
+// --- API keys ---------------------------------------------------------------
+// Εξωτερική υπηρεσία που κάνει provisioning: το 12ωρο JWT δεν κάνει, και μακρόβιο
+// JWT δεν ανακαλείται χωρίς αλλαγή του JWT_SECRET — δηλαδή χωρίς να πέσουν έξω
+// ταυτόχρονα όλοι οι συνδεδεμένοι χρήστες.
+test('api key: provisioning χωρίς login, ανάκληση με μία διαγραφή', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const mint = `${__dirname}/../src/apikey.js`;
+
+  const out = await run('node', [mint, 'e-shop']);
+  const key = out.stdout.trim().split(/\s+/).pop()!;
+  assert.match(key, /^pk_/, 'το key τυπώνεται μία φορά, με πρόθεμα pk_');
+
+  const auth = { authorization: `Bearer ${key}`, 'content-type': 'application/json' };
+  const plan = await mkPlan(await adminAuth(), 'apikey-plan', 10, 2, ids.serverA);
+  // Ολόκληρη η αλυσίδα του provisioning με το key, χωρίς κανένα login.
+  const client = await mkClient(auth, 'pelatis-apikey');
+  const sub = await mkSub(auth, client.id, plan.id);
+  const path = await post(auth, `/clients/${client.id}/paths`, { path: '/live/apikey', subscriptionId: sub.id });
+  assert.equal(path.status, 201);
+
+  const { PrismaClient } = await import('@prisma/client');
+  const prisma = new PrismaClient();
+  const rows = await prisma.apiKey.findMany();
+  assert.equal(rows.length, 1);
+  // Αντίγραφο της sqlite δεν πρέπει να παραδίδει έτοιμο κλειδί.
+  assert.ok(!JSON.stringify(rows).includes(key), 'το plaintext δεν αποθηκεύεται');
+  assert.ok(rows[0]!.lastUsed, 'γράφτηκε η τελευταία χρήση');
+
+  // Ανάκληση: μία διαγραφή, χωρίς να πειραχτεί κανένα JWT.
+  await prisma.apiKey.deleteMany();
+  await prisma.$disconnect();
+  const after = await fetch(`${base}/clients`, { headers: auth });
+  assert.equal(after.status, 401, 'το διαγραμμένο key δεν περνάει');
+  assert.ok(await login('admin', 'adminpass'), 'οι χρήστες δεν επηρεάστηκαν');
+});
+
+test('api key: άκυρο -> 401', async () => {
+  const res = await fetch(`${base}/clients`, { headers: { authorization: 'Bearer pk_den-yparxei' } });
+  assert.equal(res.status, 401);
+});

@@ -21,6 +21,7 @@ npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps
 npm run seed -w apps/api            # φτιάχνει τον πρώτο admin χρήστη του κεντρικού panel
 npm run seed -w apps/api force      # ...ή ξαναγράφει τον κωδικό του (χαμένος κωδικός admin)
 docker compose exec api node dist/src/seed.js force   # το ίδιο σε Docker, από apps/api/
+node dist/src/apikey.js <όνομα>|list|revoke <id>      # API keys για εξωτερικές υπηρεσίες (apps/api/README.md)
 npm run dev -w apps/panel           # Nuxt dev server, με devProxy /api -> localhost:3000 (χρειάζεται το apps/api να τρέχει)
 npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public, τα στατικά που σερβίρει ο Caddy
 ```
@@ -105,9 +106,13 @@ stream1, γυρνάς το basic στον stream2, και μετακομίζει
 Sqlite με Prisma 6 (**όχι 7** — θα έφερνε driver adapters για ένα σχήμα λίγων πινάκων), και
 `prisma db push` σε **κάθε boot** αντί για migrations: δεν υπάρχει migrations directory, το
 `schema.prisma` είναι η μόνη πηγή αλήθειας — αρκεί όσο το σχήμα δεν έχει ιστορικό αλλαγών σε
-production. Auth σε δύο επίπεδα και κανένα passport: JWT (`@nestjs/jwt`) για χρήστες
-(admin/customer, global guard εκτός `@Public()`), και static bearer token ανά server μόνο
-για το `POST /servers/:host/sync` — ο stream server δεν συνδέεται ποτέ σαν χρήστης. Κωδικοί
+production. Auth σε τρία επίπεδα και κανένα passport: JWT (`@nestjs/jwt`) για χρήστες
+(admin/customer, global guard εκτός `@Public()`), **API key** (`ApiKey`, πρόθεμα `pk_`,
+sha256) για εξωτερικές υπηρεσίες που κάνουν provisioning, και static bearer token ανά
+server μόνο για το `POST /servers/:host/sync` — ο stream server δεν συνδέεται ποτέ σαν
+χρήστης. Το API key το αναγνωρίζει ο **ίδιος** guard από το πρόθεμα και γράφει το ίδιο
+`req.user` με `role: "admin"`: έτσι `@Roles`, `/me` και ό,τι άλλο διαβάζει το `req.user`
+δεν ξέρουν καν ότι υπάρχει δεύτερος τρόπος εισόδου. Κωδικοί
 με `node:crypto` `scryptSync`/`timingSafeEqual`, όχι bcrypt — καμία native εξάρτηση στο
 image. Tests: `nest build` πρώτα, μετά σκέτο `node --test` πάνω στο compiled output
 (`dist/test/*.js`) — ίδια φιλοσοφία με τα `test-*.js` του `apps/stream`, όχι jest/supertest.

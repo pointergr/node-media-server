@@ -97,6 +97,21 @@ model Path {
   @@unique([serverId, path])
 }
 
+// Κλειδί για εξωτερική υπηρεσία (provisioning): ό,τι κάνει ένας admin, χωρίς
+// login και χωρίς λήξη. Δεν είναι User — ο χρήστης έχει κωδικό που αλλάζει από
+// το /account και 12ωρο JWT· εδώ θέλουμε το αντίστροφο, μόνιμο μυστικό που
+// ανακαλείται με μία διαγραφή, χωρίς να πειραχτεί το JWT_SECRET (θα έπεφταν
+// έξω όλοι οι συνδεδεμένοι).
+model ApiKey {
+  id       Int       @id @default(autoincrement())
+  // Ποιος το κρατάει — για να ξέρεις τι ακυρώνεις όταν το ακυρώσεις.
+  name     String
+  // sha256 του κλειδιού, όχι το ίδιο το κλειδί (ούτε scrypt: το verify τρέχει σε
+  // ΚΑΘΕ αίτημα, και το scrypt είναι σκόπιμα αργό — δες auth/password.ts).
+  hash     String    @unique
+  lastUsed DateTime?
+}
+
 model User {
   id       Int     @id @default(autoincrement())
   username String  @unique
