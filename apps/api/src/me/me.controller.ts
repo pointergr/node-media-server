@@ -3,7 +3,7 @@ import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from '../sync/sync.service';
 import { ServersService } from '../servers/servers.service';
-import { maxViewersOf, withPackages } from '../clients/clients.service';
+import { maxViewersOf, withPackages, withPaths } from '../clients/clients.service';
 
 // Ελάχιστο σχήμα του snapshot που στέλνει ο stream server (stats.js#snapshot) —
 // μόνο ό,τι χρειάζεται εδώ, όχι όλο το contract.
@@ -37,7 +37,7 @@ export class MeController {
     if (!clientId) return null;
     return this.prisma.client.findUnique({
       where: { id: clientId },
-      include: { paths: true, server: true, ...withPackages },
+      include: { ...withPaths, ...withPackages },
     });
   }
 
@@ -48,22 +48,23 @@ export class MeController {
     const client = await this.mine(req.user.clientId);
     if (!client) return [];
 
-    const live = this.sync.latest(client.server.host)?.snapshot as StreamSnapshot | undefined;
-    const liveOf = (path: string) => live?.streams?.find((s) => s.stream === path);
-
+    // Ένα snapshot ανά μηχάνημα και όχι ένα για όλα: τα paths του πελάτη μπορεί
+    // να είναι μοιρασμένα σε δύο servers (μία αγορά στον καθένα).
     return client.paths.map((p) => {
-      const now = liveOf(p.path);
+      const live = this.sync.latest(p.server.host)?.snapshot as StreamSnapshot | undefined;
+      const now = live?.streams?.find((s) => s.stream === p.path);
       return {
         // Το host το χρειάζεται το panel για να χτίσει και το URL αναπαραγωγής
         // (https://<host><path>/index.m3u8) και το rtmp:// του OBS — χωρίς αυτό
         // ο πελάτης βλέπει κλειδί που δεν ξέρει πού να το βάλει.
-        host: client.server.host,
+        host: p.server.host,
         path: p.path,
         key: p.key,
         streamKey: `${p.path.split('/').pop()}?key=${p.key}`,
-        // Άθροισμα των πακέτων του πελάτη — το ίδιο νούμερο που παίρνει και ο
-        // stream server στο clients.json. 0 = χωρίς όριο, όπως πάντα.
-        limit: maxViewersOf(client.packages),
+        // Άθροισμα των πακέτων του πελάτη **σε αυτόν τον server** — το ίδιο
+        // νούμερο που παίρνει και ο stream server στο clients.json. 0 = χωρίς
+        // όριο, όπως πάντα.
+        limit: maxViewersOf(client.packages, p.serverId),
         viewers: now?.viewers ?? 0,
         // Η ύπαρξη publisher ΕΙΝΑΙ η κατάσταση: `since` (πότε συνδέθηκε το OBS)
         // ή null. Χωριστό flag θα μπορούσε να διαφωνήσει με το since.
@@ -88,15 +89,22 @@ export class MeController {
     if (!client) return empty;
 
     const qs = range ? `?range=${encodeURIComponent(range)}` : '';
-    const data = (await this.servers.proxy(client.server.host, `/admin/api/series${qs}`)) as Series;
+    const hosts = [...new Set(client.paths.map((p) => p.server.host))];
+    // allSettled: με paths σε δύο μηχανήματα, ένα πεσμένο δεν πρέπει να σβήνει
+    // και το γράφημα του άλλου.
+    // ponytail: paths με το ίδιο όνομα σε δύο servers (το unique είναι ανά
+    // server) συγχωνεύονται σε μία γραμμή — θέλει κλειδί host+path όταν συμβεί.
+    const answers = (await Promise.allSettled(hosts.map((h) => this.servers.proxy(h, `/admin/api/series${qs}`))))
+      .filter((r) => r.status === 'fulfilled')
+      .map((r) => r.value as Series);
     const mine = new Set(client.paths.map((p) => p.path));
 
     // Χωρίς το `server` της απάντησης: CPU και μνήμη του μηχανήματος δεν αφορούν
     // τον πελάτη, και είναι πληροφορία για τους υπόλοιπους ενοίκους του.
     return {
-      bucket: data.bucket,
-      from: data.from,
-      streams: (data.streams ?? []).filter((r) => mine.has(r.stream)),
+      bucket: answers[0]?.bucket ?? 0,
+      from: answers[0]?.from ?? 0,
+      streams: answers.flatMap((d) => d.streams ?? []).filter((r) => mine.has(r.stream)),
     };
   }
 }

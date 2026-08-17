@@ -8,7 +8,9 @@ interface ServerRow {
   adminPass: string
   token: string
   lastSeen: string | null
-  _count: { clients: number }
+  // Πακέτα που πουλάνε εδώ και paths που ζουν εδώ — ο πελάτης δεν ανήκει σε
+  // server πια (δες utils/packages.ts).
+  _count: { packages: number, paths: number }
 }
 
 const api = useApi()
@@ -175,7 +177,7 @@ onMounted(load)
         </div>
 
         <div class="flex items-center justify-between gap-3 flex-wrap">
-          <span class="note">Τελευταίο sync: {{ fmtDate(s.lastSeen) }} · πελάτες: {{ s._count.clients }}</span>
+          <span class="note">Τελευταίο sync: {{ fmtDate(s.lastSeen) }} · πακέτα: {{ s._count.packages }} · streams: {{ s._count.paths }}</span>
           <div class="flex gap-2">
             <UButton icon="i-lucide-save" color="neutral" variant="subtle" @click="saveServer(s)">Αποθήκευση</UButton>
             <UButton icon="i-lucide-trash-2" color="error" variant="ghost" @click="removeServer(s)">Διαγραφή</UButton>

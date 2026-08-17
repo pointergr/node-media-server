@@ -86,7 +86,7 @@ username θα προήγαγε σιωπηλά πελάτη σε admin.
 |---|---|---|
 | `POST /auth/login` | καμία | `{username,password}` → `{access_token}` |
 | `PATCH /auth/me` | οποιοσδήποτε συνδεδεμένος | `{currentPassword, username?, password?}` — αλλάζει τα **δικά του** στοιχεία (το id βγαίνει από το token, ποτέ από το σώμα). Λάθος `currentPassword` → **401**, username που υπάρχει → **409**. Το token μένει έγκυρο: το payload δεν αλλάζει |
-| `POST /servers/:host/sync` | `Bearer <Server.token>` | σώμα = snapshot του stream server, απάντηση = clients.json (μόνο μη-disabled πελάτες αυτού του server) |
+| `POST /servers/:host/sync` | `Bearer <Server.token>` | σώμα = snapshot του stream server, απάντηση = clients.json — οι μη-disabled πελάτες που έχουν **αγορά ή path** σε αυτόν τον server, με το `limit` και τα paths **μόνο** αυτού του server |
 | `GET /live` | admin | τελευταίο snapshot όλων των servers, από τη μνήμη· `online: false` αν `ts` > 30s |
 | `GET /servers` / `POST /servers` | admin | CRUD server· το `token` παράγεται μόνο του αν δεν δοθεί |
 | `GET/PATCH/DELETE /servers/:id` | admin | |
@@ -95,27 +95,34 @@ username θα προήγαγε σιωπηλά πελάτη σε admin.
 | `DELETE /servers/:host/sessions/:id` | admin | proxy → `/admin/api/sessions/:id` |
 | `POST /servers/:host/restart` | admin | proxy → `/admin/api/restart` |
 | `GET /clients` / `POST /clients` | admin | `POST` δέχεται προαιρετικά `username`+`password` — φτιάχνει μαζί και τον customer χρήστη (δες «Αποφάσεις» παρακάτω). Το `GET` δίνει και `users: [{id, username}]`, **χωρίς** το hash του κωδικού |
-| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `disabled`, `name`, `serverId`, `packages` (η **τελική** λίστα `[{packageId, qty}]` — ό,τι λείπει αφαιρείται) και `username`/`password` του χρήστη του πελάτη (ό,τι δεν σταλεί μένει ως έχει· μόνο `password` σε πελάτη **χωρίς** χρήστη → **400**, username που υπάρχει → **409**)· `DELETE` σβήνει και τα paths του (cascade) |
-| `GET /packages` / `POST /packages` | admin | `{name, maxViewers, maxStreams}`, και τα δύο όρια ακέραιοι **≥1** |
-| `PATCH/DELETE /packages/:id` | admin | `DELETE` με πελάτες που το κρατούν → **409** |
-| `POST /clients/:id/paths` | admin | `{path}` → παράγει κλειδί (16 bytes, base64url)· **409** αν τα πακέτα του πελάτη δεν χωράνε άλλο stream |
+| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `disabled`, `name`, `packages` (η **τελική** λίστα `[{packageId, serverId?, qty}]` — ό,τι λείπει αφαιρείται· `serverId` που λείπει = **νέα αγορά**, παίρνει τον σημερινό server του πακέτου) και `username`/`password` του χρήστη του πελάτη (ό,τι δεν σταλεί μένει ως έχει· μόνο `password` σε πελάτη **χωρίς** χρήστη → **400**, username που υπάρχει → **409**)· `DELETE` σβήνει και τα paths του (cascade) |
+| `GET /packages` / `POST /packages` | admin | `{name, maxViewers, maxStreams, serverId}`, τα δύο όρια ακέραιοι **≥1**· ο `serverId` είναι ο server των **επόμενων** αγορών |
+| `PATCH/DELETE /packages/:id` | admin | αλλαγή `serverId` = «από δω και πέρα πουλάει εκεί», οι υπάρχουσες αγορές **δεν** μετακομίζουν· `DELETE` με πελάτες που το κρατούν → **409** |
+| `POST /clients/:id/paths` | admin | `{path, serverId}` → παράγει κλειδί (16 bytes, base64url)· **409** αν ο πελάτης δεν έχει αγορά σε αυτόν τον server ή αν τα πακέτα του εκεί δεν χωράνε άλλο stream |
 | `DELETE /clients/:id/paths/:pathId` | admin | |
-| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `limit` (άθροισμα των πακέτων του, `0` = χωρίς όριο), `viewers`, `since` (πότε συνδέθηκε ο publisher, `null` = δεν εκπέμπει), `in_bps`, `out_bps` και `r2Estimate` (η έξοδος είναι εκτίμηση όταν τα segments φεύγουν από CDN) — τα πέντε τελευταία από το τελευταίο snapshot |
-| `GET /me/series?range=` | οποιοσδήποτε συνδεδεμένος | ίδιο proxy με το `/servers/:host/series`, αλλά **μόνο** για τα paths του πελάτη του token και χωρίς το `server` block (CPU/μνήμη). Ο server βγαίνει από τον πελάτη, δεν τον διαλέγει ο caller |
+| `GET /me/streams` | οποιοσδήποτε συνδεδεμένος | τα paths του πελάτη του token (admin χωρίς `clientId` → `[]`). Κάθε entry: `host` (το domain του stream server), `path`, `key`, `streamKey` (`όνομα?key=...`), `limit` (άθροισμα των πακέτων του **σε αυτόν τον server**, `0` = χωρίς όριο), `viewers`, `since` (πότε συνδέθηκε ο publisher, `null` = δεν εκπέμπει), `in_bps`, `out_bps` και `r2Estimate` (η έξοδος είναι εκτίμηση όταν τα segments φεύγουν από CDN) — τα πέντε τελευταία από το τελευταίο snapshot |
+| `GET /me/series?range=` | οποιοσδήποτε συνδεδεμένος | ίδιο proxy με το `/servers/:host/series`, αλλά **μόνο** για τα paths του πελάτη του token και χωρίς το `server` block (CPU/μνήμη). Οι servers βγαίνουν από τα paths του, δεν τους διαλέγει ο caller — με paths σε δύο μηχανήματα ρωτάει και τα δύο και ενώνει (ένα πεσμένο δεν ρίχνει το γράφημα του άλλου) |
 
-**Πακέτα:** τα όρια δεν ζουν στον πελάτη — είναι το άθροισμα των πακέτων του επί
-την ποσότητα (`Σ qty × maxViewers`, ίδιο για τα streams). Πελάτης χωρίς πακέτα
-βγάζει `0`, δηλαδή **χωρίς όριο** — ακριβώς η σημασία του `0` σε όλη τη διαδρομή
-ως τον stream server, ο οποίος δεν μαθαίνει ποτέ τι είναι πακέτο: παίρνει έτοιμο
-`limit` στο clients.json, με το ίδιο σχήμα όπως πάντα. Το όριο streams μετράει
-**paths** (πόσα μπορεί να έχει ο πελάτης) και επιβάλλεται μόνο στο
-`POST /clients/:id/paths` — paths που υπάρχουν ήδη δεν κόβονται αν αργότερα
-μικρύνει το πακέτο.
+**Πακέτα:** τα όρια δεν ζουν στον πελάτη — είναι το άθροισμα των αγορών του επί
+την ποσότητα (`Σ qty × maxViewers`, ίδιο για τα streams), **ανά server**. Πελάτης
+χωρίς αγορά σε έναν server βγάζει `0` εκεί, δηλαδή **χωρίς όριο** — ακριβώς η
+σημασία του `0` σε όλη τη διαδρομή ως τον stream server, ο οποίος δεν μαθαίνει
+ποτέ τι είναι πακέτο: παίρνει έτοιμο `limit` στο clients.json, με το ίδιο σχήμα
+όπως πάντα. Το όριο streams μετράει **paths** (πόσα μπορεί να έχει ο πελάτης
+εκεί) και επιβάλλεται μόνο στο `POST /clients/:id/paths` — paths που υπάρχουν
+ήδη δεν κόβονται αν αργότερα μικρύνει το πακέτο.
 
-`DELETE /servers/:id` με πελάτες ακόμα ανατεθειμένους σε αυτόν δίνει **409**:
-οι πελάτες δεν κάνουν cascade με τον server επίτηδες, το να σβήνεις έναν
-server δεν πρέπει να σβήνει σιωπηλά και τους πελάτες του — μετακίνησέ τους ή
-σβήσε τους πρώτα.
+**Σε ποιον server είναι ο πελάτης;** Σε κανέναν — ο `Client` δεν έχει server. Τον
+έχει η **αγορά**: κάθε γραμμή `ClientPackage` κρατάει το `serverId` που είχε το
+πακέτο τη στιγμή που αγοράστηκε. Ο ΘΩΜΑΣ που πήρε «basic» όσο το basic έδειχνε
+`stream1` μένει στο `stream1` για πάντα· αν αύριο το basic δείχνει `stream2`, εκεί
+πάει μόνο η **επόμενη** αγορά — και ο ίδιος πελάτης βρίσκεται να έχει πακέτα, όρια
+και paths σε δύο μηχανήματα ταυτόχρονα. Έτσι γεμίζει ένας server χωρίς να
+πειραχτεί κανείς από όσους ήδη κάθονται εκεί.
+
+`DELETE /servers/:id` που τον χρησιμοποιεί πακέτο, αγορά ή path δίνει **409**:
+τίποτα δεν κάνει cascade με τον server επίτηδες, το να σβήνεις έναν server δεν
+πρέπει να σβήνει σιωπηλά paths και κλειδιά εκπομπής — άδειασέ τον πρώτα.
 
 ## Αποφάσεις
 

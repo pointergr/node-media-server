@@ -27,9 +27,16 @@ export class SyncController {
     this.sync.record(host, snapshot);
     await this.prisma.server.update({ where: { id: server.id }, data: { lastSeen: new Date() } });
 
+    // Πελάτης «αυτού του server» = έχει αγορά εδώ ή (χωρίς πακέτα, άρα χωρίς
+    // όριο) έχει path εδώ. Ο πελάτης ο ίδιος δεν ανήκει πουθενά — δες
+    // schema.prisma. Τα paths φιλτράρονται κι αυτά: ο ίδιος πελάτης μπορεί να
+    // έχει άλλα paths σε άλλο μηχάνημα, που δεν αφορούν αυτόν εδώ.
     const clients = await this.prisma.client.findMany({
-      where: { serverId: server.id, disabled: false },
-      include: { paths: true, ...withPackages },
+      where: {
+        disabled: false,
+        OR: [{ packages: { some: { serverId: server.id } } }, { paths: { some: { serverId: server.id } } }],
+      },
+      include: { paths: { where: { serverId: server.id } }, ...withPackages },
     });
 
     const body: ClientsJson = {};
@@ -37,7 +44,7 @@ export class SyncController {
       body[c.name] = {
         // Ο stream server δεν ξέρει τι είναι πακέτο: παίρνει έτοιμο νούμερο, όπως
         // πάντα. Το σχήμα του clients.json δεν άλλαξε ποτέ γι' αυτόν.
-        limit: maxViewersOf(c.packages),
+        limit: maxViewersOf(c.packages, server.id),
         paths: Object.fromEntries(c.paths.map((p) => [p.path, p.key])),
       };
     }

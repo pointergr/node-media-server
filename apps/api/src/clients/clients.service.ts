@@ -12,12 +12,14 @@ type PrismaTx = Prisma.TransactionClient;
 export interface OwnedPackage {
   packageId: number;
   qty?: number;
+  // Ο server της αγοράς. Όταν λείπει είναι νέα αγορά και παίρνει τον σημερινό
+  // server του πακέτου — δες setPackages.
+  serverId?: number;
 }
 
 export interface CreateClientDto {
   name: string;
-  serverId: number;
-  // Η τελική λίστα πακέτων του πελάτη — όχι πρόσθεση: ό,τι στέλνει το panel
+  // Η τελική λίστα αγορών του πελάτη — όχι πρόσθεση: ό,τι στέλνει το panel
   // αντικαθιστά ό,τι υπάρχει (δες setPackages).
   packages?: OwnedPackage[];
   // Προαιρετικά: φτιάχνει και τον customer χρήστη μαζί με τον πελάτη — δεν
@@ -26,24 +28,29 @@ export interface CreateClientDto {
   password?: string;
 }
 
-export type UpdateClientDto = Partial<
-  Pick<CreateClientDto, 'name' | 'serverId' | 'packages' | 'username' | 'password'>
-> & {
+export type UpdateClientDto = Partial<Pick<CreateClientDto, 'name' | 'packages' | 'username' | 'password'>> & {
   disabled?: boolean;
 };
 
-// Τα όρια του πελάτη είναι το άθροισμα των πακέτων του επί την ποσότητα. Ο κανόνας
-// ζει εδώ και μόνο εδώ: τον καλούν το sync (clients.json του stream server), το
-// /me/streams και ο έλεγχος των paths. Δύο αντίγραφα θα απέκλιναν.
-// Κανένα πακέτο => 0 => χωρίς όριο, ακριβώς η σημερινή σημασία του 0 σε όλη τη
-// διαδρομή (stats.js#overLimit, README).
-type Owned = { qty: number; package: { maxViewers: number; maxStreams: number } };
-export const maxViewersOf = (ps: Owned[]) => ps.reduce((n, p) => n + p.qty * p.package.maxViewers, 0);
-export const maxStreamsOf = (ps: Owned[]) => ps.reduce((n, p) => n + p.qty * p.package.maxStreams, 0);
+// Τα όρια του πελάτη είναι το άθροισμα των πακέτων του επί την ποσότητα — και
+// είναι πάντα **ανά server**: ο πελάτης μπορεί να έχει αγορές σε δύο μηχανήματα
+// και το ένα δεν δανείζει θεατές στο άλλο. Ο κανόνας ζει εδώ και μόνο εδώ: τον
+// καλούν το sync (clients.json του stream server), το /me/streams και ο έλεγχος
+// των paths. Δύο αντίγραφα θα απέκλιναν.
+// Καμία αγορά στον server => 0 => χωρίς όριο, ακριβώς η σημερινή σημασία του 0
+// σε όλη τη διαδρομή (stats.js#overLimit, README).
+type Owned = { serverId: number; qty: number; package: { maxViewers: number; maxStreams: number } };
+const on = (ps: Owned[], serverId: number) => ps.filter((p) => p.serverId === serverId);
+export const maxViewersOf = (ps: Owned[], serverId: number) =>
+  on(ps, serverId).reduce((n, p) => n + p.qty * p.package.maxViewers, 0);
+export const maxStreamsOf = (ps: Owned[], serverId: number) =>
+  on(ps, serverId).reduce((n, p) => n + p.qty * p.package.maxStreams, 0);
 
 // Ό,τι χρειάζεται όποιος υπολογίζει όρια — μία φορά, ώστε να μη διαφύγει το
 // nested include σε κάποιον από τους τρεις καλούντες (χωρίς αυτό, όρια = 0).
-export const withPackages = { packages: { include: { package: true } } } as const;
+// Και τα paths: ο server τους είναι το μόνο «πού ζει» που έχει πια ο πελάτης.
+export const withPackages = { packages: { include: { package: true, server: true } } } as const;
+export const withPaths = { paths: { include: { server: true } } } as const;
 
 // Ρητό `select` και όχι `include`: το User κρατάει το hash του κωδικού, που δεν
 // έχει λόγο να φύγει ποτέ από το API — ούτε στον admin. Μόνο εδώ (πελάτες), όχι
@@ -56,14 +63,14 @@ export class ClientsService {
 
   list() {
     return this.prisma.client.findMany({
-      include: { paths: true, server: true, ...withPackages, ...withUser },
+      include: { ...withPaths, ...withPackages, ...withUser },
     });
   }
 
   async get(id: number) {
     const client = await this.prisma.client.findUnique({
       where: { id },
-      include: { paths: true, server: true, ...withPackages, ...withUser },
+      include: { ...withPaths, ...withPackages, ...withUser },
     });
     if (!client) throw new NotFoundException('client not found');
     return client;
@@ -125,13 +132,22 @@ export class ClientsService {
     // qty 0 = «δεν το έχει»: το panel στέλνει όλο τον κατάλογο με ποσότητες.
     const rows = packages.filter((p) => (p.qty ?? 1) > 0);
     if (!rows.length) return;
+
+    // Ο server της αγοράς: ό,τι έστειλε το panel για τις υπάρχουσες γραμμές
+    // (μένουν εκεί που αγοράστηκαν), ο σημερινός server του πακέτου για τις νέες.
+    // Χωρίς αυτό, κάθε «Αποθήκευση» θα μετακόμιζε σιωπηλά όλους τους παλιούς
+    // πελάτες στον server που δείχνει σήμερα το πακέτο.
+    const catalog = await tx.package.findMany({ where: { id: { in: rows.map((r) => r.packageId) } } });
+    const data = rows.map((p) => {
+      const serverId = p.serverId ?? catalog.find((c) => c.id === p.packageId)?.serverId;
+      if (!serverId) throw new BadRequestException('άγνωστο πακέτο στη λίστα');
+      return { clientId, packageId: p.packageId, qty: p.qty ?? 1, serverId };
+    });
     try {
-      await tx.clientPackage.createMany({
-        data: rows.map((p) => ({ clientId, packageId: p.packageId, qty: p.qty ?? 1 })),
-      });
+      await tx.clientPackage.createMany({ data });
     } catch (e) {
-      // Ανύπαρκτο packageId: FK constraint. Χωρίς αυτό ο admin έβλεπε «HTTP 500».
-      if (isForeignKeyError(e)) throw new BadRequestException('άγνωστο πακέτο στη λίστα');
+      // Ανύπαρκτο packageId/serverId: FK constraint. Χωρίς αυτό ο admin έβλεπε «HTTP 500».
+      if (isForeignKeyError(e)) throw new BadRequestException('άγνωστο πακέτο ή server στη λίστα');
       throw e;
     }
   }
@@ -141,27 +157,41 @@ export class ClientsService {
     await this.prisma.client.delete({ where: { id } });
   }
 
-  async addPath(clientId: number, path: string) {
+  async addPath(clientId: number, path: string, serverId: number) {
     const client = await this.get(clientId);
+
+    // Ο πελάτης «είναι» στους servers που του έδωσαν οι αγορές του. Πελάτης χωρίς
+    // καμία αγορά δεν έχει server — και δεν έχει ούτε όριο (0 παντού), οπότε
+    // πάει όπου τον βάλει ο διαχειριστής· ίδια σημασία του «χωρίς πακέτα» με
+    // παντού αλλού.
+    const mine = new Set(client.packages.map((p) => p.serverId));
+    if (mine.size && !mine.has(serverId)) {
+      throw new ConflictException('ο πελάτης δεν έχει πακέτο σε αυτόν τον server');
+    }
 
     // Το όριο των πακέτων μετράει paths, όχι ταυτόχρονες εκπομπές — ο stream
     // server δεν το βλέπει καν. Ελέγχεται μόνο εδώ, τη στιγμή της προσθήκης:
     // paths που υπάρχουν ήδη δεν κόβονται αν αργότερα μικρύνει το πακέτο.
-    const max = maxStreamsOf(client.packages);
-    if (max && client.paths.length >= max) {
-      throw new ConflictException(`τα πακέτα του πελάτη επιτρέπουν ${max} streams`);
+    // Ανά server, όπως και οι θεατές: τα streams του stream1 δεν είναι του stream2.
+    const max = maxStreamsOf(client.packages, serverId);
+    const used = client.paths.filter((p) => p.serverId === serverId).length;
+    if (max && used >= max) {
+      throw new ConflictException(`τα πακέτα του πελάτη επιτρέπουν ${max} streams σε αυτόν τον server`);
     }
 
     // ≥16 chars base64url, δες PLAN-multitenant.md #2 — 16 bytes -> 22 χαρακτήρες.
     const key = randomBytes(16).toString('base64url');
     try {
       return await this.prisma.path.create({
-        data: { path, key, clientId, serverId: client.serverId },
+        data: { path, key, clientId, serverId },
       });
     } catch (e) {
       if (isUniqueConstraintError(e)) {
         throw new ConflictException(`το path ${path} χρησιμοποιείται ήδη σε αυτόν τον server`);
       }
+      // Ανύπαρκτο serverId — μόνο για πελάτη χωρίς πακέτα, που περνάει τον έλεγχο
+      // παραπάνω. Χωρίς αυτό ο admin έβλεπε «HTTP 500».
+      if (isForeignKeyError(e)) throw new BadRequestException('άγνωστος server');
       throw e;
     }
   }

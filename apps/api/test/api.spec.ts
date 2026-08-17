@@ -39,14 +39,22 @@ before(async () => {
   // οπότε κάθε assert παρακάτω που περιμένει «5» ελέγχει και την άθροιση.
   // maxStreams 1+1: φτάνει για το δεύτερο path που προσθέτει το test της
   // διαγραφής, και δεν αφήνει περιθώριο για τρίτο.
-  const basic = await prisma.package.create({ data: { name: 'basic', maxViewers: 3, maxStreams: 1 } });
-  const extra = await prisma.package.create({ data: { name: 'extra', maxViewers: 2, maxStreams: 1 } });
+  const basic = await prisma.package.create({
+    data: { name: 'basic', maxViewers: 3, maxStreams: 1, serverId: serverA.id },
+  });
+  const extra = await prisma.package.create({
+    data: { name: 'extra', maxViewers: 2, maxStreams: 1, serverId: serverA.id },
+  });
 
   const clientA = await prisma.client.create({
     data: {
       name: 'pelatis-a',
-      serverId: serverA.id,
-      packages: { create: [{ packageId: basic.id }, { packageId: extra.id }] },
+      packages: {
+        create: [
+          { packageId: basic.id, serverId: serverA.id },
+          { packageId: extra.id, serverId: serverA.id },
+        ],
+      },
       paths: { create: [{ path: '/live/kamera1', key: 'KEYA1', serverId: serverA.id }] },
     },
   });
@@ -55,7 +63,6 @@ before(async () => {
   const clientB = await prisma.client.create({
     data: {
       name: 'pelatis-b',
-      serverId: serverB.id,
       paths: { create: [{ path: '/live/kamerab', key: 'KEYB1', serverId: serverB.id }] },
     },
   });
@@ -63,7 +70,6 @@ before(async () => {
     data: {
       name: 'pelatis-anenergos',
       disabled: true,
-      serverId: serverA.id,
       paths: { create: [{ path: '/live/kamerax', key: 'KEYX1', serverId: serverA.id }] },
     },
   });
@@ -260,13 +266,13 @@ test('DELETE /clients/:id: σβήνει και τα paths του', async () => {
   const created = await fetch(`${base}/clients`, {
     method: 'POST',
     headers: auth,
-    body: JSON.stringify({ name: 'προς-διαγραφή', serverId: ids.serverA }),
+    body: JSON.stringify({ name: 'προς-διαγραφή' }),
   });
   const client = (await created.json()) as { id: number };
   const path = await fetch(`${base}/clients/${client.id}/paths`, {
     method: 'POST',
     headers: auth,
-    body: JSON.stringify({ path: '/live/prosdiagrafi' }),
+    body: JSON.stringify({ path: '/live/prosdiagrafi', serverId: ids.serverA }),
   });
   assert.equal(path.status, 201);
 
@@ -278,7 +284,7 @@ test('DELETE /clients/:id: σβήνει και τα paths του', async () => {
   const reuse = await fetch(`${base}/clients/${ids.clientA}/paths`, {
     method: 'POST',
     headers: auth,
-    body: JSON.stringify({ path: '/live/prosdiagrafi' }),
+    body: JSON.stringify({ path: '/live/prosdiagrafi', serverId: ids.serverA }),
   });
   assert.equal(reuse.status, 201, 'το path ελευθερώθηκε');
 });
@@ -307,12 +313,12 @@ const syncOf = async (host: string, token: string) => {
 test('πακέτα: το sync δίνει Σ(qty × maxViewers)', async () => {
   const auth = await adminAuth();
   const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'megalo', maxViewers: 50, maxStreams: 2 }),
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'megalo', maxViewers: 50, maxStreams: 2, serverId: ids.serverA }),
   })).json()) as { id: number };
 
   const client = (await (await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-posotita', serverId: ids.serverA, packages: [{ packageId: pkg.id, qty: 3 }] }),
+    body: JSON.stringify({ name: 'me-posotita', packages: [{ packageId: pkg.id, qty: 3 }] }),
   })).json()) as { id: number };
 
   assert.equal((await syncOf('server-a', 'tok-a'))['me-posotita'].limit, 150, '3 × 50 θεατές');
@@ -322,9 +328,12 @@ test('πακέτα: το sync δίνει Σ(qty × maxViewers)', async () => {
     method: 'PATCH', headers: auth, body: JSON.stringify({ packages: [] }),
   });
   assert.equal(patched.status, 200);
-  assert.equal((await syncOf('server-a', 'tok-a'))['me-posotita'].limit, 0);
+  // Χωρίς αγορά και χωρίς path, ο πελάτης δεν ανήκει πια σε κανένα μηχάνημα —
+  // ο server δεν έχει τι να επιβάλει γι' αυτόν.
+  assert.equal((await syncOf('server-a', 'tok-a'))['me-posotita'], undefined);
 
-  // Και ο πελάτης που δεν πήρε ποτέ πακέτο: χωρίς όριο, όπως πριν τα πακέτα.
+  // Ο πελάτης που δεν πήρε ποτέ πακέτο αλλά έχει path εδώ: χωρίς όριο, όπως πριν
+  // τα πακέτα — ο δρόμος αναδίπλωσης του «0 = απεριόριστο» μένει ανοιχτός.
   assert.equal((await syncOf('server-b', 'tok-b'))['pelatis-b'].limit, 0);
 });
 
@@ -332,20 +341,20 @@ test('πακέτα: το sync δίνει Σ(qty × maxViewers)', async () => {
 test('πακέτα: path πάνω από το maxStreams -> 409', async () => {
   const auth = await adminAuth();
   const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'ena-stream', maxViewers: 10, maxStreams: 1 }),
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'ena-stream', maxViewers: 10, maxStreams: 1, serverId: ids.serverA }),
   })).json()) as { id: number };
   const client = (await (await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-ena-stream', serverId: ids.serverA, packages: [{ packageId: pkg.id }] }),
+    body: JSON.stringify({ name: 'me-ena-stream', packages: [{ packageId: pkg.id }] }),
   })).json()) as { id: number };
 
   const first = await fetch(`${base}/clients/${client.id}/paths`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ path: '/live/proto' }),
+    method: 'POST', headers: auth, body: JSON.stringify({ path: '/live/proto', serverId: ids.serverA }),
   });
   assert.equal(first.status, 201);
 
   const second = await fetch(`${base}/clients/${client.id}/paths`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ path: '/live/deftero' }),
+    method: 'POST', headers: auth, body: JSON.stringify({ path: '/live/deftero', serverId: ids.serverA }),
   });
   assert.equal(second.status, 409);
   assert.match(((await second.json()) as { message: string }).message, /1 streams/);
@@ -356,11 +365,11 @@ test('πακέτα: path πάνω από το maxStreams -> 409', async () => {
 test('DELETE /packages/:id με πελάτες -> 409, μετά την αποδέσμευση -> 200', async () => {
   const auth = await adminAuth();
   const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'pros-diagrafi', maxViewers: 5, maxStreams: 5 }),
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'pros-diagrafi', maxViewers: 5, maxStreams: 5, serverId: ids.serverA }),
   })).json()) as { id: number };
   const client = (await (await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'kratos-paketo', serverId: ids.serverA, packages: [{ packageId: pkg.id }] }),
+    body: JSON.stringify({ name: 'kratos-paketo', packages: [{ packageId: pkg.id }] }),
   })).json()) as { id: number };
 
   const busy = await fetch(`${base}/packages/${pkg.id}`, { method: 'DELETE', headers: auth });
@@ -376,13 +385,13 @@ test('DELETE /packages/:id με πελάτες -> 409, μετά την αποδ�
 test('πακέτα: όρια < 1 -> 400, άγνωστο πακέτο -> 400 (όχι 500)', async () => {
   const auth = await adminAuth();
   const zero = await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'miden', maxViewers: 0, maxStreams: 1 }),
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'miden', maxViewers: 0, maxStreams: 1, serverId: ids.serverA }),
   });
   assert.equal(zero.status, 400, 'το «πακέτο του μηδενός» θα ζητούσε κανόνα 0 = απεριόριστο');
 
   const unknown = await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-agnosto', serverId: ids.serverA, packages: [{ packageId: 9999 }] }),
+    body: JSON.stringify({ name: 'me-agnosto', packages: [{ packageId: 9999 }] }),
   });
   assert.equal(unknown.status, 400);
 });
@@ -448,7 +457,7 @@ test('PATCH /clients/:id: ο admin αλλάζει username/password του πε�
   const auth = await adminAuth();
   const client = (await (await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-xristi', serverId: ids.serverA, username: 'palio', password: 'palios' }),
+    body: JSON.stringify({ name: 'me-xristi', username: 'palio', password: 'palios' }),
   })).json()) as { id: number };
   assert.ok(await login('palio', 'palios'));
 
@@ -472,7 +481,7 @@ test('PATCH /clients/:id: ο admin αλλάζει username/password του πε�
 
   // Και ο πελάτης που δημιουργήθηκε χωρίς χρήστη αποκτά έναν αργότερα.
   const bare = (await (await fetch(`${base}/clients`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'xoris-xristi', serverId: ids.serverA }),
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'xoris-xristi' }),
   })).json()) as { id: number };
   const half = await fetch(`${base}/clients/${bare.id}`, {
     method: 'PATCH', headers: auth, body: JSON.stringify({ password: 'monos-kodikos' }),
@@ -489,7 +498,7 @@ test('username που υπάρχει ήδη -> 409 (όχι 500)', async () => {
   const auth = await adminAuth();
   const dup = await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'diplos', serverId: ids.serverA, username: 'admin', password: 'x' }),
+    body: JSON.stringify({ name: 'diplos', username: 'admin', password: 'x' }),
   });
   assert.equal(dup.status, 409);
 });
@@ -568,4 +577,80 @@ test('seed force: ξαναγράφει τον κωδικό υπάρχοντος 
   // Επαναφορά για ό,τι τρέξει μετά.
   await run('node', [seed, 'force'], { env: { ...env, SEED_ADMIN_PASSWORD: 'adminpass' } });
   assert.ok(await login('admin', 'adminpass'));
+});
+
+// Ο κανόνας που κρατάει τους παλιούς πελάτες στη θέση τους: ο server της αγοράς
+// είναι στιγμιότυπο. Αν χαθεί, μια αλλαγή server σε ένα πακέτο θα μετακόμιζε
+// σιωπηλά όλους όσους το έχουν ήδη — και τα paths τους θα έμεναν πίσω.
+test('πακέτα: αλλάζοντας ο server του πακέτου, οι παλιές αγορές μένουν', async () => {
+  const auth = await adminAuth();
+  const pkg = (await (await fetch(`${base}/packages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ name: 'metavlito', maxViewers: 50, maxStreams: 1, serverId: ids.serverA }),
+  })).json()) as { id: number };
+
+  const client = (await (await fetch(`${base}/clients`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ name: 'thomas', packages: [{ packageId: pkg.id }] }),
+  })).json()) as { id: number };
+  assert.equal((await syncOf('server-a', 'tok-a'))['thomas'].limit, 50, 'η αγορά πήγε εκεί που έδειχνε το πακέτο');
+
+  // Ο server-a γέμισε: το πακέτο πουλάει από δω και πέρα server-b.
+  const moved = await fetch(`${base}/packages/${pkg.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ serverId: ids.serverB }),
+  });
+  assert.equal(moved.status, 200);
+  assert.equal((await syncOf('server-a', 'tok-a'))['thomas'].limit, 50, 'ο παλιός πελάτης δεν μετακόμισε');
+  assert.equal((await syncOf('server-b', 'tok-b'))['thomas'], undefined);
+
+  // Δεύτερη αγορά του ίδιου πακέτου: γραμμή χωρίς serverId = νέα αγορά, πάει
+  // εκεί που δείχνει το πακέτο σήμερα. Η πρώτη γυρίζει με τον δικό της.
+  const owned = ((await (await fetch(`${base}/clients/${client.id}`, { headers: auth })).json()) as {
+    packages: { packageId: number; serverId: number; qty: number }[];
+  }).packages;
+  assert.deepEqual(owned.map((p) => p.serverId), [ids.serverA]);
+  const bought = await fetch(`${base}/clients/${client.id}`, {
+    method: 'PATCH', headers: auth,
+    body: JSON.stringify({ packages: [...owned, { packageId: pkg.id }] }),
+  });
+  assert.equal(bought.status, 200);
+
+  assert.equal((await syncOf('server-a', 'tok-a'))['thomas'].limit, 50);
+  assert.equal((await syncOf('server-b', 'tok-b'))['thomas'].limit, 50, 'η νέα αγορά κάθισε στον νέο server');
+});
+
+// Τα paths δεν είναι του πελάτη αλλά του μηχανήματος όπου αγόρασε: χωρίς αυτόν
+// τον έλεγχο ο διαχειριστής βάζει path σε server που ο πελάτης δεν πλήρωσε ποτέ,
+// και το sync του το δίνει με limit 0 — δηλαδή απεριόριστο.
+test('paths: ο server του path βγαίνει από τις αγορές, και τα όρια είναι ανά server', async () => {
+  const auth = await adminAuth();
+  const pkg = (await (await fetch(`${base}/packages`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ name: 'ana-server', maxViewers: 10, maxStreams: 1, serverId: ids.serverA }),
+  })).json()) as { id: number };
+  const client = (await (await fetch(`${base}/clients`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ name: 'ana-server-pelatis', packages: [{ packageId: pkg.id }] }),
+  })).json()) as { id: number };
+
+  const addPath = (path: string, serverId: number) =>
+    fetch(`${base}/clients/${client.id}/paths`, {
+      method: 'POST', headers: auth, body: JSON.stringify({ path, serverId }),
+    });
+
+  assert.equal((await addPath('/live/anaserver', ids.serverB)).status, 409, 'δεν έχει αγορά στον B');
+  assert.equal((await addPath('/live/anaserver', ids.serverA)).status, 201);
+  assert.equal((await addPath('/live/anaserver2', ids.serverA)).status, 409, 'maxStreams 1 στον A');
+
+  // Αγορά και στον B: το όριο streams μετριέται ανά server, οπότε εκεί υπάρχει θέση.
+  await fetch(`${base}/clients/${client.id}`, {
+    method: 'PATCH', headers: auth,
+    body: JSON.stringify({
+      packages: [
+        { packageId: pkg.id, serverId: ids.serverA, qty: 1 },
+        { packageId: pkg.id, serverId: ids.serverB, qty: 1 },
+      ],
+    }),
+  });
+  assert.equal((await addPath('/live/anaserver', ids.serverB)).status, 201, 'ίδιο όνομα, άλλο μηχάνημα');
 });

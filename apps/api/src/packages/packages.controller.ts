@@ -18,6 +18,9 @@ interface PackageDto {
   name: string;
   maxViewers: number;
   maxStreams: number;
+  // Πού πέφτουν οι νέες αγορές. Αλλάζοντάς το δεν μετακομίζει καμία παλιά —
+  // η αγορά κρατάει τον δικό της (schema.prisma#ClientPackage).
+  serverId: number;
 }
 
 // Χωρίς service: πέντε pass-through κλήσεις στο Prisma δεν χρειάζονται τρίτο
@@ -31,21 +34,25 @@ export class PackagesController {
   @Get()
   list() {
     return this.prisma.package.findMany({
-      include: { _count: { select: { clients: true } } },
+      include: { server: true, _count: { select: { clients: true } } },
       orderBy: { maxViewers: 'asc' },
     });
   }
 
   @Post()
   create(@Body() body: Partial<PackageDto>) {
-    const { name, maxViewers, maxStreams } = valid(body, true);
-    return this.prisma.package.create({ data: { name: name!, maxViewers: maxViewers!, maxStreams: maxStreams! } });
+    const { name, maxViewers, maxStreams, serverId } = valid(body, true);
+    return knownServer(
+      this.prisma.package.create({
+        data: { name: name!, maxViewers: maxViewers!, maxStreams: maxStreams!, serverId: serverId! },
+      }),
+    );
   }
 
   @Patch(':id')
   async update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<PackageDto>) {
     await this.byId(id);
-    return this.prisma.package.update({ where: { id }, data: valid(body, false) });
+    return knownServer(this.prisma.package.update({ where: { id }, data: valid(body, false) }));
   }
 
   @Delete(':id')
@@ -68,10 +75,23 @@ export class PackagesController {
   }
 }
 
+// Ανύπαρκτο serverId: FK constraint. Χωρίς αυτό ο admin έβλεπε «HTTP 500».
+async function knownServer<T>(op: Promise<T>): Promise<T> {
+  try {
+    return await op;
+  } catch (e) {
+    if (typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2003') {
+      throw new BadRequestException('άγνωστος server');
+    }
+    throw e;
+  }
+}
+
 // Τα όρια είναι ≥1: το 0 μέσα σε άθροισμα θα ζητούσε τον κανόνα «0 = απεριόριστο»
 // (100 + 0 = ∞). Απεριόριστος πελάτης = πελάτης χωρίς πακέτα — δες schema.prisma.
 function valid(body: Partial<PackageDto>, required: boolean) {
   if (required && !body.name) throw new BadRequestException('name απαιτείται');
+  if (required && !body.serverId) throw new BadRequestException('serverId απαιτείται');
   for (const field of ['maxViewers', 'maxStreams'] as const) {
     const v = body[field];
     if (v === undefined) {

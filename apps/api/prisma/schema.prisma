@@ -19,7 +19,8 @@ model Server {
   adminUser String
   adminPass String
   lastSeen  DateTime?
-  clients   Client[]
+  packages  Package[]
+  owned     ClientPackage[]
   paths     Path[]
 }
 
@@ -27,11 +28,11 @@ model Client {
   id       Int      @id @default(autoincrement())
   name     String   @unique
   disabled Boolean  @default(false)
-  serverId Int
-  server   Server   @relation(fields: [serverId], references: [id])
   paths    Path[]
   users    User[]
-  // Τα όρια του πελάτη δεν ζουν εδώ: βγαίνουν από τα πακέτα του (ClientPackage).
+  // Ο πελάτης ΔΕΝ έχει server: ούτε όρια, ούτε μηχάνημα. Και τα δύο βγαίνουν από
+  // τις αγορές του (ClientPackage) — ένας πελάτης μπορεί να κάθεται σε δύο
+  // servers ταυτόχρονα, ένα πακέτο στον καθένα.
   packages ClientPackage[]
 }
 
@@ -46,23 +47,33 @@ model Package {
   // Μετράει paths, δηλαδή πόσα streams μπορεί να ΕΧΕΙ ο πελάτης — όχι πόσα
   // εκπέμπουν ταυτόχρονα. Επιβάλλεται στο POST /clients/:id/paths.
   maxStreams Int
+  // Πού πέφτουν οι ΝΕΕΣ αγορές αυτού του πακέτου — «το basic πουλάει σήμερα
+  // stream2». Αλλάζοντάς το δεν μετακομίζει κανείς: οι παλιές αγορές κρατούν
+  // τον δικό τους server (ClientPackage.serverId). Έτσι γεμίζει ένα μηχάνημα
+  // και ο επόμενος πελάτης πάει στο επόμενο, χωρίς να πειραχτεί ο προηγούμενος.
+  serverId   Int
+  server     Server          @relation(fields: [serverId], references: [id])
   clients    ClientPackage[]
 }
 
-// Ρητό μοντέλο σύνδεσης και όχι implicit many-to-many: το implicit βάζει unique
-// (client, package) και δεν χωράει «3× Basic» — ο πελάτης μπορεί να αγοράσει το
-// ίδιο πακέτο πολλές φορές.
+// Η αγορά: ρητό μοντέλο σύνδεσης και όχι implicit many-to-many, γιατί κρατάει
+// δικά της πεδία — ποσότητα και τον server της στιγμής που έγινε.
 model ClientPackage {
   clientId  Int
   packageId Int
   qty       Int     @default(1)
+  // Στιγμιότυπο του Package.serverId τη στιγμή της αγοράς — γι' αυτό είναι και
+  // μέρος του κλειδιού: «2× basic στον stream1» και «1× basic στον stream2»
+  // είναι δύο διαφορετικές γραμμές του ίδιου πελάτη.
+  serverId  Int
+  server    Server  @relation(fields: [serverId], references: [id])
   // Cascade μόνο προς τον πελάτη: σβήνοντας πελάτη φεύγουν οι γραμμές του, όπως
   // ήδη τα paths του. Το πακέτο προστατεύεται αλλού (409 αν το χρησιμοποιεί
   // κάποιος) — αλλιώς μια διαγραφή θα άλλαζε σιωπηλά όρια πελατών.
   client    Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
   package   Package @relation(fields: [packageId], references: [id])
 
-  @@id([clientId, packageId])
+  @@id([clientId, packageId, serverId])
 }
 
 model Path {
@@ -75,8 +86,9 @@ model Path {
   // DELETE /clients/:id έσκαγε με FK constraint σε κάθε πελάτη που είχε path —
   // δηλαδή σε κάθε πραγματικό πελάτη.
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  // Denormalized ώστε το unique να δουλεύει σε επίπεδο server, όχι πελάτη:
-  // δύο πελάτες του ίδιου server δεν μπορούν να διεκδικήσουν το ίδιο path.
+  // Ο server του path: ένα από τα μηχανήματα όπου ο πελάτης έχει αγορά. Είναι
+  // και το unique σε επίπεδο server, όχι πελάτη: δύο πελάτες του ίδιου server
+  // δεν μπορούν να διεκδικήσουν το ίδιο path.
   serverId Int
   server   Server @relation(fields: [serverId], references: [id])
 

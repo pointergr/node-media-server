@@ -15,7 +15,7 @@ interface MyStream {
   path: string
   key: string
   streamKey: string // «όνομα?key=…», έτοιμο για το πεδίο Stream Key του OBS
-  limit: number // 0 = χωρίς όριο, αθροιστικά σε όλα τα paths του πελάτη
+  limit: number // 0 = χωρίς όριο, αθροιστικά στα paths του πελάτη σε ΑΥΤΟΝ τον server
   viewers: number
   since: number | null // unix seconds· null = δεν εκπέμπει αυτή τη στιγμή
   in_bps: number
@@ -45,9 +45,17 @@ const idle = computed(() => streams.value.filter(s => !s.since))
 // Το όριο θεατών είναι **του πελάτη**, αθροιστικά σε όλα τα paths του — έτσι το
 // επιβάλλει και ο stream server (config.js#publishAllowed / stats.js#overLimit).
 // Δίπλα σε μία μόνο εκπομπή έλεγε ψέματα: «12 / 50» σε κάθε κάρτα, ενώ οι δύο
-// μαζί είχαν ήδη πιάσει 15. Το σύνολο ζει τώρα μία φορά, στην κορυφή.
-const totalViewers = computed(() => streams.value.reduce((n, s) => n + s.viewers, 0))
-const limit = computed(() => streams.value[0]?.limit ?? 0)
+// μαζί είχαν ήδη πιάσει 15. Το σύνολο ζει τώρα μία φορά, στην κορυφή — και είναι
+// ένα **ανά server**: ο πελάτης μπορεί να έχει πακέτα σε δύο μηχανήματα, που δεν
+// δανείζουν θεατές το ένα στο άλλο.
+const totals = computed(() => {
+  const m: Record<string, { viewers: number, limit: number }> = {}
+  for (const s of streams.value) {
+    const t = m[s.host ?? ''] ??= { viewers: 0, limit: s.limit }
+    t.viewers += s.viewers
+  }
+  return Object.entries(m)
+})
 
 // Σημεία ανά path, μία φορά ανά φόρτωση: υπολογισμός μέσα στο template θα έφτιαχνε
 // νέο array σε κάθε render και το MiniChart θα ξαναζωγράφιζε χωρίς λόγο.
@@ -111,11 +119,13 @@ onBeforeUnmount(() => {
       <UIcon name="i-lucide-radio" class="text-primary size-5" />
       <h1>Τα streams μου</h1>
       <span class="grow" />
-      <!-- Ένα νούμερο για όλο τον λογαριασμό: το όριο πιάνεται από το άθροισμα
-           των εκπομπών, όχι από την καθεμία χωριστά. -->
-      <UBadge v-if="streams.length" color="neutral" variant="subtle" icon="i-lucide-users">
-        {{ totalViewers }}<template v-if="limit"> / {{ limit }}</template> θεατές συνολικά
-        <template v-if="!limit">(χωρίς όριο)</template>
+      <!-- Ένα νούμερο ανά server: το όριο πιάνεται από το άθροισμα των εκπομπών
+           του λογαριασμού εκεί, όχι από την καθεμία χωριστά. -->
+      <UBadge v-for="[host, t] in totals" :key="host" color="neutral" variant="subtle" icon="i-lucide-users">
+        {{ t.viewers }}<template v-if="t.limit"> / {{ t.limit }}</template> θεατές
+        <template v-if="totals.length > 1"> στον {{ host }}</template>
+        <template v-else> συνολικά</template>
+        <template v-if="!t.limit">(χωρίς όριο)</template>
       </UBadge>
     </div>
 

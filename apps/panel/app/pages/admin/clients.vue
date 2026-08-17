@@ -1,17 +1,16 @@
 <script setup lang="ts">
-// CRUD πελατών: server, πακέτα (= τα όριά του), paths (= κλειδιά εκπομπής) και
-// disable/enable. Συμβόλαιο των endpoints: apps/api/README.md.
-interface PathRow { id: number, path: string, key: string }
+// CRUD πελατών: πακέτα (= τα όριά του ΚΑΙ ο server του), paths (= κλειδιά
+// εκπομπής) και disable/enable. Συμβόλαιο των endpoints: apps/api/README.md.
+// Ο πελάτης δεν έχει server: τον δίνει η κάθε αγορά ξεχωριστά — δες
+// utils/packages.ts και apps/api/prisma/schema.prisma.
+interface PathRow { id: number, path: string, key: string, serverId: number, server: ServerOption }
 interface ServerOption { id: number, host: string }
-interface PackageRow { id: number, name: string, maxViewers: number, maxStreams: number }
 interface ClientRow {
   id: number
   name: string
   disabled: boolean
-  serverId: number
-  server: ServerOption
   paths: PathRow[]
-  packages: { packageId: number, qty: number }[]
+  packages: PackageLine[]
   // Ένας στην πράξη (το API αλλάζει τον παλαιότερο) — λίστα γιατί το σχήμα
   // επιτρέπει πολλούς. Χωρίς hash κωδικού, δεν το στέλνει το API.
   users: { id: number, username: string }[]
@@ -25,40 +24,41 @@ const catalog = ref<PackageRow[]>([])
 const error = ref('')
 const busy = ref(false)
 
-// Έτοιμο για το USelect: {label, value} — το v-model κρατάει το id του server.
-const serverItems = computed(() => servers.value.map(s => ({ label: s.host, value: s.id })))
-
-const form = reactive<{ name: string, serverId: number | undefined, username: string, password: string }>({
-  name: '', serverId: undefined, username: '', password: '',
+const form = reactive<{ name: string, username: string, password: string }>({
+  name: '', username: '', password: '',
 })
-// Ποσότητες ανά πελάτη (clientId -> packageId -> qty) και μία ξεχωριστή για τη
-// φόρμα δημιουργίας. 0 = δεν το έχει.
-const qty = reactive<Record<number, Record<number, number>>>({})
-const newQty = reactive<Record<number, number>>({})
+// Γραμμές αγορών ανά πελάτη (clientId -> [{packageId, serverId, qty}]) και μία
+// ξεχωριστή για τη φόρμα δημιουργίας. 0 = δεν το έχει.
+const lines = reactive<Record<number, PackageLine[]>>({})
+const newLines = ref<PackageLine[]>([])
 // Ένα πεδίο "νέο path" ανά πελάτη, όχι ξεχωριστό ref το καθένα — key = client.id.
 const newPath = reactive<Record<number, string>>({})
+const newPathServer = reactive<Record<number, number | undefined>>({})
 // Στοιχεία σύνδεσης ανά πελάτη. Ξεχωριστά από το `c` και όχι v-model πάνω στο
 // c.users[0]: ο πελάτης μπορεί να μην έχει χρήστη ακόμα, άρα ούτε αντικείμενο να
 // δεθεί. Το πεδίο κωδικού είναι πάντα κενό — δεν έχουμε τι να δείξουμε.
 const cred = reactive<Record<number, { username: string, password: string }>>({})
 
-// Τα όρια είναι άθροισμα επί ποσότητα — ο ίδιος κανόνας με το API
-// (clients.service.ts#maxViewersOf). Εδώ μόνο για να βλέπει ο διαχειριστής τι
-// αγοράζει· η επιβολή γίνεται εκεί.
-function totals(get: (packageId: number) => number) {
-  return catalog.value.reduce(
-    (t, p) => {
-      const n = get(p.id) || 0
-      return { viewers: t.viewers + n * p.maxViewers, streams: t.streams + n * p.maxStreams }
-    },
-    { viewers: 0, streams: 0 },
-  )
+// Τα όρια ανά server (utils/packages.ts) — ο ίδιος κανόνας με το API.
+const totalsOf = (c: ClientRow) => totalsByServer(lines[c.id] ?? [], catalog.value)
+// Ό,τι δείχνει η κεφαλίδα: τα μηχανήματα όπου ο πελάτης έχει αγορά ή path.
+function hostsOf(c: ClientRow) {
+  const ids = new Set([...c.packages.map(p => p.serverId), ...c.paths.map(p => p.serverId)])
+  return servers.value.filter(s => ids.has(s.id)).map(s => s.host)
 }
-const totalsOf = (c: ClientRow) => totals(id => qty[c.id]?.[id] ?? 0)
-const newTotals = computed(() => totals(id => newQty[id] ?? 0))
 
-const packagesBody = (get: (packageId: number) => number) =>
-  catalog.value.map(p => ({ packageId: p.id, qty: get(p.id) || 0 })).filter(r => r.qty > 0)
+// Οι servers όπου «είναι» ο πελάτης: αυτοί των αγορών του. Χωρίς αγορά δεν
+// ανήκει πουθενά, οπότε ο διαχειριστής μπορεί να τον βάλει όπου θέλει — ίδιος
+// κανόνας με το API (clients.service.ts#addPath).
+function serverOptions(c: ClientRow) {
+  const mine = new Set(c.packages.map(p => p.serverId))
+  const items = mine.size ? servers.value.filter(s => mine.has(s.id)) : servers.value
+  return items.map(s => ({ label: s.host, value: s.id }))
+}
+
+// Ό,τι έχει ποσότητα, με τον server του: οι παλιές γραμμές κρατούν τον δικό τους
+// (γι' αυτό ταξιδεύει το serverId), οι νέες φέρνουν τον σημερινό του πακέτου.
+const packagesBody = (rows: PackageLine[]) => rows.filter(r => r.qty > 0)
 
 async function load() {
   try {
@@ -67,14 +67,13 @@ async function load() {
       api<ServerOption[]>('/servers'),
       api<PackageRow[]>('/packages'),
     ])
-    // Οι ποσότητες ξαναχτίζονται σε κάθε φόρτωση: αλλιώς μια αποτυχημένη
+    // Οι γραμμές ξαναχτίζονται σε κάθε φόρτωση: αλλιώς μια αποτυχημένη
     // αποθήκευση θα άφηνε στην οθόνη νούμερα που δεν ισχύουν.
     for (const c of clients.value) {
-      qty[c.id] = Object.fromEntries(
-        catalog.value.map(p => [p.id, c.packages.find(x => x.packageId === p.id)?.qty ?? 0]),
-      )
+      lines[c.id] = packageLines(c.packages, catalog.value)
       cred[c.id] = { username: c.users[0]?.username ?? '', password: '' }
     }
+    newLines.value = packageLines([], catalog.value)
     error.value = ''
   }
   catch (e) {
@@ -83,19 +82,17 @@ async function load() {
 }
 
 async function createClient() {
-  if (!form.name || !form.serverId) return
+  if (!form.name) return
   busy.value = true
   try {
     const body: Record<string, unknown> = {
       name: form.name,
-      serverId: form.serverId,
-      packages: packagesBody(id => newQty[id]!),
+      packages: packagesBody(newLines.value),
     }
     // Και τα δύο μαζί ή τίποτα — μισή φόρμα σημαίνει πελάτη χωρίς τρόπο σύνδεσης.
     if (form.username && form.password) Object.assign(body, { username: form.username, password: form.password })
     await api('/clients', { method: 'POST', body: JSON.stringify(body) })
-    Object.assign(form, { name: '', serverId: undefined, username: '', password: '' })
-    for (const p of catalog.value) newQty[p.id] = 0
+    Object.assign(form, { name: '', username: '', password: '' })
     await load()
   }
   catch (e) {
@@ -112,9 +109,8 @@ async function saveClient(c: ClientRow) {
   try {
     const body: Record<string, unknown> = {
       name: c.name,
-      serverId: c.serverId,
       // Η λίστα είναι η τελική: ό,τι λείπει, αφαιρείται από τον πελάτη.
-      packages: packagesBody(id => qty[c.id]?.[id] ?? 0),
+      packages: packagesBody(lines[c.id] ?? []),
     }
     // Κενό πεδίο = αμετάβλητο, γι' αυτό μπαίνουν στο σώμα μόνο όταν έχουν τιμή:
     // ένα `password: ''` θα άλλαζε τον κωδικό σε κενό με την πρώτη «Αποθήκευση»
@@ -162,9 +158,10 @@ async function removeClient(c: ClientRow) {
 
 async function addPath(c: ClientRow) {
   const path = newPath[c.id]?.trim()
-  if (!path) return
+  const serverId = newPathServer[c.id]
+  if (!path || !serverId) return
   try {
-    await api(`/clients/${c.id}/paths`, { method: 'POST', body: JSON.stringify({ path }) })
+    await api(`/clients/${c.id}/paths`, { method: 'POST', body: JSON.stringify({ path, serverId }) })
     newPath[c.id] = ''
     await load()
   }
@@ -211,16 +208,11 @@ onMounted(load)
       </template>
 
       <form class="space-y-4" @submit.prevent="createClient">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="Όνομα">
-            <UInput v-model="form.name" required class="w-full" />
-          </UFormField>
-          <UFormField label="Server">
-            <USelect v-model="form.serverId" :items="serverItems" placeholder="— επιλογή —" class="w-full" />
-          </UFormField>
-        </div>
+        <UFormField label="Όνομα">
+          <UInput v-model="form.name" required class="w-full sm:w-1/2" />
+        </UFormField>
 
-        <PackagePicker v-model="newQty" :catalog="catalog" :totals="newTotals" />
+        <PackagePicker v-model="newLines" :catalog="catalog" :servers="servers" />
 
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Όνομα χρήστη (προαιρετικό)">
@@ -251,7 +243,9 @@ onMounted(load)
             {{ c.disabled ? 'ΑΝΕΝΕΡΓΟΣ' : 'ΕΝΕΡΓΟΣ' }}
           </UBadge>
           <span class="font-semibold">{{ c.name }}</span>
-          <span class="host">{{ c.server.host }}</span>
+          <!-- Οι servers του πελάτη είναι παράγωγο των αγορών του — μπορεί να
+               είναι και δύο, μπορεί και κανένας. -->
+          <span v-for="host in hostsOf(c)" :key="host" class="host">{{ host }}</span>
           <span class="grow" />
           <UButton icon="i-lucide-save" color="neutral" variant="subtle" @click="saveClient(c)">Αποθήκευση</UButton>
           <UButton
@@ -266,16 +260,11 @@ onMounted(load)
       </template>
 
       <div class="space-y-4">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="Όνομα">
-            <UInput v-model="c.name" class="w-full" />
-          </UFormField>
-          <UFormField label="Server">
-            <USelect v-model="c.serverId" :items="serverItems" class="w-full" />
-          </UFormField>
-        </div>
+        <UFormField label="Όνομα">
+          <UInput v-model="c.name" class="w-full sm:w-1/2" />
+        </UFormField>
 
-        <PackagePicker v-if="qty[c.id]" v-model="qty[c.id]!" :catalog="catalog" :totals="totalsOf(c)" />
+        <PackagePicker v-if="lines[c.id]" v-model="lines[c.id]!" :catalog="catalog" :servers="servers" />
 
         <div v-if="cred[c.id]" class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Όνομα χρήστη">
@@ -302,15 +291,13 @@ onMounted(load)
           <table v-if="c.paths.length">
             <thead>
               <tr>
-                <!-- Πόσα paths επιτρέπουν τα πακέτα του: το 409 του API έρχεται
-                     αλλιώς σαν έκπληξη τη στιγμή της προσθήκης. -->
-                <th>Path{{ totalsOf(c).streams ? ` (${c.paths.length} / ${totalsOf(c).streams})` : '' }}</th>
-                <th>Stream Key (OBS)</th><th />
+                <th>Path</th><th>Server</th><th>Stream Key (OBS)</th><th />
               </tr>
             </thead>
             <tbody>
               <tr v-for="p in c.paths" :key="p.id">
                 <td>{{ p.path }}</td>
+                <td class="host">{{ p.server.host }}</td>
                 <td>
                   <div class="flex items-center gap-2">
                     <code>{{ streamKey(p) }}</code>
@@ -329,8 +316,22 @@ onMounted(load)
           <div v-else class="empty">Κανένα path ακόμα</div>
         </div>
 
+        <!-- Πόσα paths επιτρέπουν τα πακέτα του σε κάθε μηχάνημα: το 409 του API
+             έρχεται αλλιώς σαν έκπληξη τη στιγμή της προσθήκης. -->
+        <p v-if="Object.keys(totalsOf(c)).length" class="note">
+          Streams:
+          <template v-for="([serverId, t], i) in Object.entries(totalsOf(c))" :key="serverId">
+            <template v-if="i"> · </template>
+            <b>{{ servers.find(s => s.id === Number(serverId))?.host }}</b>
+            {{ c.paths.filter(p => p.serverId === Number(serverId)).length }} / {{ t.streams }}
+          </template>
+        </p>
+
         <form class="flex gap-2 flex-wrap" @submit.prevent="addPath(c)">
           <UInput v-model="newPath[c.id]" placeholder="/live/kamera1" required class="grow min-w-45" />
+          <!-- Το path ζει σε ένα μηχάνημα, και ο πελάτης μπορεί να έχει δύο:
+               επιλογή μόνο ανάμεσα σε αυτά που του έδωσαν οι αγορές του. -->
+          <USelect v-model="newPathServer[c.id]" :items="serverOptions(c)" placeholder="— server —" class="min-w-40" />
           <UButton type="submit" icon="i-lucide-plus" color="neutral" variant="subtle">Προσθήκη path</UButton>
         </form>
       </div>
