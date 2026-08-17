@@ -32,8 +32,11 @@ export class SyncController {
     // δικά του paths και μόνο — χωρίς να αλλάξει γραμμή εκεί. Το κλειδί είναι
     // εσωτερικό (ο stream server δεν το δείχνει πουθενά), αλλά πρέπει να είναι
     // μοναδικό: δύο συνδρομές του ίδιου πελάτη θα έγραφαν η μία πάνω στην άλλη.
+    // Σε αναστολή (συνδρομής ή πελάτη) = εκτός λίστας: άγνωστο path σημαίνει
+    // μπλόκο στον stream server, οπότε η εκπομπή πέφτει σε ≤10s χωρίς να ξέρει
+    // εκείνος τι είναι συνδρομή.
     const subs = await this.prisma.subscription.findMany({
-      where: { serverId: server.id, client: { disabled: false } },
+      where: { serverId: server.id, disabled: false, client: { disabled: false } },
       include: { plan: true, paths: true, client: true },
     });
 

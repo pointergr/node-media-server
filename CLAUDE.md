@@ -86,7 +86,9 @@ npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public
 επειδή ο stream server ομαδοποιεί τους θεατές ανά εγγραφή του `clients.json`
 (`config.js#clientOf`, `stats.js#overLimit`), το όριο του κάθε πλάνου επιβάλλεται μόνο του
 στα δικά του paths. Το όριο streams μετράει paths και επιβάλλεται μόνο στο
-`POST /clients/:id/paths`.
+`POST /clients/:id/paths`. Η **αναστολή** (`Subscription.disabled`, ξεχωριστά από το
+`Client.disabled` που τα κόβει όλα) δουλεύει με το ίδιο κόλπο: η εγγραφή λείπει από το
+clients.json, άρα άγνωστο path = μπλόκο σε ≤10s, χωρίς να χαθεί path ή κλειδί.
 
 **Τι παγώνει στην αγορά:** ο **server**, όχι τα όρια. Το `Plan.serverId` λέει πού πέφτουν
 οι επόμενες συνδρομές· η κάθε συνδρομή κρατάει το δικό της στιγμιότυπο, οπότε γεμίζει ο

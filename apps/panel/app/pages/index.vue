@@ -20,6 +20,10 @@ interface MyStream {
   limit: number
   plan: string
   subscriptionId: number
+  // Πλάνο σε αναστολή (π.χ. έληξε): το stream δεν εκπέμπει και δεν παίζει. Το
+  // δείχνουμε παρ' όλα αυτά, με τον λόγο του — αλλιώς ο πελάτης βλέπει το OBS να
+  // κόβεται και το stream να εξαφανίζεται, χωρίς εξήγηση.
+  suspended: boolean
   viewers: number
   since: number | null // unix seconds· null = δεν εκπέμπει αυτή τη στιγμή
   in_bps: number
@@ -229,6 +233,9 @@ onBeforeUnmount(() => {
       <div class="space-y-2">
         <div v-for="s in idle" :key="s.path" class="flex items-center gap-2 flex-wrap">
           <strong>{{ s.path }}</strong>
+          <UBadge v-if="s.suspended" color="warning" variant="subtle" icon="i-lucide-circle-pause">
+            {{ s.plan }} σε αναστολή
+          </UBadge>
           <code v-if="s.host">{{ rtmp(s) }}</code>
           <code>{{ s.streamKey }}</code>
           <CopyButton :text="s.streamKey" label="" />

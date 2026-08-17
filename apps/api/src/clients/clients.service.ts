@@ -116,6 +116,13 @@ export class ClientsService {
     });
   }
 
+  // Αναστολή μόνο αυτής της συνδρομής: ο πελάτης μπορεί να έχει τρία πλάνα και να
+  // έχει λήξει το ένα. Το `Client.disabled` μένει για «όλα κάτω».
+  async setSubscriptionDisabled(clientId: number, subscriptionId: number, disabled: boolean) {
+    await this.subscriptionOf(clientId, subscriptionId);
+    return this.prisma.subscription.update({ where: { id: subscriptionId }, data: { disabled } });
+  }
+
   async removeSubscription(clientId: number, subscriptionId: number) {
     const sub = await this.subscriptionOf(clientId, subscriptionId);
     // Ρητό 409 και όχι cascade: η συνδρομή κουβαλάει τα paths και τα κλειδιά

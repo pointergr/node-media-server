@@ -10,6 +10,9 @@ interface PlanRow { id: number, name: string, maxViewers: number, maxStreams: nu
 interface PathRow { id: number, path: string, key: string }
 interface SubscriptionRow {
   id: number
+  // Αναστολή της συνδρομής, ξεχωριστά από το disabled του πελάτη: ένα πλάνο
+  // μπορεί να έχει λήξει ενώ τα υπόλοιπα τρέχουν κανονικά.
+  disabled: boolean
   plan: PlanRow
   server: ServerOption
   paths: PathRow[]
@@ -52,7 +55,7 @@ const planItems = computed(() => catalog.value.map(p => ({
 // Οι συνδρομές με χώρο για ακόμα ένα stream· γεμάτη συνδρομή δεν προσφέρεται,
 // αλλιώς η επιλογή οδηγεί σε σίγουρο 409.
 const subItems = (c: ClientRow) => c.subscriptions.map(s => ({
-  label: `${s.plan.name} — ${s.server.host} (${s.paths.length}/${s.plan.maxStreams})`,
+  label: `${s.plan.name} — ${s.server.host} (${s.paths.length}/${s.plan.maxStreams})${s.disabled ? ' — σε αναστολή' : ''}`,
   value: s.id,
   disabled: s.paths.length >= s.plan.maxStreams,
 }))
@@ -157,6 +160,20 @@ async function addSubscription(c: ClientRow) {
   }
   catch (e) {
     error.value = (e as Error).message
+  }
+}
+
+async function toggleSubscription(c: ClientRow, s: SubscriptionRow) {
+  try {
+    await api(`/clients/${c.id}/subscriptions/${s.id}`, {
+      method: 'PATCH', body: JSON.stringify({ disabled: !s.disabled }),
+    })
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+  finally {
+    await load()
   }
 }
 
@@ -297,8 +314,10 @@ onMounted(load)
         </div>
 
         <p class="note">
-          Το disable/enable κόβει ή ξαναφέρνει τις εκπομπές του πελάτη μέσα σε ≤10s — όσο κάνει ο
-          server να ξανασυγχρονίσει τη λίστα του. Οι αλλαγές στο όνομα και στα στοιχεία σύνδεσης
+          Το disable/enable της κεφαλίδας κόβει <b>όλα</b> τα πλάνα του πελάτη· η αναστολή στη
+          γραμμή ενός πλάνου κόβει μόνο εκείνο (π.χ. έληξε η μία συνδρομή). Και τα δύο πιάνουν σε
+          ≤10s — όσο κάνει ο server να ξανασυγχρονίσει τη λίστα του — και δεν χάνουν paths ούτε
+          κλειδιά. Οι αλλαγές στο όνομα και στα στοιχεία σύνδεσης
           θέλουν «Αποθήκευση»· τα πλάνα και τα streams αποθηκεύονται μόνα τους.
           <template v-if="!c.users.length">
             Ο πελάτης δεν έχει χρήστη ακόμα — συμπλήρωσε <em>και</em> όνομα <em>και</em> κωδικό.
@@ -311,7 +330,7 @@ onMounted(load)
           <table v-if="c.subscriptions.length">
             <thead>
               <tr>
-                <th>Πλάνο</th><th>Server</th><th>Θεατές</th><th>Streams</th><th />
+                <th>Πλάνο</th><th>Server</th><th>Θεατές</th><th>Streams</th><th>Κατάσταση</th><th />
               </tr>
             </thead>
             <tbody>
@@ -321,10 +340,23 @@ onMounted(load)
                 <td>{{ s.plan.maxViewers }}</td>
                 <td>{{ s.paths.length }} / {{ s.plan.maxStreams }}</td>
                 <td>
-                  <UButton
-                    icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
-                    aria-label="Αφαίρεση πλάνου" @click="removeSubscription(c, s)"
-                  />
+                  <UBadge :color="s.disabled ? 'warning' : 'success'" variant="subtle" size="sm">
+                    {{ s.disabled ? 'ΣΕ ΑΝΑΣΤΟΛΗ' : 'ΕΝΕΡΓΟ' }}
+                  </UBadge>
+                </td>
+                <td>
+                  <div class="flex gap-1">
+                    <UButton
+                      :icon="s.disabled ? 'i-lucide-play' : 'i-lucide-pause'" size="xs" variant="ghost"
+                      :color="s.disabled ? 'success' : 'warning'"
+                      :aria-label="s.disabled ? 'Επαναφορά πλάνου' : 'Αναστολή πλάνου'"
+                      @click="toggleSubscription(c, s)"
+                    />
+                    <UButton
+                      icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
+                      aria-label="Αφαίρεση πλάνου" @click="removeSubscription(c, s)"
+                    />
+                  </div>
                 </td>
               </tr>
             </tbody>

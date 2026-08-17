@@ -63,6 +63,11 @@ model Plan {
 // README). Ο server όμως είναι στιγμιότυπο, γι' αυτό και υπάρχει ως πεδίο.
 model Subscription {
   id       Int    @id @default(autoincrement())
+  // Αναστολή **της συνδρομής**, ξεχωριστά από το `Client.disabled`: ένας πελάτης
+  // με τρία πλάνα μπορεί να έχει λήξει μόνο το ένα. Ο stream server δεν μαθαίνει
+  // τίποτα καινούργιο — η εγγραφή απλώς λείπει από το clients.json, δηλαδή τα
+  // paths της γίνονται άγνωστα και η εκπομπή πέφτει σε ≤10s.
+  disabled Boolean @default(false)
   clientId Int
   // Cascade: σβήνοντας πελάτη φεύγουν οι συνδρομές του, και μαζί τους τα paths.
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)

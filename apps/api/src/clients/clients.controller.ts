@@ -51,6 +51,16 @@ export class ClientsController {
     return this.clients.addSubscription(id, body.planId);
   }
 
+  @Patch(':id/subscriptions/:subId')
+  setSubscription(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('subId', ParseIntPipe) subId: number,
+    @Body() body: { disabled?: boolean },
+  ) {
+    if (typeof body.disabled !== 'boolean') throw new BadRequestException('disabled (boolean) απαιτείται');
+    return this.clients.setSubscriptionDisabled(id, subId, body.disabled);
+  }
+
   @Delete(':id/subscriptions/:subId')
   removeSubscription(@Param('id', ParseIntPipe) id: number, @Param('subId', ParseIntPipe) subId: number) {
     return this.clients.removeSubscription(id, subId);

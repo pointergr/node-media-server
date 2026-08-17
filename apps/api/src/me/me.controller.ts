@@ -69,6 +69,10 @@ export class MeController {
         // συνδρομές του ίδιου πλάνου δεν είναι η ίδια.
         plan: sub.plan.name,
         subscriptionId: sub.id,
+        // Σε αναστολή το stream δεν εκπέμπει και δεν παίζει — φαίνεται όμως, με
+        // τον λόγο του: αλλιώς ο πελάτης βλέπει το OBS να κόβεται και το stream
+        // να εξαφανίζεται από το panel, χωρίς να ξέρει γιατί.
+        suspended: sub.disabled,
         limit: sub.plan.maxViewers,
         viewers: now?.viewers ?? 0,
         // Η ύπαρξη publisher ΕΙΝΑΙ η κατάσταση: `since` (πότε συνδέθηκε το OBS)

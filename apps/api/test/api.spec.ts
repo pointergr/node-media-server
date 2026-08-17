@@ -652,3 +652,31 @@ test('seed force: ξαναγράφει τον κωδικό υπάρχοντος 
   await run('node', [seed, 'force'], { env: { ...env, SEED_ADMIN_PASSWORD: 'adminpass' } });
   assert.ok(await login('admin', 'adminpass'));
 });
+
+// Η αναστολή είναι της ΣΥΝΔΡΟΜΗΣ: ο πελάτης με τρία πλάνα που έληξε το ένα δεν
+// πρέπει να χάσει και τα άλλα δύο. Χωρίς το φίλτρο στο sync, το «suspend» θα
+// φαινόταν μόνο στην οθόνη και ο πελάτης θα συνέχιζε να εκπέμπει.
+test('συνδρομές: suspend μόνο της μίας, οι υπόλοιπες συνεχίζουν', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'anastoli', 20, 1, ids.serverA);
+  const client = await mkClient(auth, 'me-anastoli');
+  const live = await mkSub(auth, client.id, plan.id);
+  const expired = await mkSub(auth, client.id, plan.id);
+  await post(auth, `/clients/${client.id}/paths`, { path: '/live/energo', subscriptionId: live.id });
+  await post(auth, `/clients/${client.id}/paths`, { path: '/live/ligomeno', subscriptionId: expired.id });
+
+  const suspend = await fetch(`${base}/clients/${client.id}/subscriptions/${expired.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ disabled: true }),
+  });
+  assert.equal(suspend.status, 200);
+
+  const body = await syncOf('server-a', 'tok-a');
+  assert.equal(body[`me-anastoli#${expired.id}`], undefined, 'η συνδρομή σε αναστολή φεύγει από το clients.json');
+  assert.deepEqual(Object.keys(body[`me-anastoli#${live.id}`]!.paths), ['/live/energo'], 'η άλλη συνδρομή δεν πειράχτηκε');
+
+  // Και πίσω: η αναστολή δεν χάνει ούτε το path ούτε το κλειδί του.
+  await fetch(`${base}/clients/${client.id}/subscriptions/${expired.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ disabled: false }),
+  });
+  assert.deepEqual(Object.keys((await syncOf('server-a', 'tok-a'))[`me-anastoli#${expired.id}`]!.paths), ['/live/ligomeno']);
+});
