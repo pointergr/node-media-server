@@ -1,0 +1,29 @@
+{
+  "name": "@pointer/panel",
+  "version": "0.1.0",
+  "description": "Nuxt SPA: admin dashboard όλων των stream servers + user panel",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "typecheck": "nuxt typecheck",
+    "test": "node test-dash.js"
+  },
+  "dependencies": {
+    "@iconify-json/lucide": "^1.2.123",
+    "@nuxt/ui": "^4.10.0",
+    "chart.js": "^4.5.1",
+    "hls.js": "^1.7.0",
+    "nuxt": "^4.5.2"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vue-tsc": "^3.3.9"
+  },
+  "volta": {
+    "node": "24.19.0"
+  }
+}

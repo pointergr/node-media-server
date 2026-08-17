@@ -1,0 +1,19 @@
+/* Nuxt UI v4 = Tailwind v4 + τα components. Μπαίνει **πριν** το dashboard.css
+   (nuxt.config.ts), ώστε τα δικά μας styles των γραφημάτων να γράφουν από πάνω. */
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Το preflight του Tailwind v4 δίνει `cursor: default` σε κάθε button (αλλαγή από
+   την v3) — δηλαδή κανένα κουμπί της εφαρμογής δεν έβγαζε «χεράκι». Το γυρνάμε
+   πίσω μία φορά, στο base layer: αλλιώς θα ήθελε κλάση σε κάθε UButton. Τα
+   απενεργοποιημένα μένουν εκτός — εκεί το χεράκι θα υποσχόταν κλικ που δεν γίνεται. */
+@layer base {
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]) { cursor: pointer; }
+}
+
+:root {
+  /* Το UContainer έχει προεπιλογή 80rem· κρατάμε το πλάτος που είχε το panel
+     (1600px): σε στενότερο, τα νούμερα δίπλα στο preview σπάνε σε δύο σειρές.
+     Πάνω από αυτό τα charts γίνονται σύρματα και το preview τοίχος. */
+  --ui-container: 100rem;
+}

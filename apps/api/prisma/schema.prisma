@@ -1,0 +1,110 @@
+// Ελάχιστο μοντέλο: πελάτες, πλάνα, συνδρομές, paths, servers, χρήστες. Το
+// ιστορικό (θεατές, bitrate) μένει στο sqlite κάθε stream server — εδώ κρατάμε
+// μόνο ό,τι χρειάζεται το panel για να αποφασίζει «ποιος εκπέμπει πού».
+//
+// Η **συνδρομή** (Subscription) είναι η μονάδα των πάντων: ένα αγορασμένο πλάνο,
+// με δικό του server, δικό του όριο θεατών και δικά του paths. Ο πελάτης είναι
+// σκέτος πελάτης με 0..Χ συνδρομές — δεν έχει ούτε server ούτε όρια, και τίποτα
+// δεν αθροίζεται μεταξύ συνδρομών.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Server {
+  id            Int            @id @default(autoincrement())
+  host          String         @unique
+  // Bearer token που στέλνει ο stream server στο POST /servers/:host/sync.
+  token         String
+  adminUrl      String
+  adminUser     String
+  adminPass     String
+  lastSeen      DateTime?
+  plans         Plan[]
+  subscriptions Subscription[]
+  paths         Path[]
+}
+
+model Client {
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  disabled      Boolean        @default(false)
+  users         User[]
+  subscriptions Subscription[]
+}
+
+// Ο κατάλογος: ό,τι πουλάμε, με τα όριά του. Τα νούμερα είναι ≥1 — «πλάνο του
+// μηδενός» δεν πουλάει κανείς, και το 0 έχει ήδη τη σημασία «χωρίς όριο» σε όλη
+// τη διαδρομή ως τον stream server.
+model Plan {
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  // Ταυτόχρονοι θεατές της ΣΥΝΔΡΟΜΗΣ — δύο συνδρομές του ίδιου πλάνου έχουν από
+  // 50 η καθεμία, όχι 100 μαζί.
+  maxViewers    Int
+  // Μετράει paths, δηλαδή πόσα streams μπορεί να ΕΧΕΙ η συνδρομή — όχι πόσα
+  // εκπέμπουν ταυτόχρονα. Επιβάλλεται στο POST /clients/:id/paths.
+  maxStreams    Int
+  // Πού πέφτουν οι ΝΕΕΣ συνδρομές αυτού του πλάνου — «το basic πουλάει σήμερα
+  // stream2». Αλλάζοντάς το δεν μετακομίζει κανείς: η κάθε συνδρομή κρατάει τον
+  // δικό της server. Έτσι γεμίζει ένα μηχάνημα και ο επόμενος πελάτης πάει στο
+  // επόμενο, χωρίς να πειραχτεί ο προηγούμενος.
+  serverId      Int
+  server        Server         @relation(fields: [serverId], references: [id])
+  subscriptions Subscription[]
+}
+
+// Μία αγορά ενός πλάνου. Τα όρια ΔΕΝ αντιγράφονται εδώ: διαβάζονται από το πλάνο,
+// οπότε μια αλλαγή στον κατάλογο περνάει σε όλες τις συνδρομές του (σκόπιμα — δες
+// README). Ο server όμως είναι στιγμιότυπο, γι' αυτό και υπάρχει ως πεδίο.
+model Subscription {
+  id       Int    @id @default(autoincrement())
+  // Αναστολή **της συνδρομής**, ξεχωριστά από το `Client.disabled`: ένας πελάτης
+  // με τρία πλάνα μπορεί να έχει λήξει μόνο το ένα. Ο stream server δεν μαθαίνει
+  // τίποτα καινούργιο — η εγγραφή απλώς λείπει από το clients.json, δηλαδή τα
+  // paths της γίνονται άγνωστα και η εκπομπή πέφτει σε ≤10s.
+  disabled Boolean @default(false)
+  clientId Int
+  // Cascade: σβήνοντας πελάτη φεύγουν οι συνδρομές του, και μαζί τους τα paths.
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  planId   Int
+  plan     Plan   @relation(fields: [planId], references: [id])
+  serverId Int
+  server   Server @relation(fields: [serverId], references: [id])
+  paths    Path[]
+}
+
+model Path {
+  id             Int          @id @default(autoincrement())
+  path           String
+  // Τυχαίο κλειδί εκπομπής (≥16 chars, base64url) — δες clients.service.ts.
+  key            String
+  // Το path ανήκει στη ΣΥΝΔΡΟΜΗ, όχι στον πελάτη: από εκεί παίρνει και τον server
+  // και το όριο θεατών που θα επιβάλει ο stream server. Χωρίς αυτό, το όριο μιας
+  // συνδρομής δεν θα επιβαλλόταν πουθενά.
+  subscriptionId Int
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  // Denormalized από τη συνδρομή, μόνο για το unique: το Prisma δεν φτιάχνει
+  // περιορισμό πάνω σε πεδίο συσχέτισης. Δύο πελάτες του ίδιου server δεν
+  // μπορούν να διεκδικήσουν το ίδιο path.
+  serverId       Int
+  server         Server       @relation(fields: [serverId], references: [id])
+
+  @@unique([serverId, path])
+}
+
+model User {
+  id       Int     @id @default(autoincrement())
+  username String  @unique
+  // scryptSync hash, μορφή "salt:hash" (δες auth/password.ts) — όχι bcrypt,
+  // ώστε να μη χρειάζεται native dependency στο image.
+  password String
+  role     String // "admin" | "customer"
+  // null για admin· ο customer βλέπει μόνο τα streams του δικού του πελάτη.
+  clientId Int?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}

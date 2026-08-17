@@ -1,0 +1,43 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    environment:
+      # Απόλυτο path, όχι `file:./data/api.db`: το Prisma λύνει τα σχετικά sqlite
+      # paths ως προς το schema.prisma (εδώ prisma/), όχι ως προς το cwd — η βάση
+      # έβγαινε στο prisma/data/, δηλαδή ΕΞΩ από το volume παρακάτω, και χανόταν
+      # σιωπηλά σε κάθε recreate του container.
+      DATABASE_URL: file:/app/apps/api/data/api.db
+      JWT_SECRET: ${JWT_SECRET:?βάλε JWT_SECRET στο .env — ίδιο σε κάθε restart, αλλιώς αποσυνδέονται όλοι}
+      PORT: 3000
+    volumes:
+      # Named volume: το sqlite πρέπει να επιβιώνει το recreate του container.
+      - data:/app/apps/api/data
+
+  caddy:
+    build:
+      context: ../..
+      dockerfile: apps/panel/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?βάλε DOMAIN=panel.example.com στο .env}
+      API_HOST: api
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  data:
+  caddy-data:
+  caddy-config:

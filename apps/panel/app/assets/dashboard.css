@@ -1,0 +1,125 @@
+/* Ό,τι δεν δίνει έτοιμο το Nuxt UI: τα SVG γραφήματα του /admin, οι πίνακες και
+   το εσωτερικό της κάρτας εκπομπής (preview + νούμερα).
+
+   Τα χρώματα δεν ορίζονται πια εδώ — δείχνουν στα tokens του Nuxt UI, ώστε το
+   dark mode να είναι ένα και μοναδικό (κλάση `.dark` από το color-mode, όχι
+   `prefers-color-scheme`: αλλιώς ο διακόπτης θέματος άλλαζε τα components και
+   άφηνε τα γραφήματα στο θέμα του λειτουργικού). */
+:root {
+  --surface-1: var(--ui-bg);
+  --plane: var(--ui-bg-muted);
+  --text-primary: var(--ui-text-highlighted);
+  --text-secondary: var(--ui-text-toned);
+  --muted: var(--ui-text-dimmed);
+  --grid: var(--ui-border);
+  --axis: var(--ui-border-accented);
+  --border: var(--ui-border);
+  /* Με fallback: αν κάποτε αλλάξει το όνομα του token, χάνεται το χρώμα του
+     Nuxt UI, όχι η ένδειξη «εκπέμπει». */
+  --good: var(--ui-success, #0ca30c);
+  --live: var(--ui-error, #d93a2b);
+  /* Οι γραμμές των γραφημάτων μένουν ρητά χρώματα: διαλέχτηκαν για να ξεχωρίζουν
+     μεταξύ τους σε ένα chart, δουλειά που καμία παλέτα διεπαφής δεν κάνει. */
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+}
+.dark {
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+}
+
+/* Ρητό background/χρώμα στο body: το πλάτος και τα περιθώρια τα δίνει πια το
+   UContainer του layout, αλλά η επιφάνεια από κάτω πρέπει να ακολουθεί το θέμα. */
+body {
+  background: var(--ui-bg-muted);
+  color: var(--ui-text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+h2 { font-size: 13px; margin: 0 0 12px; font-weight: 600; color: var(--text-secondary); }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--good); }
+.spacer { flex: 1; }
+
+/* --- κάρτα εκπομπής ---------------------------------------------------------
+   Το πλέγμα preview/νούμερα ζει εδώ και όχι σε Tailwind classes: το container
+   query παρακάτω αλλάζει το πλήθος των στηλών ανάλογα με το πλάτος της κάρτας. */
+.hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 16px; margin-bottom: 16px; }
+.hero:empty { display: none; }
+.hero > * { container-type: inline-size; }
+.head { display: flex; align-items: center; gap: 10px; }
+.head a { color: inherit; font-weight: 600; text-decoration: none; }
+.head a:hover { text-decoration: underline; }
+.head .since { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Σταθερό άνω φράγμα στο preview, ό,τι περισσεύει πάει στα νούμερα: με ένα μόνο
+   stream σε μεγάλη οθόνη το preview έπιανε όλο το πλάτος της κάρτας.
+   minmax(0,1fr) και όχι 1fr: το αυτόματο κάτω φράγμα του 1fr είναι το min-content
+   του panel, δηλαδή και οι τέσσερις στήλες μαζί — έσπρωχνε το preview στα 276px. */
+.body { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 1fr); }
+.preview { position: relative; background: #000; aspect-ratio: 16 / 9; }
+.preview video { width: 100%; height: 100%; display: block; object-fit: contain; }
+.play {
+  position: absolute; inset: 0; width: 100%; padding: 0; border: 0;
+  background: transparent; color: #fff; font-size: 34px; opacity: .7; cursor: pointer;
+}
+.play:hover { opacity: 1; background: rgba(255, 255, 255, .07); }
+/* 2x2 δίπλα σε άλλη κάρτα, 4 σε σειρά όταν είναι μόνη της — και στις δύο
+   περιπτώσεις κεντραρισμένα στον χώρο δεξιά από το preview.
+   Ρητό πλήθος στηλών με φράγμα πλάτους, όχι auto-fit με 1fr: τα 1fr απλώνουν τα
+   νούμερα σε όλο το πλάτος της κάρτας, ενώ definite max μέσα σε auto-fit αλλάζει
+   και το πλήθος των tracks. Το κεντράρισμα θέλει justify-content — margin auto ή
+   justify-self κάνουν το κουτί shrink-to-fit και ξεχειλίζει στις στενές κάρτες. */
+.stat {
+  margin: 0; padding: 16px; align-content: center; justify-content: center;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 120px)); gap: 14px;
+}
+/* Container και όχι media query: το πλάτος της κάρτας το ορίζει το πλήθος των
+   streams, όχι μόνο το viewport. Το κατώφλι είναι εκεί που χωράνε 4 στήλες. */
+@container (min-width: 1120px) {
+  .stat { grid-template-columns: repeat(4, minmax(0, 140px)); }
+}
+.stat dt { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.stat dd { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.quiet { color: var(--muted); text-align: center; padding: 30px; }
+/* Container και όχι media query: με δύο κάρτες δίπλα-δίπλα η στήλη δεξιά από το
+   preview είναι στενή ακόμα και σε μεγάλη οθόνη — εκεί τα πεδία του OBS έβγαζαν
+   οριζόντιες μπάρες κύλισης. Κάτω από αυτό το πλάτος πάνε κάτω από το βίντεο. */
+@container (max-width: 720px) {
+  .body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* --- γραφήματα -------------------------------------------------------------- */
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.chart { position: relative; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--text-secondary); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 10px; height: 10px; border-radius: 3px; }
+.tip {
+  position: absolute; pointer-events: none; opacity: 0; transition: opacity .1s;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; font-size: 12px; white-space: nowrap; z-index: 2;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+}
+.tip b { font-weight: 600; }
+.tip .row { display: flex; align-items: center; gap: 6px; }
+
+/* --- πίνακες ---------------------------------------------------------------
+   Σκέτο <table> και όχι UTable: οι πίνακες εδώ είναι στατικές λίστες χωρίς
+   ταξινόμηση ή σελιδοποίηση — το TanStack από κάτω θα ήταν εξάρτηση χωρίς
+   αντίκρισμα. Τα χρώματα έρχονται από τα tokens, οπότε δένουν με τα components. */
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th {
+  text-align: left; font-size: 12px; font-weight: 500; color: var(--muted);
+  padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid);
+}
+td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); }
+tr:last-child td { border-bottom: 0; }
+.num { text-align: right; padding-right: 16px; }
+.empty { color: var(--muted); padding: 8px 0; }
+.scroll { overflow-x: auto; }
+
+.host { font-size: 12px; color: var(--muted); }
+.note { font-size: 12px; color: var(--muted); }

@@ -1,0 +1,3 @@
+# .env, data/, node_modules ήδη αγνοούνται από το .gitignore της ρίζας
+# (unanchored). Εδώ μόνο ό,τι είναι ειδικό για το Nest build.
+dist

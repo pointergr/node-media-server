@@ -1,0 +1,49 @@
+{
+  "bind": "0.0.0.0",
+  "rtmp": {
+    "port": 1935
+  },
+  "http": {
+    "port": 8000
+  },
+  "static": {
+    "router": "/",
+    "root": "./media"
+  },
+  "hls": {
+    "ffmpeg": "/usr/bin/ffmpeg",
+    "r2": {
+      "endpoint": "https://<account-id>.r2.cloudflarestorage.com",
+      "bucket": "stream",
+      "accessKeyId": "",
+      "secretAccessKey": "",
+      "publicUrl": "https://media.stream.example.com"
+    }
+  },
+  "admin": {
+    "port": 8001,
+    "db": "./stats.db"
+  },
+  "panel": {
+    "url": "",
+    "token": "",
+    "host": ""
+  },
+  "auth": {
+    "play": false,
+    "publish": false,
+    "secret": "MySuperSecret",
+    "jwt": {
+      "secret": "",
+      "expiresIn": "24h",
+      "algorithm": "HS256",
+      "users": [
+        {
+          "username": "admin",
+          "password": "MySuperPassword",
+          "role": "admin"
+        }
+      ]
+    }
+  }
+}
