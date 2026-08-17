@@ -60,6 +60,18 @@ const subItems = (c: ClientRow) => c.subscriptions.map(s => ({
   disabled: s.paths.length >= s.plan.maxStreams,
 }))
 
+// Ψάχνει και στα paths: ο διαχειριστής ξέρει συχνά το stream, όχι τον πελάτη.
+const q = ref('')
+const shown = computed(() => {
+  const t = q.value.trim().toLowerCase()
+  if (!t) return clients.value
+  return clients.value.filter(c => [
+    c.name,
+    ...c.users.map(u => u.username),
+    ...c.subscriptions.flatMap(s => [s.plan.name, s.server.host, ...s.paths.map(p => p.path)]),
+  ].some(v => v.toLowerCase().includes(t)))
+})
+
 const servers = ref<ServerOption[]>([])
 const hostOf = (id: number) => servers.value.find(s => s.id === id)?.host ?? `server #${id}`
 // Τα μηχανήματα όπου κάθεται ο πελάτης — παράγωγο των συνδρομών του.
@@ -237,6 +249,11 @@ onMounted(load)
     <div class="flex items-center gap-2">
       <UIcon name="i-lucide-users" class="text-primary size-5" />
       <h1>Πελάτες</h1>
+      <span class="grow" />
+      <UInput
+        v-model="q" icon="i-lucide-search" placeholder="Αναζήτηση…"
+        class="w-full sm:w-72" @keydown.esc="q = ''"
+      />
     </div>
 
     <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
@@ -270,7 +287,7 @@ onMounted(load)
       </form>
     </UCard>
 
-    <UCard v-for="c in clients" :key="c.id">
+    <UCard v-for="c in shown" :key="c.id">
       <template #header>
         <div class="flex items-center gap-3 flex-wrap">
           <UBadge
@@ -411,8 +428,8 @@ onMounted(load)
       </div>
     </UCard>
 
-    <UCard v-if="!clients.length">
-      <div class="quiet">Κανένας πελάτης ακόμα</div>
+    <UCard v-if="!shown.length">
+      <div class="quiet">{{ clients.length ? 'Κανένας πελάτης δεν ταιριάζει στην αναζήτηση' : 'Κανένας πελάτης ακόμα' }}</div>
     </UCard>
   </div>
 </template>
