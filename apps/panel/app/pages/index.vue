@@ -106,7 +106,7 @@ async function load() {
 async function refreshKey(s: MyStream) {
   const ok = await ask({
     title: `Νέο κλειδί για το ${s.path};`,
-    description: 'Το παλιό παύει να ισχύει — η εκπομπή που τρέχει κόβεται σε ≤10s και το OBS θέλει το νέο κλειδί.',
+    description: 'Το παλιό παύει να ισχύει — η εκπομπή που τρέχει κόβεται σε ≤10s και το πρόγραμμα εκπομπής θέλει το νέο κλειδί.',
   })
   if (!ok) return
   try {
@@ -303,11 +303,19 @@ onBeforeUnmount(() => {
       </div>
     </UCard>
 
+    <!-- Οι αναλυτικές οδηγίες ζουν στο /help — εδώ μένει μόνο η υπενθύμιση ότι το
+         κλειδί είναι μυστικό, δίπλα στο ίδιο το κλειδί. -->
     <UAlert
-      v-if="streams.length" color="neutral" variant="subtle" icon="i-lucide-monitor-play"
-      title="Ρύθμιση του OBS"
-      description="Ρυθμίσεις → Εκπομπή → Υπηρεσία «Custom», και τα δύο πεδία από πάνω. Το Stream Key είναι μυστικό — όποιος το έχει μπορεί να εκπέμψει στη θέση σου."
-    />
+      v-if="streams.length" color="neutral" variant="subtle" icon="i-lucide-book-open"
+      title="Πώς συνδέεται το πρόγραμμα εκπομπής"
+      description="Το Stream Key είναι μυστικό — όποιος το έχει μπορεί να εκπέμψει στη θέση σου."
+    >
+      <template #actions>
+        <UButton to="/help" size="xs" color="neutral" variant="subtle" trailing-icon="i-lucide-arrow-right">
+          Οδηγίες
+        </UButton>
+      </template>
+    </UAlert>
   </div>
 </template>
 

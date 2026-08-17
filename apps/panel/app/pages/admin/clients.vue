@@ -235,7 +235,7 @@ async function addPath(c: ClientRow) {
 async function removePath(c: ClientRow, p: PathRow) {
   const ok = await ask({
     title: `Διαγραφή του stream ${p.path};`,
-    description: 'Το OBS που εκπέμπει με αυτό το κλειδί θα κοπεί.',
+    description: 'Η εκπομπή που τρέχει με αυτό το κλειδί θα κοπεί.',
   })
   if (!ok) return
   try {
@@ -250,7 +250,7 @@ async function removePath(c: ClientRow, p: PathRow) {
 async function refreshKey(c: ClientRow, p: PathRow) {
   const ok = await ask({
     title: `Νέο κλειδί για το ${p.path};`,
-    description: 'Το παλιό παύει να ισχύει — το OBS που εκπέμπει με αυτό κόβεται σε ≤10s και θέλει το νέο.',
+    description: 'Το παλιό παύει να ισχύει — η εκπομπή που τρέχει με αυτό κόβεται σε ≤10s και θέλει το νέο.',
   })
   if (!ok) return
   try {
@@ -416,7 +416,7 @@ onMounted(load)
           <table v-if="c.subscriptions.some(s => s.paths.length)">
             <thead>
               <tr>
-                <th>Path</th><th>Πλάνο</th><th>Stream Key (OBS)</th><th />
+                <th>Path</th><th>Πλάνο</th><th>Stream Key</th><th />
               </tr>
             </thead>
             <tbody>

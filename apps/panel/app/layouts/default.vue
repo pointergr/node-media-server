@@ -17,8 +17,10 @@ const items = computed<NavigationMenuItem[]>(() => [
         { label: 'Servers', icon: 'i-lucide-server', to: '/admin/servers' },
       ]
     : [{ label: 'Τα streams μου', icon: 'i-lucide-radio', to: '/' }]),
-  // Τελευταίο και για τους δύο ρόλους: ο admin δεν έχει άλλο σημείο να αλλάξει
+  // Τελευταία και για τους δύο ρόλους: οι οδηγίες τις διαβάζει και ο admin (τις
+  // λέει στον πελάτη στο τηλέφωνο), και ο admin δεν έχει άλλο σημείο να αλλάξει
   // τον κωδικό που του έδωσε το seed.
+  { label: 'Οδηγίες', icon: 'i-lucide-book-open', to: '/help' },
   { label: 'Ο λογαριασμός μου', icon: 'i-lucide-user-cog', to: '/account' },
 ])
 
