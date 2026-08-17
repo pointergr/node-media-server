@@ -81,6 +81,9 @@ username θα προήγαγε σιωπηλά πελάτη σε admin.
 - **Static bearer token ανά server** (`Server.token`) μόνο για το
   `POST /servers/:host/sync` — ο stream server δεν συνδέεται ποτέ σαν χρήστης.
 
+Και ένα βραχύβιο JWT ως **link σύνδεσης** (`POST /auth/login-link`), για να
+στέλνει το billing τον πελάτη στο panel χωρίς κωδικούς — δες παρακάτω.
+
 Κωδικοί: `node:crypto` `scryptSync` + `timingSafeEqual` (`src/auth/password.ts`),
 όχι bcrypt/argon — καμία native εξάρτηση στο image. Τα API keys όμως με **sha256**
 (`src/auth/apikey.ts`): το scrypt είναι σκόπιμα αργό και εδώ θα το πλήρωνε κάθε
@@ -140,6 +143,34 @@ curl -X POST -H "authorization: Bearer $KEY" -H 'content-type: application/json'
 η εκπομπή πέφτει σε ≤10s, τα paths και τα κλειδιά μένουν για την επαναφορά. Το
 `DELETE` είναι για τα οριστικά, και επιστρέφει 409 όσο κρατάει streams.
 
+### Σύνδεση με link από το billing
+
+Το εξωτερικό σύστημα ζητάει link και κάνει redirect τον χρήστη σε αυτό — δεν
+ξέρει, δεν κρατάει και δεν εκθέτει τον κωδικό του πελάτη:
+
+```bash
+curl -X POST -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"clientId":7}' $API/auth/login-link
+# → {"url":"https://panel.example.com/login#t=eyJ…","expiresIn":300}
+```
+
+Δύο tokens και όχι ένα: το token του link ζει **5 λεπτά** και είναι **μιας
+χρήσης**, το panel το ανταλλάσσει αμέσως (`POST /auth/exchange`) με κανονικό
+12ωρο. Ένα μόνο token θα σήμαινε ή συνεδρία που λήγει σε πέντε λεπτά ή link που
+ανοίγει τον λογαριασμό για δώδεκα ώρες. Το `once: true` στο payload είναι ο
+διαχωρισμός — χωρίς αυτό, όποιος έχει συνεδρία θα την ανανέωνε επ' άπειρον από το
+`exchange`.
+
+Το token μπαίνει στο **fragment** (`#t=`), οπότε δεν φτάνει ποτέ σε log του
+server ούτε σε `Referer`· η σελίδα το σβήνει από το URL πριν το ανταλλάξει. Τα
+ξοδεμένα `jti` ζουν **στη μνήμη** του API: μετά από restart ένα link μπορεί να
+ξαναχρησιμοποιηθεί μέσα στα 5' του — πίνακας στη sqlite για δεδομένα πέντε λεπτών
+δεν αξίζει.
+
+Τη διεύθυνση του panel δεν τη ρυθμίζει κανείς: βγαίνει από το `Host` του
+αιτήματος (ίδιος host με το API — ο Caddy κόβει το `/api`). Μόνο στο `npm run
+dev`, όπου το Nuxt είναι σε άλλη θύρα, θέλει `PANEL_URL=http://localhost:3001`.
+
 ## Endpoints
 
 Ο πίνακας εδώ είναι για όποιον δουλεύει **μέσα** στο repo: τι κάνει το κάθε
@@ -149,6 +180,8 @@ endpoint και γιατί έτσι. Για όποιον καλεί το API α�
 | Endpoint | Auth | Σημείωση |
 |---|---|---|
 | `POST /auth/login` | καμία | `{username,password}` → `{access_token}` |
+| `POST /auth/login-link` | admin | `{clientId}` → `{url, expiresIn}`: link μιας χρήσης για τον χρήστη του πελάτη (**400** αν δεν έχει χρήστη). Το URL είναι `<host του αιτήματος ή PANEL_URL>/login#t=<token 5'>` |
+| `POST /auth/exchange` | καμία | `{token}` του link → `{access_token}` 12ωρο. **401** αν έχει λήξει, αν ξοδεύτηκε ήδη, ή αν είναι κανονικό token συνεδρίας (λείπει το `once`) |
 | `PATCH /auth/me` | οποιοσδήποτε συνδεδεμένος | `{currentPassword, username?, password?}` — αλλάζει τα **δικά του** στοιχεία (το id βγαίνει από το token, ποτέ από το σώμα). Λάθος `currentPassword` → **401**, username που υπάρχει → **409**. Το token μένει έγκυρο: το payload δεν αλλάζει |
 | `POST /servers/:host/sync` | `Bearer <Server.token>` | σώμα = snapshot του stream server, απάντηση = clients.json — **μία εγγραφή ανά συνδρομή** αυτού του server (κλειδί `όνομαΠελάτη#idΣυνδρομής`), με το `limit` του πλάνου της και τα δικά της paths. Οι disabled πελάτες λείπουν |
 | `GET /live` | admin | τελευταίο snapshot όλων των servers, από τη μνήμη· `online: false` αν `ts` > 30s |

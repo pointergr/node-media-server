@@ -112,7 +112,13 @@ sha256) για εξωτερικές υπηρεσίες που κάνουν provi
 server μόνο για το `POST /servers/:host/sync` — ο stream server δεν συνδέεται ποτέ σαν
 χρήστης. Το API key το αναγνωρίζει ο **ίδιος** guard από το πρόθεμα και γράφει το ίδιο
 `req.user` με `role: "admin"`: έτσι `@Roles`, `/me` και ό,τι άλλο διαβάζει το `req.user`
-δεν ξέρουν καν ότι υπάρχει δεύτερος τρόπος εισόδου. Κωδικοί
+δεν ξέρουν καν ότι υπάρχει δεύτερος τρόπος εισόδου. Πάνω σε αυτά, το `POST
+/auth/login-link` δίνει **link σύνδεσης** για το billing (redirect του πελάτη στο panel
+χωρίς κωδικούς): βραχύβιο (5') JWT μιας χρήσης με `once: true`, που το `POST
+/auth/exchange` ανταλλάσσει με κανονική 12ωρη συνεδρία — δύο tokens, γιατί ένα θα ήταν ή
+συνεδρία πέντε λεπτών ή link δώδεκα ωρών, και το `once` εμποδίζει την επ' άπειρον
+ανανέωση συνεδρίας από το `exchange`. Τα ξοδεμένα `jti` ζουν στη μνήμη (πίνακας sqlite
+για δεδομένα πέντε λεπτών δεν αξίζει). Κωδικοί
 με `node:crypto` `scryptSync`/`timingSafeEqual`, όχι bcrypt — καμία native εξάρτηση στο
 image. Tests: `nest build` πρώτα, μετά σκέτο `node --test` πάνω στο compiled output
 (`dist/test/*.js`) — ίδια φιλοσοφία με τα `test-*.js` του `apps/stream`, όχι jest/supertest.

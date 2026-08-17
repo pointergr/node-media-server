@@ -7,16 +7,19 @@ const password = ref('')
 const error = ref('')
 const busy = ref(false)
 
-async function submit() {
+// Δύο δρόμοι για το ίδιο πράγμα — φόρμα και link από το billing — και ένα σημείο
+// που κρατάει το token: αλλιώς ο ένας από τους δύο θα ξέχναγε το setToken ή το
+// πού προσγειώνεται ο καθένας.
+async function enter(path: string, body: object, failMsg: string) {
   busy.value = true
   error.value = ''
   try {
-    const res = await fetch(config.public.apiBase + '/auth/login', {
+    const res = await fetch(config.public.apiBase + path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: username.value, password: password.value }),
+      body: JSON.stringify(body),
     })
-    if (!res.ok) throw new Error('λάθος όνομα χρήστη ή κωδικός')
+    if (!res.ok) throw new Error(failMsg)
     const { access_token } = await res.json() as { access_token: string }
     setToken(access_token)
     // Ο admin δεν έχει clientId, άρα το /me/streams του είναι άδειο — δεν έχει
@@ -30,6 +33,18 @@ async function submit() {
     busy.value = false
   }
 }
+
+const submit = () => enter('/auth/login', { username: username.value, password: password.value }, 'λάθος όνομα χρήστη ή κωδικός')
+
+// Link μιας χρήσης από το billing: `/login#t=<token>` (POST /auth/login-link).
+// Στο fragment, οπότε δεν έφτασε ποτέ σε log του server — και το σβήνουμε από το
+// URL πριν το ανταλλάξουμε, ώστε να μη μείνει στο ιστορικό ή σε copy-paste.
+onMounted(() => {
+  const t = new URLSearchParams(location.hash.slice(1)).get('t')
+  if (!t) return
+  history.replaceState(null, '', location.pathname)
+  enter('/auth/exchange', { token: t }, 'ο σύνδεσμος σύνδεσης έληξε — μπες με τα στοιχεία σου')
+})
 </script>
 
 <template>

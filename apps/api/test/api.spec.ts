@@ -780,3 +780,59 @@ test('api key: άκυρο -> 401', async () => {
   const res = await fetch(`${base}/clients`, { headers: { authorization: 'Bearer pk_den-yparxei' } });
   assert.equal(res.status, 401);
 });
+
+// --- Σύνδεση με link (billing -> panel) -------------------------------------
+// Το billing στέλνει τον πελάτη στο panel χωρίς να ξέρει τον κωδικό του: παίρνει
+// URL με βραχύβιο token, το panel το ανταλλάσσει με κανονική συνεδρία.
+test('login-link: ο πελάτης μπαίνει χωρίς κωδικό, με μία μόνο χρήση', async () => {
+  const auth = await adminAuth();
+  const res = await post(auth, '/auth/login-link', { clientId: ids.clientA });
+  assert.equal(res.status, 200);
+  const { url } = (await res.json()) as { url: string };
+
+  // Το token στο fragment, όχι σε query: δεν φτάνει ποτέ σε server log ή referrer.
+  assert.match(url, /\/login#t=/, `περίμενα URL του panel, πήρα ${url}`);
+  const linkToken = url.split('#t=')[1]!;
+
+  const ex = await fetch(`${base}/auth/exchange`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: linkToken }),
+  });
+  assert.equal(ex.status, 200, 'η ανταλλαγή γίνεται χωρίς κανένα token — ο χρήστης δεν έχει ακόμα συνεδρία');
+  const { access_token } = (await ex.json()) as { access_token: string };
+
+  const mine = await fetch(`${base}/me/streams`, { headers: { authorization: `Bearer ${access_token}` } });
+  assert.equal(mine.status, 200);
+  const streams = (await mine.json()) as { path: string }[];
+  assert.equal(streams[0]!.path, '/live/kamera1', 'η συνεδρία είναι του πελάτη του link');
+
+  // Κανονική συνεδρία, όχι το βραχύβιο token: αλλιώς ο πελάτης θα έπεφτε έξω σε λίγα λεπτά.
+  const { exp } = JSON.parse(Buffer.from(access_token.split('.')[1]!, 'base64url').toString()) as { exp: number };
+  assert.ok(exp * 1000 - Date.now() > 3_600_000, 'η συνεδρία μετά την ανταλλαγή διαρκεί ώρες');
+
+  const again = await fetch(`${base}/auth/exchange`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: linkToken }),
+  });
+  assert.equal(again.status, 401, 'μία χρήση: το ίδιο link δεν ξανανοίγει συνεδρία');
+});
+
+// Χωρίς αυτό, όποιος έχει μια συνεδρία θα την ανανέωνε επ' άπειρον από το exchange.
+test('exchange: κανονικό token συνεδρίας -> 401', async () => {
+  const token = await login('usera', 'passa');
+  const res = await fetch(`${base}/auth/exchange`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  assert.equal(res.status, 401);
+});
+
+test('login-link: πελάτης χωρίς χρήστη -> 400', async () => {
+  const auth = await adminAuth();
+  const client = await mkClient(auth, 'pelatis-xoris-xristi');
+  const res = await post(auth, '/auth/login-link', { clientId: client.id });
+  assert.equal(res.status, 400);
+});
