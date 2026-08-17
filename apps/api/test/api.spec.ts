@@ -781,6 +781,19 @@ test('api key: άκυρο -> 401', async () => {
   assert.equal(res.status, 401);
 });
 
+// Το username δεν είναι στο JWT (payload: sub/role/clientId), οπότε η οθόνη
+// «Ο λογαριασμός μου» δεν έχει άλλο τρόπο να δείξει ποιος είναι συνδεδεμένος.
+test('GET /auth/me: τα στοιχεία του συνδεδεμένου, χωρίς hash κωδικού', async () => {
+  const token = await login('usera', 'passa');
+  const res = await fetch(`${base}/auth/me`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body, { username: 'usera', role: 'customer', clientId: ids.clientA });
+
+  const anon = await fetch(`${base}/auth/me`);
+  assert.equal(anon.status, 401);
+});
+
 // --- Σύνδεση με link (billing -> panel) -------------------------------------
 // Το billing στέλνει τον πελάτη στο panel χωρίς να ξέρει τον κωδικό του: παίρνει
 // URL με βραχύβιο token, το panel το ανταλλάσσει με κανονική συνεδρία.

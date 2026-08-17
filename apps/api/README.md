@@ -182,6 +182,7 @@ endpoint και γιατί έτσι. Για όποιον καλεί το API α�
 | `POST /auth/login` | καμία | `{username,password}` → `{access_token}` |
 | `POST /auth/login-link` | admin | `{clientId}` → `{url, expiresIn}`: link μιας χρήσης για τον χρήστη του πελάτη (**400** αν δεν έχει χρήστη). Το URL είναι `<host του αιτήματος ή PANEL_URL>/login#t=<token 5'>` |
 | `POST /auth/exchange` | καμία | `{token}` του link → `{access_token}` 12ωρο. **401** αν έχει λήξει, αν ξοδεύτηκε ήδη, ή αν είναι κανονικό token συνεδρίας (λείπει το `once`) |
+| `GET /auth/me` | οποιοσδήποτε συνδεδεμένος | `{username, role, clientId}` — ό,τι δεν χωράει στο JWT. Το username **δεν** μπαίνει στο payload επίτηδες: μετά από αλλαγή θα έδειχνε το παλιό μέχρι την επόμενη σύνδεση. API key → **401** (δεν έχει λογαριασμό) |
 | `PATCH /auth/me` | οποιοσδήποτε συνδεδεμένος | `{currentPassword, username?, password?}` — αλλάζει τα **δικά του** στοιχεία (το id βγαίνει από το token, ποτέ από το σώμα). Λάθος `currentPassword` → **401**, username που υπάρχει → **409**. Το token μένει έγκυρο: το payload δεν αλλάζει |
 | `POST /servers/:host/sync` | `Bearer <Server.token>` | σώμα = snapshot του stream server, απάντηση = clients.json — **μία εγγραφή ανά συνδρομή** αυτού του server (κλειδί `όνομαΠελάτη#idΣυνδρομής`), με το `limit` του πλάνου της και τα δικά της paths. Οι disabled πελάτες λείπουν |
 | `GET /live` | admin | τελευταίο snapshot όλων των servers, από τη μνήμη· `online: false` αν `ts` > 30s |

@@ -3,6 +3,12 @@
 // το id από το token (PATCH /auth/me), οπότε δεν υπάρχει τίποτα να διαλέξει η
 // σελίδα — και για τον admin είναι ο μόνος τρόπος να αλλάξει τον κωδικό του seed.
 const api = useApi()
+// Το username δεν είναι στο JWT (θα έμενε στάλε μετά από αλλαγή), οπότε το
+// ρωτάμε — αλλιώς η οθόνη δεν δείχνει πουθενά ποιος είναι συνδεδεμένος.
+const username = ref('')
+onMounted(async () => {
+  username.value = (await api<{ username: string }>('/auth/me')).username
+})
 const form = reactive({ currentPassword: '', username: '', password: '' })
 const error = ref('')
 const done = ref(false)
@@ -23,6 +29,7 @@ async function submit() {
     if (form.password) body.password = form.password
     await api('/auth/me', { method: 'PATCH', body: JSON.stringify(body) })
     // Το token μένει έγκυρο (το payload δεν αλλάζει) — καμία αποσύνδεση.
+    if (form.username) username.value = form.username
     Object.assign(form, { currentPassword: '', username: '', password: '' })
     done.value = true
   }
@@ -43,6 +50,14 @@ async function submit() {
     </div>
 
     <UCard class="max-w-lg">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-at-sign" class="text-muted size-4" />
+          <span class="note">Συνδεδεμένος ως</span>
+          <strong>{{ username || '…' }}</strong>
+        </div>
+      </template>
+
       <form class="space-y-4" @submit.prevent="submit">
         <UFormField label="Τρέχων κωδικός" hint="απαιτείται">
           <UInput

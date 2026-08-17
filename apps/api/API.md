@@ -269,6 +269,7 @@ curl -X POST "${auth[@]}" -d '{"clientId":7}' $API/auth/login-link
 | `POST /auth/login` | `{username, password}` | `200 {access_token}` (12ωρο)· `401` σε λάθος στοιχεία — ίδιο μήνυμα για άγνωστο χρήστη και για λάθος κωδικό |
 | `POST /auth/login-link` | `{clientId}` | `200 {url, expiresIn}` — link **μιας χρήσης**, 5 λεπτά, για τον χρήστη του πελάτη (δες βήμα 6)· `400` αν ο πελάτης δεν έχει χρήστη |
 | `POST /auth/exchange` | `{token}` | το καλεί **το panel**, όχι εσύ: ανταλλάσσει το token του link με 12ωρη συνεδρία· `401` σε ληγμένο, ξοδεμένο ή σκέτο token συνεδρίας |
+| `GET /auth/me` | — | `{username, role, clientId}` του token — το χρησιμοποιεί το panel· με API key `401` |
 | `PATCH /auth/me` | `{currentPassword, username?, password?}` | αλλάζει **τα δικά του** στοιχεία (το id βγαίνει από το token)· `401` λάθος τρέχων κωδικός, `409` username σε χρήση |
 
 Δεν υπάρχει users endpoint: ο χρήστης ενός πελάτη φτιάχνεται και αλλάζει από τα

@@ -85,6 +85,17 @@ export class AuthService {
     return { access_token: await this.jwt.signAsync(payload) };
   }
 
+  // Ποιος είναι συνδεδεμένος: το username δεν μπαίνει στο JWT (θα έμενε στάλε
+  // μετά από αλλαγή, μέχρι την επόμενη σύνδεση), οπότε το panel το ρωτάει.
+  async me(userId: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    // Αρνητικό sub = API key (δες jwt-auth.guard): δεν έχει λογαριασμό, ίδια
+    // απάντηση με το PATCH /auth/me.
+    if (!user) throw new UnauthorizedException('το token δεν αντιστοιχεί σε χρήστη');
+    // Ρητά τα τρία πεδία — ποτέ ολόκληρη η γραμμή, κρατάει το hash του κωδικού.
+    return { username: user.username, role: user.role, clientId: user.clientId };
+  }
+
   // Ο κάθε χρήστης αλλάζει τα δικά του στοιχεία — ένα endpoint και για τον admin
   // και για τον πελάτη, γιατί ο έλεγχος είναι ο ίδιος: το `sub` του token, ποτέ
   // id από το σώμα (αλλιώς ο πελάτης θα άλλαζε τον κωδικό του admin).

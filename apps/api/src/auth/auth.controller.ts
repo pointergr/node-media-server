@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, HttpCode, Patch, Post, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Patch, Post, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { Public } from './public.decorator';
@@ -38,6 +38,11 @@ export class AuthController {
   exchange(@Body() body: { token?: string }) {
     if (!body?.token) throw new BadRequestException('token απαιτείται');
     return this.auth.exchange(body.token);
+  }
+
+  @Get('me')
+  me(@Req() req: Request) {
+    return this.auth.me(req.user.sub);
   }
 
   // Χωρίς @Roles(): το JwtAuthGuard αρκεί, ο καθένας αλλάζει μόνο τον δικό του
