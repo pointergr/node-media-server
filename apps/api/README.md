@@ -142,6 +142,10 @@ curl -X POST -H "authorization: Bearer $KEY" -H 'content-type: application/json'
 
 ## Endpoints
 
+Ο πίνακας εδώ είναι για όποιον δουλεύει **μέσα** στο repo: τι κάνει το κάθε
+endpoint και γιατί έτσι. Για όποιον καλεί το API απ' έξω (σώματα, απαντήσεις,
+σφάλματα, ροή provisioning) υπάρχει ξεχωριστή αναφορά: [API.md](API.md).
+
 | Endpoint | Auth | Σημείωση |
 |---|---|---|
 | `POST /auth/login` | καμία | `{username,password}` → `{access_token}` |

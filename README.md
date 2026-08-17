@@ -546,8 +546,9 @@ docker compose exec api node dist/src/apikey.js "<υπηρεσία>"   # μόν�
 ```
 
 Το API key είναι για **μηχανές**: `Authorization: Bearer pk_…` στα ίδια admin endpoints,
-χωρίς login και χωρίς λήξη, με ανάκληση σε μία εντολή (`apikey.js revoke`). Πλήρης ροή
-provisioning στο [`apps/api/README.md`](apps/api/README.md#provisioning-από-εξωτερική-υπηρεσία).
+χωρίς login και χωρίς λήξη, με ανάκληση σε μία εντολή (`apikey.js revoke`). Πλήρης αναφορά
+του API — σώματα, απαντήσεις, σφάλματα, ροή provisioning — στο
+[`apps/api/API.md`](apps/api/API.md).
 
 Το σχήμα της βάσης εφαρμόζεται μόνο του σε κάθε boot (`prisma db push`, καμία migrations
 directory). Μία αλλαγή που **σβήνει** στήλη είναι η μόνη εξαίρεση: το `db push` αρνείται
