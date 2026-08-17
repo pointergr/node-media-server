@@ -3,7 +3,7 @@ import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from '../sync/sync.service';
 import { ServersService } from '../servers/servers.service';
-import { maxViewersOf, withPackages, withPaths } from '../clients/clients.service';
+import { withSubscriptions } from '../clients/clients.service';
 
 // Ελάχιστο σχήμα του snapshot που στέλνει ο stream server (stats.js#snapshot) —
 // μόνο ό,τι χρειάζεται εδώ, όχι όλο το contract.
@@ -30,14 +30,15 @@ export class MeController {
     private readonly servers: ServersService,
   ) {}
 
-  // Ο πελάτης και τα paths του σε μία ερώτηση: κάθε endpoint εδώ ξεκινάει από το
-  // clientId του token, ποτέ από παράμετρο του caller — αυτό είναι όλο το
-  // φιλτράρισμα που στέκεται ανάμεσα σε δύο πελάτες του ίδιου server.
+  // Ο πελάτης και οι συνδρομές του (με πλάνο, server και paths) σε μία ερώτηση:
+  // κάθε endpoint εδώ ξεκινάει από το clientId του token, ποτέ από παράμετρο του
+  // caller — αυτό είναι όλο το φιλτράρισμα που στέκεται ανάμεσα σε δύο πελάτες
+  // του ίδιου server.
   private mine(clientId: number | null) {
     if (!clientId) return null;
     return this.prisma.client.findUnique({
       where: { id: clientId },
-      include: { ...withPaths, ...withPackages },
+      include: { ...withSubscriptions },
     });
   }
 
@@ -48,23 +49,27 @@ export class MeController {
     const client = await this.mine(req.user.clientId);
     if (!client) return [];
 
-    // Ένα snapshot ανά μηχάνημα και όχι ένα για όλα: τα paths του πελάτη μπορεί
-    // να είναι μοιρασμένα σε δύο servers (μία αγορά στον καθένα).
-    return client.paths.map((p) => {
-      const live = this.sync.latest(p.server.host)?.snapshot as StreamSnapshot | undefined;
+    // Ένα snapshot ανά μηχάνημα και όχι ένα για όλα: οι συνδρομές του πελάτη
+    // μπορεί να είναι μοιρασμένες σε δύο servers.
+    return client.subscriptions.flatMap((sub) => {
+      const live = this.sync.latest(sub.server.host)?.snapshot as StreamSnapshot | undefined;
+      return sub.paths.map((p) => {
       const now = live?.streams?.find((s) => s.stream === p.path);
       return {
         // Το host το χρειάζεται το panel για να χτίσει και το URL αναπαραγωγής
         // (https://<host><path>/index.m3u8) και το rtmp:// του OBS — χωρίς αυτό
         // ο πελάτης βλέπει κλειδί που δεν ξέρει πού να το βάλει.
-        host: p.server.host,
+        host: sub.server.host,
         path: p.path,
         key: p.key,
         streamKey: `${p.path.split('/').pop()}?key=${p.key}`,
-        // Άθροισμα των πακέτων του πελάτη **σε αυτόν τον server** — το ίδιο
-        // νούμερο που παίρνει και ο stream server στο clients.json. 0 = χωρίς
-        // όριο, όπως πάντα.
-        limit: maxViewersOf(client.packages, p.serverId),
+        // Το stream ανήκει σε μία συνδρομή και το όριο είναι **της συνδρομής**:
+        // το ίδιο νούμερο που παίρνει και ο stream server στο clients.json. Το
+        // id ταξιδεύει για να ομαδοποιεί το panel τους θεατές ανά πλάνο — δύο
+        // συνδρομές του ίδιου πλάνου δεν είναι η ίδια.
+        plan: sub.plan.name,
+        subscriptionId: sub.id,
+        limit: sub.plan.maxViewers,
         viewers: now?.viewers ?? 0,
         // Η ύπαρξη publisher ΕΙΝΑΙ η κατάσταση: `since` (πότε συνδέθηκε το OBS)
         // ή null. Χωριστό flag θα μπορούσε να διαφωνήσει με το since.
@@ -76,6 +81,7 @@ export class MeController {
         // /admin — δες apps/stream/stats.js#addR2Out).
         r2Estimate: live?.r2Estimate ?? false,
       };
+      });
     });
   }
 
@@ -89,7 +95,7 @@ export class MeController {
     if (!client) return empty;
 
     const qs = range ? `?range=${encodeURIComponent(range)}` : '';
-    const hosts = [...new Set(client.paths.map((p) => p.server.host))];
+    const hosts = [...new Set(client.subscriptions.map((s) => s.server.host))];
     // allSettled: με paths σε δύο μηχανήματα, ένα πεσμένο δεν πρέπει να σβήνει
     // και το γράφημα του άλλου.
     // ponytail: paths με το ίδιο όνομα σε δύο servers (το unique είναι ανά
@@ -97,7 +103,7 @@ export class MeController {
     const answers = (await Promise.allSettled(hosts.map((h) => this.servers.proxy(h, `/admin/api/series${qs}`))))
       .filter((r) => r.status === 'fulfilled')
       .map((r) => r.value as Series);
-    const mine = new Set(client.paths.map((p) => p.path));
+    const mine = new Set(client.subscriptions.flatMap((s) => s.paths.map((p) => p.path)));
 
     // Χωρίς το `server` της απάντησης: CPU και μνήμη του μηχανήματος δεν αφορούν
     // τον πελάτη, και είναι πληροφορία για τους υπόλοιπους ενοίκους του.

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// CRUD πακέτων: ό,τι πουλάμε, με τα όριά του και τον server όπου πέφτουν οι νέες
-// αγορές του. Ο πελάτης παίρνει όσα θέλει, και σε όποια ποσότητα — τα όρια
-// αθροίζονται ανά server (δες admin/clients.vue).
+// CRUD πλάνων: ο κατάλογος με ό,τι πουλάμε — όρια και ο server όπου πέφτουν οι
+// νέες συνδρομές. Ο πελάτης αγοράζει όσα θέλει· κάθε συνδρομή κρατάει τα δικά
+// της όρια, δεν αθροίζονται (δες admin/clients.vue).
 interface Row {
   id: number
   name: string
@@ -9,12 +9,12 @@ interface Row {
   maxStreams: number
   serverId: number
   server: { host: string }
-  _count: { clients: number }
+  _count: { subscriptions: number }
 }
 
 const api = useApi()
 const ask = useConfirm()
-const packages = ref<Row[]>([])
+const plans = ref<Row[]>([])
 const servers = ref<{ id: number, host: string }[]>([])
 const error = ref('')
 const busy = ref(false)
@@ -26,8 +26,8 @@ const form = reactive<{ name: string, maxViewers: number, maxStreams: number, se
 
 async function load() {
   try {
-    [packages.value, servers.value] = await Promise.all([
-      api<Row[]>('/packages'),
+    [plans.value, servers.value] = await Promise.all([
+      api<Row[]>('/plans'),
       api<{ id: number, host: string }[]>('/servers'),
     ])
     error.value = ''
@@ -37,11 +37,11 @@ async function load() {
   }
 }
 
-async function createPackage() {
+async function createPlan() {
   if (!form.name || !form.serverId) return
   busy.value = true
   try {
-    await api('/packages', { method: 'POST', body: JSON.stringify(form) })
+    await api('/plans', { method: 'POST', body: JSON.stringify(form) })
     Object.assign(form, { name: '', maxViewers: 50, maxStreams: 1, serverId: undefined })
     await load()
   }
@@ -55,9 +55,9 @@ async function createPackage() {
 
 // Πάντα ξαναφορτώνει μετά, επιτυχία ή όχι — σε αποτυχία ξαναφέρνει τις σωστές
 // τιμές πάνω από ό,τι πληκτρολόγησε ο χρήστης.
-async function savePackage(p: Row) {
+async function savePlan(p: Row) {
   try {
-    await api(`/packages/${p.id}`, {
+    await api(`/plans/${p.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
         name: p.name, maxViewers: p.maxViewers, maxStreams: p.maxStreams, serverId: p.serverId,
@@ -72,18 +72,18 @@ async function savePackage(p: Row) {
   }
 }
 
-async function removePackage(p: Row) {
+async function removePlan(p: Row) {
   const ok = await ask({
-    title: `Διαγραφή πακέτου «${p.name}»;`,
+    title: `Διαγραφή πλάνου «${p.name}»;`,
     // Το API το απορρίπτει με 409 όσο το κρατάει έστω ένας πελάτης — εδώ το λέμε
     // πριν, για να μην πατηθεί άσκοπα.
-    description: p._count.clients
-      ? `Το κρατούν ${p._count.clients} πελάτες — αφαίρεσέ το πρώτα από αυτούς.`
-      : 'Δεν το χρησιμοποιεί κανένας πελάτης.',
+    description: p._count.subscriptions
+      ? `Το έχουν ${p._count.subscriptions} συνδρομές — αφαίρεσέ το πρώτα από αυτές.`
+      : 'Δεν το έχει καμία συνδρομή.',
   })
   if (!ok) return
   try {
-    await api(`/packages/${p.id}`, { method: 'DELETE' })
+    await api(`/plans/${p.id}`, { method: 'DELETE' })
     await load()
   }
   catch (e) {
@@ -98,17 +98,17 @@ onMounted(load)
   <div class="space-y-4">
     <div class="flex items-center gap-2">
       <UIcon name="i-lucide-package" class="text-primary size-5" />
-      <h1>Πακέτα</h1>
+      <h1>Πλάνα</h1>
     </div>
 
     <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
 
     <UCard>
       <template #header>
-        <h2 class="mb-0">Νέο πακέτο</h2>
+        <h2 class="mb-0">Νέο πλάνο</h2>
       </template>
 
-      <form class="space-y-4" @submit.prevent="createPackage">
+      <form class="space-y-4" @submit.prevent="createPlan">
         <div class="grid gap-4 sm:grid-cols-4">
           <UFormField label="Όνομα">
             <UInput v-model="form.name" placeholder="basic" required class="w-full" />
@@ -125,16 +125,16 @@ onMounted(load)
         </div>
 
         <p class="note">
-          Τα όρια είναι ανά πακέτο και αθροίζονται <b>ανά server</b>: πελάτης με 2× «basic» των 50
-          θεατών στο ίδιο μηχάνημα έχει 100 εκεί. Πελάτης <b>χωρίς</b> πακέτο δεν έχει όριο. Τα
-          «streams» είναι πόσα paths μπορεί να έχει, όχι πόσα εκπέμπει ταυτόχρονα.
+          Τα όρια είναι της <b>κάθε συνδρομής χωριστά</b> και δεν αθροίζονται: πελάτης με 2×
+          «basic» των 50 θεατών έχει δύο πλάνα των 50, όχι ένα των 100. Τα «streams» είναι πόσα
+          paths χωράει το πλάνο, όχι πόσα εκπέμπει ταυτόχρονα.
         </p>
 
-        <UButton type="submit" icon="i-lucide-plus" :loading="busy">Δημιουργία πακέτου</UButton>
+        <UButton type="submit" icon="i-lucide-plus" :loading="busy">Δημιουργία πλάνου</UButton>
       </form>
     </UCard>
 
-    <UCard v-for="p in packages" :key="p.id">
+    <UCard v-for="p in plans" :key="p.id">
       <div class="space-y-4">
         <div class="grid gap-4 sm:grid-cols-4">
           <UFormField label="Όνομα">
@@ -152,23 +152,24 @@ onMounted(load)
         </div>
 
         <p class="note">
-          Οι <b>{{ p._count.clients }}</b> αγορές που έγιναν ήδη μένουν στον server τους — η αλλαγή
-          εδώ αφορά μόνο τις επόμενες. Έτσι γεμίζει ένα μηχάνημα και το πακέτο συνεχίζει στο
-          επόμενο, χωρίς να μετακομίσει κανένας πελάτης.
+          Οι <b>{{ p._count.subscriptions }}</b> συνδρομές που υπάρχουν ήδη μένουν στον server
+          τους — η αλλαγή <em>server</em> αφορά μόνο τις επόμενες. Έτσι γεμίζει ένα μηχάνημα και
+          το πλάνο συνεχίζει στο επόμενο, χωρίς να μετακομίσει κανένας πελάτης. Τα <em>όρια</em>
+          όμως τα ακολουθούν όλες, και οι παλιές.
         </p>
 
         <div class="flex items-center justify-between gap-3 flex-wrap">
-          <span class="note">Αγορές αυτού του πακέτου: {{ p._count.clients }}</span>
+          <span class="note">Συνδρομές σε αυτό το πλάνο: {{ p._count.subscriptions }}</span>
           <div class="flex gap-2">
-            <UButton icon="i-lucide-save" color="neutral" variant="subtle" @click="savePackage(p)">Αποθήκευση</UButton>
-            <UButton icon="i-lucide-trash-2" color="error" variant="ghost" @click="removePackage(p)">Διαγραφή</UButton>
+            <UButton icon="i-lucide-save" color="neutral" variant="subtle" @click="savePlan(p)">Αποθήκευση</UButton>
+            <UButton icon="i-lucide-trash-2" color="error" variant="ghost" @click="removePlan(p)">Διαγραφή</UButton>
           </div>
         </div>
       </div>
     </UCard>
 
-    <UCard v-if="!packages.length">
-      <div class="quiet">Κανένα πακέτο ακόμα</div>
+    <UCard v-if="!plans.length">
+      <div class="quiet">Κανένα πλάνο ακόμα</div>
     </UCard>
   </div>
 </template>

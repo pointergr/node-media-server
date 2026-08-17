@@ -1,6 +1,11 @@
-// Ελάχιστο μοντέλο: πελάτες, paths, servers, χρήστες. Το ιστορικό (θεατές,
-// bitrate) μένει στο sqlite κάθε stream server — εδώ κρατάμε μόνο ό,τι
-// χρειάζεται το panel για να αποφασίζει «ποιος εκπέμπει πού».
+// Ελάχιστο μοντέλο: πελάτες, πλάνα, συνδρομές, paths, servers, χρήστες. Το
+// ιστορικό (θεατές, bitrate) μένει στο sqlite κάθε stream server — εδώ κρατάμε
+// μόνο ό,τι χρειάζεται το panel για να αποφασίζει «ποιος εκπέμπει πού».
+//
+// Η **συνδρομή** (Subscription) είναι η μονάδα των πάντων: ένα αγορασμένο πλάνο,
+// με δικό του server, δικό του όριο θεατών και δικά του paths. Ο πελάτης είναι
+// σκέτος πελάτης με 0..Χ συνδρομές — δεν έχει ούτε server ούτε όρια, και τίποτα
+// δεν αθροίζεται μεταξύ συνδρομών.
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,86 +16,78 @@ datasource db {
 }
 
 model Server {
-  id        Int       @id @default(autoincrement())
-  host      String    @unique
+  id            Int            @id @default(autoincrement())
+  host          String         @unique
   // Bearer token που στέλνει ο stream server στο POST /servers/:host/sync.
-  token     String
-  adminUrl  String
-  adminUser String
-  adminPass String
-  lastSeen  DateTime?
-  packages  Package[]
-  owned     ClientPackage[]
-  paths     Path[]
+  token         String
+  adminUrl      String
+  adminUser     String
+  adminPass     String
+  lastSeen      DateTime?
+  plans         Plan[]
+  subscriptions Subscription[]
+  paths         Path[]
 }
 
 model Client {
-  id       Int      @id @default(autoincrement())
-  name     String   @unique
-  disabled Boolean  @default(false)
-  paths    Path[]
-  users    User[]
-  // Ο πελάτης ΔΕΝ έχει server: ούτε όρια, ούτε μηχάνημα. Και τα δύο βγαίνουν από
-  // τις αγορές του (ClientPackage) — ένας πελάτης μπορεί να κάθεται σε δύο
-  // servers ταυτόχρονα, ένα πακέτο στον καθένα.
-  packages ClientPackage[]
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  disabled      Boolean        @default(false)
+  users         User[]
+  subscriptions Subscription[]
 }
 
-// Ό,τι πουλάμε: όρια θεατών και πλήθους streams. Τα νούμερα είναι ≥1 — «πακέτο
-// του μηδενός» δεν πουλάει κανείς, και θα ζητούσε τον κανόνα «0 = απεριόριστο»
-// μέσα σε άθροισμα (100 + 0 = ∞), που κανείς δεν θα θυμόταν στις 3 τη νύχτα.
-// Απεριόριστος πελάτης = πελάτης χωρίς πακέτα.
-model Package {
-  id         Int             @id @default(autoincrement())
-  name       String          @unique
-  maxViewers Int
-  // Μετράει paths, δηλαδή πόσα streams μπορεί να ΕΧΕΙ ο πελάτης — όχι πόσα
+// Ο κατάλογος: ό,τι πουλάμε, με τα όριά του. Τα νούμερα είναι ≥1 — «πλάνο του
+// μηδενός» δεν πουλάει κανείς, και το 0 έχει ήδη τη σημασία «χωρίς όριο» σε όλη
+// τη διαδρομή ως τον stream server.
+model Plan {
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  // Ταυτόχρονοι θεατές της ΣΥΝΔΡΟΜΗΣ — δύο συνδρομές του ίδιου πλάνου έχουν από
+  // 50 η καθεμία, όχι 100 μαζί.
+  maxViewers    Int
+  // Μετράει paths, δηλαδή πόσα streams μπορεί να ΕΧΕΙ η συνδρομή — όχι πόσα
   // εκπέμπουν ταυτόχρονα. Επιβάλλεται στο POST /clients/:id/paths.
-  maxStreams Int
-  // Πού πέφτουν οι ΝΕΕΣ αγορές αυτού του πακέτου — «το basic πουλάει σήμερα
-  // stream2». Αλλάζοντάς το δεν μετακομίζει κανείς: οι παλιές αγορές κρατούν
-  // τον δικό τους server (ClientPackage.serverId). Έτσι γεμίζει ένα μηχάνημα
-  // και ο επόμενος πελάτης πάει στο επόμενο, χωρίς να πειραχτεί ο προηγούμενος.
-  serverId   Int
-  server     Server          @relation(fields: [serverId], references: [id])
-  clients    ClientPackage[]
+  maxStreams    Int
+  // Πού πέφτουν οι ΝΕΕΣ συνδρομές αυτού του πλάνου — «το basic πουλάει σήμερα
+  // stream2». Αλλάζοντάς το δεν μετακομίζει κανείς: η κάθε συνδρομή κρατάει τον
+  // δικό της server. Έτσι γεμίζει ένα μηχάνημα και ο επόμενος πελάτης πάει στο
+  // επόμενο, χωρίς να πειραχτεί ο προηγούμενος.
+  serverId      Int
+  server        Server         @relation(fields: [serverId], references: [id])
+  subscriptions Subscription[]
 }
 
-// Η αγορά: ρητό μοντέλο σύνδεσης και όχι implicit many-to-many, γιατί κρατάει
-// δικά της πεδία — ποσότητα και τον server της στιγμής που έγινε.
-model ClientPackage {
-  clientId  Int
-  packageId Int
-  qty       Int     @default(1)
-  // Στιγμιότυπο του Package.serverId τη στιγμή της αγοράς — γι' αυτό είναι και
-  // μέρος του κλειδιού: «2× basic στον stream1» και «1× basic στον stream2»
-  // είναι δύο διαφορετικές γραμμές του ίδιου πελάτη.
-  serverId  Int
-  server    Server  @relation(fields: [serverId], references: [id])
-  // Cascade μόνο προς τον πελάτη: σβήνοντας πελάτη φεύγουν οι γραμμές του, όπως
-  // ήδη τα paths του. Το πακέτο προστατεύεται αλλού (409 αν το χρησιμοποιεί
-  // κάποιος) — αλλιώς μια διαγραφή θα άλλαζε σιωπηλά όρια πελατών.
-  client    Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  package   Package @relation(fields: [packageId], references: [id])
-
-  @@id([clientId, packageId, serverId])
+// Μία αγορά ενός πλάνου. Τα όρια ΔΕΝ αντιγράφονται εδώ: διαβάζονται από το πλάνο,
+// οπότε μια αλλαγή στον κατάλογο περνάει σε όλες τις συνδρομές του (σκόπιμα — δες
+// README). Ο server όμως είναι στιγμιότυπο, γι' αυτό και υπάρχει ως πεδίο.
+model Subscription {
+  id       Int    @id @default(autoincrement())
+  clientId Int
+  // Cascade: σβήνοντας πελάτη φεύγουν οι συνδρομές του, και μαζί τους τα paths.
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  planId   Int
+  plan     Plan   @relation(fields: [planId], references: [id])
+  serverId Int
+  server   Server @relation(fields: [serverId], references: [id])
+  paths    Path[]
 }
 
 model Path {
-  id       Int    @id @default(autoincrement())
-  path     String
+  id             Int          @id @default(autoincrement())
+  path           String
   // Τυχαίο κλειδί εκπομπής (≥16 chars, base64url) — δες clients.service.ts.
-  key      String
-  clientId Int
-  // Cascade: σβήνοντας πελάτη φεύγουν και τα paths/κλειδιά του. Χωρίς αυτό το
-  // DELETE /clients/:id έσκαγε με FK constraint σε κάθε πελάτη που είχε path —
-  // δηλαδή σε κάθε πραγματικό πελάτη.
-  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  // Ο server του path: ένα από τα μηχανήματα όπου ο πελάτης έχει αγορά. Είναι
-  // και το unique σε επίπεδο server, όχι πελάτη: δύο πελάτες του ίδιου server
-  // δεν μπορούν να διεκδικήσουν το ίδιο path.
-  serverId Int
-  server   Server @relation(fields: [serverId], references: [id])
+  key            String
+  // Το path ανήκει στη ΣΥΝΔΡΟΜΗ, όχι στον πελάτη: από εκεί παίρνει και τον server
+  // και το όριο θεατών που θα επιβάλει ο stream server. Χωρίς αυτό, το όριο μιας
+  // συνδρομής δεν θα επιβαλλόταν πουθενά.
+  subscriptionId Int
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  // Denormalized από τη συνδρομή, μόνο για το unique: το Prisma δεν φτιάχνει
+  // περιορισμό πάνω σε πεδίο συσχέτισης. Δύο πελάτες του ίδιου server δεν
+  // μπορούν να διεκδικήσουν το ίδιο path.
+  serverId       Int
+  server         Server       @relation(fields: [serverId], references: [id])
 
   @@unique([serverId, path])
 }
@@ -102,7 +99,7 @@ model User {
   // ώστε να μη χρειάζεται native dependency στο image.
   password String
   role     String // "admin" | "customer"
-  // null για admin· ο customer βλέπει μόνο τα paths του δικού του πελάτη.
+  // null για admin· ο customer βλέπει μόνο τα streams του δικού του πελάτη.
   clientId Int?
   client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
 }

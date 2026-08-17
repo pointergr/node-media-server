@@ -24,7 +24,8 @@ export class ClientsController {
 
   @Post()
   create(@Body() body: Partial<CreateClientDto>) {
-    // Χωρίς server: τον δίνουν τα πακέτα που θα αγοράσει (δες schema.prisma).
+    // Χωρίς server και χωρίς πλάνα: ο πελάτης είναι σκέτο όνομα μέχρι να
+    // αγοράσει (δες POST /clients/:id/subscriptions).
     if (!body.name) throw new BadRequestException('name απαιτείται');
     return this.clients.create(body as CreateClientDto);
   }
@@ -44,8 +45,19 @@ export class ClientsController {
     return this.clients.remove(id);
   }
 
+  @Post(':id/subscriptions')
+  addSubscription(@Param('id', ParseIntPipe) id: number, @Body() body: { planId?: number }) {
+    if (!body.planId) throw new BadRequestException('planId απαιτείται');
+    return this.clients.addSubscription(id, body.planId);
+  }
+
+  @Delete(':id/subscriptions/:subId')
+  removeSubscription(@Param('id', ParseIntPipe) id: number, @Param('subId', ParseIntPipe) subId: number) {
+    return this.clients.removeSubscription(id, subId);
+  }
+
   @Post(':id/paths')
-  addPath(@Param('id', ParseIntPipe) id: number, @Body() body: { path?: string; serverId?: number }) {
+  addPath(@Param('id', ParseIntPipe) id: number, @Body() body: { path?: string; subscriptionId?: number }) {
     // Ο stream server συγκρίνει το session.streamPath ΑΚΡΙΒΩΣ με το κλειδί του
     // clients.json. Ένα "live/kamera1" χωρίς αρχική κάθετο, ή με query/κενά,
     // δεν θα ταίριαζε ποτέ — και η αποτυχία θα φαινόταν μόνο ως «άκυρο κλειδί»
@@ -53,10 +65,10 @@ export class ClientsController {
     if (!body.path || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.path)) {
       throw new BadRequestException('path της μορφής /app/stream (π.χ. /live/kamera1)');
     }
-    // Το path ζει σε συγκεκριμένο μηχάνημα — ο πελάτης μπορεί να έχει αγορές σε
-    // περισσότερα από ένα, οπότε δεν υπάρχει «προφανής» server να μαντέψουμε.
-    if (!body.serverId) throw new BadRequestException('serverId απαιτείται');
-    return this.clients.addPath(id, body.path, body.serverId);
+    // Το path ανήκει σε συνδρομή, όχι στον πελάτη: από εκεί βγαίνει ο server και
+    // το όριο θεατών του.
+    if (!body.subscriptionId) throw new BadRequestException('subscriptionId απαιτείται');
+    return this.clients.addPath(id, body.path, body.subscriptionId);
   }
 
   @Delete(':id/paths/:pathId')

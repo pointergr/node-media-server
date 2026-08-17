@@ -1,16 +1,24 @@
 <script setup lang="ts">
-// CRUD πελατών: πακέτα (= τα όριά του ΚΑΙ ο server του), paths (= κλειδιά
-// εκπομπής) και disable/enable. Συμβόλαιο των endpoints: apps/api/README.md.
-// Ο πελάτης δεν έχει server: τον δίνει η κάθε αγορά ξεχωριστά — δες
-// utils/packages.ts και apps/api/prisma/schema.prisma.
-interface PathRow { id: number, path: string, key: string, serverId: number, server: ServerOption }
+// CRUD πελατών: συνδρομές (= τα αγορασμένα πλάνα, το καθένα με δικό του server
+// και δικά του όρια), streams (= paths + κλειδιά εκπομπής) και disable/enable.
+// Συμβόλαιο των endpoints: apps/api/README.md.
+//
+// Ο πελάτης δεν έχει ούτε server ούτε όρια — τα έχει η κάθε συνδρομή του, και
+// τίποτα δεν αθροίζεται μεταξύ τους (δες apps/api/prisma/schema.prisma).
 interface ServerOption { id: number, host: string }
+interface PlanRow { id: number, name: string, maxViewers: number, maxStreams: number, serverId: number }
+interface PathRow { id: number, path: string, key: string }
+interface SubscriptionRow {
+  id: number
+  plan: PlanRow
+  server: ServerOption
+  paths: PathRow[]
+}
 interface ClientRow {
   id: number
   name: string
   disabled: boolean
-  paths: PathRow[]
-  packages: PackageLine[]
+  subscriptions: SubscriptionRow[]
   // Ένας στην πράξη (το API αλλάζει τον παλαιότερο) — λίστα γιατί το σχήμα
   // επιτρέπει πολλούς. Χωρίς hash κωδικού, δεν το στέλνει το API.
   users: { id: number, username: string }[]
@@ -19,61 +27,49 @@ interface ClientRow {
 const api = useApi()
 const ask = useConfirm()
 const clients = ref<ClientRow[]>([])
-const servers = ref<ServerOption[]>([])
-const catalog = ref<PackageRow[]>([])
+const catalog = ref<PlanRow[]>([])
 const error = ref('')
 const busy = ref(false)
 
 const form = reactive<{ name: string, username: string, password: string }>({
   name: '', username: '', password: '',
 })
-// Γραμμές αγορών ανά πελάτη (clientId -> [{packageId, serverId, qty}]) και μία
-// ξεχωριστή για τη φόρμα δημιουργίας. 0 = δεν το έχει.
-const lines = reactive<Record<number, PackageLine[]>>({})
-const newLines = ref<PackageLine[]>([])
-// Ένα πεδίο "νέο path" ανά πελάτη, όχι ξεχωριστό ref το καθένα — key = client.id.
+// Ένα πεδίο ανά πελάτη, όχι ξεχωριστό ref το καθένα — key = client.id.
 const newPath = reactive<Record<number, string>>({})
-const newPathServer = reactive<Record<number, number | undefined>>({})
+const newPathSub = reactive<Record<number, number | undefined>>({})
+const newPlan = reactive<Record<number, number | undefined>>({})
 // Στοιχεία σύνδεσης ανά πελάτη. Ξεχωριστά από το `c` και όχι v-model πάνω στο
 // c.users[0]: ο πελάτης μπορεί να μην έχει χρήστη ακόμα, άρα ούτε αντικείμενο να
 // δεθεί. Το πεδίο κωδικού είναι πάντα κενό — δεν έχουμε τι να δείξουμε.
 const cred = reactive<Record<number, { username: string, password: string }>>({})
 
-// Τα όρια ανά server (utils/packages.ts) — ο ίδιος κανόνας με το API.
-const totalsOf = (c: ClientRow) => totalsByServer(lines[c.id] ?? [], catalog.value)
-// Ό,τι δείχνει η κεφαλίδα: τα μηχανήματα όπου ο πελάτης έχει αγορά ή path.
-function hostsOf(c: ClientRow) {
-  const ids = new Set([...c.packages.map(p => p.serverId), ...c.paths.map(p => p.serverId)])
-  return servers.value.filter(s => ids.has(s.id)).map(s => s.host)
-}
+// Έτοιμα για το USelect: το πλάνο δείχνει και πού θα πέσει η νέα συνδρομή, γιατί
+// αυτό είναι που δεν φαίνεται πουθενά αλλού τη στιγμή της αγοράς.
+const planItems = computed(() => catalog.value.map(p => ({
+  label: `${p.name} — ${hostOf(p.serverId)} (${p.maxViewers} θεατές, ${p.maxStreams} streams)`,
+  value: p.id,
+})))
+// Οι συνδρομές με χώρο για ακόμα ένα stream· γεμάτη συνδρομή δεν προσφέρεται,
+// αλλιώς η επιλογή οδηγεί σε σίγουρο 409.
+const subItems = (c: ClientRow) => c.subscriptions.map(s => ({
+  label: `${s.plan.name} — ${s.server.host} (${s.paths.length}/${s.plan.maxStreams})`,
+  value: s.id,
+  disabled: s.paths.length >= s.plan.maxStreams,
+}))
 
-// Οι servers όπου «είναι» ο πελάτης: αυτοί των αγορών του. Χωρίς αγορά δεν
-// ανήκει πουθενά, οπότε ο διαχειριστής μπορεί να τον βάλει όπου θέλει — ίδιος
-// κανόνας με το API (clients.service.ts#addPath).
-function serverOptions(c: ClientRow) {
-  const mine = new Set(c.packages.map(p => p.serverId))
-  const items = mine.size ? servers.value.filter(s => mine.has(s.id)) : servers.value
-  return items.map(s => ({ label: s.host, value: s.id }))
-}
-
-// Ό,τι έχει ποσότητα, με τον server του: οι παλιές γραμμές κρατούν τον δικό τους
-// (γι' αυτό ταξιδεύει το serverId), οι νέες φέρνουν τον σημερινό του πακέτου.
-const packagesBody = (rows: PackageLine[]) => rows.filter(r => r.qty > 0)
+const servers = ref<ServerOption[]>([])
+const hostOf = (id: number) => servers.value.find(s => s.id === id)?.host ?? `server #${id}`
+// Τα μηχανήματα όπου κάθεται ο πελάτης — παράγωγο των συνδρομών του.
+const hostsOf = (c: ClientRow) => [...new Set(c.subscriptions.map(s => s.server.host))]
 
 async function load() {
   try {
     [clients.value, servers.value, catalog.value] = await Promise.all([
       api<ClientRow[]>('/clients'),
       api<ServerOption[]>('/servers'),
-      api<PackageRow[]>('/packages'),
+      api<PlanRow[]>('/plans'),
     ])
-    // Οι γραμμές ξαναχτίζονται σε κάθε φόρτωση: αλλιώς μια αποτυχημένη
-    // αποθήκευση θα άφηνε στην οθόνη νούμερα που δεν ισχύουν.
-    for (const c of clients.value) {
-      lines[c.id] = packageLines(c.packages, catalog.value)
-      cred[c.id] = { username: c.users[0]?.username ?? '', password: '' }
-    }
-    newLines.value = packageLines([], catalog.value)
+    for (const c of clients.value) cred[c.id] = { username: c.users[0]?.username ?? '', password: '' }
     error.value = ''
   }
   catch (e) {
@@ -85,10 +81,7 @@ async function createClient() {
   if (!form.name) return
   busy.value = true
   try {
-    const body: Record<string, unknown> = {
-      name: form.name,
-      packages: packagesBody(newLines.value),
-    }
+    const body: Record<string, unknown> = { name: form.name }
     // Και τα δύο μαζί ή τίποτα — μισή φόρμα σημαίνει πελάτη χωρίς τρόπο σύνδεσης.
     if (form.username && form.password) Object.assign(body, { username: form.username, password: form.password })
     await api('/clients', { method: 'POST', body: JSON.stringify(body) })
@@ -107,14 +100,10 @@ async function createClient() {
 // τιμές πάνω από ό,τι πληκτρολόγησε ο χρήστης στα inputs.
 async function saveClient(c: ClientRow) {
   try {
-    const body: Record<string, unknown> = {
-      name: c.name,
-      // Η λίστα είναι η τελική: ό,τι λείπει, αφαιρείται από τον πελάτη.
-      packages: packagesBody(lines[c.id] ?? []),
-    }
+    const body: Record<string, unknown> = { name: c.name }
     // Κενό πεδίο = αμετάβλητο, γι' αυτό μπαίνουν στο σώμα μόνο όταν έχουν τιμή:
     // ένα `password: ''` θα άλλαζε τον κωδικό σε κενό με την πρώτη «Αποθήκευση»
-    // που ο διαχειριστής έκανε για τα πακέτα.
+    // που ο διαχειριστής έκανε για το όνομα.
     const { username, password } = cred[c.id] ?? { username: '', password: '' }
     if (username) body.username = username
     if (password) body.password = password
@@ -143,12 +132,45 @@ async function toggleDisabled(c: ClientRow) {
 async function removeClient(c: ClientRow) {
   const ok = await ask({
     title: `Διαγραφή πελάτη «${c.name}»;`,
-    description: 'Χάνονται και τα paths και τα κλειδιά εκπομπής του.',
+    description: 'Χάνονται και τα πλάνα και τα streams με τα κλειδιά εκπομπής τους.',
   })
   if (!ok) return
   try {
-    // Τα paths φεύγουν μαζί (cascade στο schema.prisma) — ένα request.
+    // Όλα φεύγουν μαζί (cascade στο schema.prisma) — ένα request.
     await api(`/clients/${c.id}`, { method: 'DELETE' })
+    await load()
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
+// Μία αγορά = μία γραμμή στον πίνακα. Ο server δεν επιλέγεται: τον δίνει το
+// πλάνο τη στιγμή αυτή, και μένει καρφωμένος στη συνδρομή για πάντα.
+async function addSubscription(c: ClientRow) {
+  const planId = newPlan[c.id]
+  if (!planId) return
+  try {
+    await api(`/clients/${c.id}/subscriptions`, { method: 'POST', body: JSON.stringify({ planId }) })
+    newPlan[c.id] = undefined
+    await load()
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
+async function removeSubscription(c: ClientRow, s: SubscriptionRow) {
+  const ok = await ask({
+    title: `Αφαίρεση του πλάνου «${s.plan.name}» (${s.server.host});`,
+    // Το API το απορρίπτει με 409 όσο κρατάει streams — εδώ το λέμε πριν.
+    description: s.paths.length
+      ? `Έχει ${s.paths.length} streams — σβήσε τα πρώτα.`
+      : 'Δεν έχει streams.',
+  })
+  if (!ok) return
+  try {
+    await api(`/clients/${c.id}/subscriptions/${s.id}`, { method: 'DELETE' })
     await load()
   }
   catch (e) {
@@ -158,10 +180,10 @@ async function removeClient(c: ClientRow) {
 
 async function addPath(c: ClientRow) {
   const path = newPath[c.id]?.trim()
-  const serverId = newPathServer[c.id]
-  if (!path || !serverId) return
+  const subscriptionId = newPathSub[c.id]
+  if (!path || !subscriptionId) return
   try {
-    await api(`/clients/${c.id}/paths`, { method: 'POST', body: JSON.stringify({ path, serverId }) })
+    await api(`/clients/${c.id}/paths`, { method: 'POST', body: JSON.stringify({ path, subscriptionId }) })
     newPath[c.id] = ''
     await load()
   }
@@ -173,7 +195,7 @@ async function addPath(c: ClientRow) {
 
 async function removePath(c: ClientRow, p: PathRow) {
   const ok = await ask({
-    title: `Διαγραφή του path ${p.path};`,
+    title: `Διαγραφή του stream ${p.path};`,
     description: 'Το OBS που εκπέμπει με αυτό το κλειδί θα κοπεί.',
   })
   if (!ok) return
@@ -212,8 +234,6 @@ onMounted(load)
           <UInput v-model="form.name" required class="w-full sm:w-1/2" />
         </UFormField>
 
-        <PackagePicker v-model="newLines" :catalog="catalog" :servers="servers" />
-
         <div class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Όνομα χρήστη (προαιρετικό)">
             <UInput v-model="form.username" autocomplete="off" class="w-full" />
@@ -224,9 +244,9 @@ onMounted(load)
         </div>
 
         <p class="note">
-          Αν συμπληρώσεις και τα δύο, φτιάχνεται μαζί με τον πελάτη ο χρήστης με τον οποίο θα
-          συνδέεται ο ίδιος στο δικό του panel. Χωρίς αυτά ο πελάτης δεν έχει σύνδεση — μόνο ο
-          διαχειριστής βλέπει/αλλάζει τα paths του.
+          Ο πελάτης φτιάχνεται άδειος: τα πλάνα του τα αγοράζεις από την κάρτα του παρακάτω. Αν
+          συμπληρώσεις και τα δύο πεδία σύνδεσης, φτιάχνεται μαζί ο χρήστης με τον οποίο θα
+          μπαίνει ο ίδιος στο δικό του panel.
         </p>
 
         <UButton type="submit" icon="i-lucide-plus" :loading="busy">Δημιουργία πελάτη</UButton>
@@ -243,7 +263,7 @@ onMounted(load)
             {{ c.disabled ? 'ΑΝΕΝΕΡΓΟΣ' : 'ΕΝΕΡΓΟΣ' }}
           </UBadge>
           <span class="font-semibold">{{ c.name }}</span>
-          <!-- Οι servers του πελάτη είναι παράγωγο των αγορών του — μπορεί να
+          <!-- Οι servers του πελάτη είναι παράγωγο των συνδρομών του — μπορεί να
                είναι και δύο, μπορεί και κανένας. -->
           <span v-for="host in hostsOf(c)" :key="host" class="host">{{ host }}</span>
           <span class="grow" />
@@ -264,8 +284,6 @@ onMounted(load)
           <UInput v-model="c.name" class="w-full sm:w-1/2" />
         </UFormField>
 
-        <PackagePicker v-if="lines[c.id]" v-model="lines[c.id]!" :catalog="catalog" :servers="servers" />
-
         <div v-if="cred[c.id]" class="grid gap-4 sm:grid-cols-2">
           <UFormField label="Όνομα χρήστη">
             <UInput v-model="cred[c.id]!.username" autocomplete="off" class="w-full" />
@@ -280,59 +298,83 @@ onMounted(load)
 
         <p class="note">
           Το disable/enable κόβει ή ξαναφέρνει τις εκπομπές του πελάτη μέσα σε ≤10s — όσο κάνει ο
-          server να ξανασυγχρονίσει τη λίστα των πελατών του. Οι αλλαγές στα πακέτα και στα
-          στοιχεία σύνδεσης θέλουν «Αποθήκευση».
+          server να ξανασυγχρονίσει τη λίστα του. Οι αλλαγές στο όνομα και στα στοιχεία σύνδεσης
+          θέλουν «Αποθήκευση»· τα πλάνα και τα streams αποθηκεύονται μόνα τους.
           <template v-if="!c.users.length">
             Ο πελάτης δεν έχει χρήστη ακόμα — συμπλήρωσε <em>και</em> όνομα <em>και</em> κωδικό.
           </template>
         </p>
 
+        <!-- Τα αγορασμένα πλάνα, με τα όριά τους το καθένα: δεν αθροίζονται. -->
+        <div class="text-xs text-dimmed">Πλάνα</div>
         <div class="scroll">
-          <table v-if="c.paths.length">
+          <table v-if="c.subscriptions.length">
             <thead>
               <tr>
-                <th>Path</th><th>Server</th><th>Stream Key (OBS)</th><th />
+                <th>Πλάνο</th><th>Server</th><th>Θεατές</th><th>Streams</th><th />
               </tr>
             </thead>
             <tbody>
-              <tr v-for="p in c.paths" :key="p.id">
-                <td>{{ p.path }}</td>
-                <td class="host">{{ p.server.host }}</td>
-                <td>
-                  <div class="flex items-center gap-2">
-                    <code>{{ streamKey(p) }}</code>
-                    <CopyButton :text="streamKey(p)" label="" />
-                  </div>
-                </td>
+              <tr v-for="s in c.subscriptions" :key="s.id">
+                <td>{{ s.plan.name }}</td>
+                <td class="host">{{ s.server.host }}</td>
+                <td>{{ s.plan.maxViewers }}</td>
+                <td>{{ s.paths.length }} / {{ s.plan.maxStreams }}</td>
                 <td>
                   <UButton
                     icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
-                    aria-label="Διαγραφή path" @click="removePath(c, p)"
+                    aria-label="Αφαίρεση πλάνου" @click="removeSubscription(c, s)"
                   />
                 </td>
               </tr>
             </tbody>
           </table>
-          <div v-else class="empty">Κανένα path ακόμα</div>
+          <div v-else class="empty">Κανένα πλάνο ακόμα — χωρίς πλάνο δεν μπορεί να εκπέμψει</div>
         </div>
 
-        <!-- Πόσα paths επιτρέπουν τα πακέτα του σε κάθε μηχάνημα: το 409 του API
-             έρχεται αλλιώς σαν έκπληξη τη στιγμή της προσθήκης. -->
-        <p v-if="Object.keys(totalsOf(c)).length" class="note">
-          Streams:
-          <template v-for="([serverId, t], i) in Object.entries(totalsOf(c))" :key="serverId">
-            <template v-if="i"> · </template>
-            <b>{{ servers.find(s => s.id === Number(serverId))?.host }}</b>
-            {{ c.paths.filter(p => p.serverId === Number(serverId)).length }} / {{ t.streams }}
-          </template>
-        </p>
+        <form class="flex gap-2 flex-wrap" @submit.prevent="addSubscription(c)">
+          <USelect v-model="newPlan[c.id]" :items="planItems" placeholder="— πλάνο —" class="grow min-w-60" />
+          <UButton type="submit" icon="i-lucide-plus" color="neutral" variant="subtle">Προσθήκη πλάνου</UButton>
+        </form>
+
+        <div class="text-xs text-dimmed">Streams</div>
+        <div class="scroll">
+          <table v-if="c.subscriptions.some(s => s.paths.length)">
+            <thead>
+              <tr>
+                <th>Path</th><th>Πλάνο</th><th>Stream Key (OBS)</th><th />
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="s in c.subscriptions" :key="s.id">
+                <tr v-for="p in s.paths" :key="p.id">
+                  <td>{{ p.path }}</td>
+                  <td>{{ s.plan.name }} <span class="host">{{ s.server.host }}</span></td>
+                  <td>
+                    <div class="flex items-center gap-2">
+                      <code>{{ streamKey(p) }}</code>
+                      <CopyButton :text="streamKey(p)" label="" />
+                    </div>
+                  </td>
+                  <td>
+                    <UButton
+                      icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
+                      aria-label="Διαγραφή stream" @click="removePath(c, p)"
+                    />
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div v-else class="empty">Κανένα stream ακόμα</div>
+        </div>
 
         <form class="flex gap-2 flex-wrap" @submit.prevent="addPath(c)">
           <UInput v-model="newPath[c.id]" placeholder="/live/kamera1" required class="grow min-w-45" />
-          <!-- Το path ζει σε ένα μηχάνημα, και ο πελάτης μπορεί να έχει δύο:
-               επιλογή μόνο ανάμεσα σε αυτά που του έδωσαν οι αγορές του. -->
-          <USelect v-model="newPathServer[c.id]" :items="serverOptions(c)" placeholder="— server —" class="min-w-40" />
-          <UButton type="submit" icon="i-lucide-plus" color="neutral" variant="subtle">Προσθήκη path</UButton>
+          <!-- Το stream ανήκει σε πλάνο: από εκεί παίρνει server και όριο θεατών.
+               Γεμάτο πλάνο εμφανίζεται απενεργοποιημένο αντί για σίγουρο 409. -->
+          <USelect v-model="newPathSub[c.id]" :items="subItems(c)" placeholder="— πλάνο —" class="min-w-60" />
+          <UButton type="submit" icon="i-lucide-plus" color="neutral" variant="subtle">Προσθήκη stream</UButton>
         </form>
       </div>
     </UCard>

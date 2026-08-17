@@ -14,45 +14,47 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { Roles } from '../auth/roles.decorator';
 
-interface PackageDto {
+interface PlanDto {
   name: string;
   maxViewers: number;
   maxStreams: number;
-  // Πού πέφτουν οι νέες αγορές. Αλλάζοντάς το δεν μετακομίζει καμία παλιά —
-  // η αγορά κρατάει τον δικό της (schema.prisma#ClientPackage).
+  // Πού πέφτουν οι νέες συνδρομές. Αλλάζοντάς το δεν μετακομίζει καμία παλιά —
+  // η συνδρομή κρατάει τον δικό της (schema.prisma#Subscription).
   serverId: number;
 }
 
 // Χωρίς service: πέντε pass-through κλήσεις στο Prisma δεν χρειάζονται τρίτο
 // αρχείο — ίδιο μοτίβο με το sync.controller.ts, που κάνει inject σκέτο
-// PrismaService. Ό,τι έχει λογική (το άθροισμα των ορίων) ζει στο clients.service.
+// PrismaService.
 @Roles('admin')
-@Controller('packages')
-export class PackagesController {
+@Controller('plans')
+export class PlansController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
   list() {
-    return this.prisma.package.findMany({
-      include: { server: true, _count: { select: { clients: true } } },
+    return this.prisma.plan.findMany({
+      include: { server: true, _count: { select: { subscriptions: true } } },
       orderBy: { maxViewers: 'asc' },
     });
   }
 
   @Post()
-  create(@Body() body: Partial<PackageDto>) {
+  create(@Body() body: Partial<PlanDto>) {
     const { name, maxViewers, maxStreams, serverId } = valid(body, true);
     return knownServer(
-      this.prisma.package.create({
+      this.prisma.plan.create({
         data: { name: name!, maxViewers: maxViewers!, maxStreams: maxStreams!, serverId: serverId! },
       }),
     );
   }
 
   @Patch(':id')
-  async update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<PackageDto>) {
+  async update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<PlanDto>) {
     await this.byId(id);
-    return knownServer(this.prisma.package.update({ where: { id }, data: valid(body, false) }));
+    // Τα όρια αλλάζουν και για τις υπάρχουσες συνδρομές — τα διαβάζουν από εδώ,
+    // δεν τα αντιγράφουν. Ο `serverId` όχι: αφορά μόνο τις επόμενες.
+    return knownServer(this.prisma.plan.update({ where: { id }, data: valid(body, false) }));
   }
 
   @Delete(':id')
@@ -60,18 +62,18 @@ export class PackagesController {
     await this.byId(id);
     // Ρητός έλεγχος και όχι catch σε FK error: η διαγραφή θα άλλαζε σιωπηλά τα
     // όρια πελατών που κανείς δεν κοιτάζει εκείνη τη στιγμή. Ίδιο σκεπτικό με τον
-    // server που έχει πελάτες (servers.service.ts).
-    const clients = await this.prisma.clientPackage.count({ where: { packageId: id } });
-    if (clients) {
-      throw new ConflictException(`το πακέτο το χρησιμοποιούν ${clients} πελάτες — αφαίρεσέ το πρώτα από αυτούς`);
+    // server που έχει πλάνα ή paths (servers.service.ts).
+    const subs = await this.prisma.subscription.count({ where: { planId: id } });
+    if (subs) {
+      throw new ConflictException(`το πλάνο το έχουν ${subs} συνδρομές — αφαίρεσέ το πρώτα από αυτές`);
     }
-    await this.prisma.package.delete({ where: { id } });
+    await this.prisma.plan.delete({ where: { id } });
   }
 
   private async byId(id: number) {
-    const pkg = await this.prisma.package.findUnique({ where: { id } });
-    if (!pkg) throw new NotFoundException('package not found');
-    return pkg;
+    const plan = await this.prisma.plan.findUnique({ where: { id } });
+    if (!plan) throw new NotFoundException('plan not found');
+    return plan;
   }
 }
 
@@ -87,9 +89,9 @@ async function knownServer<T>(op: Promise<T>): Promise<T> {
   }
 }
 
-// Τα όρια είναι ≥1: το 0 μέσα σε άθροισμα θα ζητούσε τον κανόνα «0 = απεριόριστο»
-// (100 + 0 = ∞). Απεριόριστος πελάτης = πελάτης χωρίς πακέτα — δες schema.prisma.
-function valid(body: Partial<PackageDto>, required: boolean) {
+// Τα όρια είναι ≥1: το 0 σημαίνει ήδη «χωρίς όριο» σε όλη τη διαδρομή ως τον
+// stream server, και ένα πλάνο του μηδενός δεν πουλάει κανείς.
+function valid(body: Partial<PlanDto>, required: boolean) {
   if (required && !body.name) throw new BadRequestException('name απαιτείται');
   if (required && !body.serverId) throw new BadRequestException('serverId απαιτείται');
   for (const field of ['maxViewers', 'maxStreams'] as const) {

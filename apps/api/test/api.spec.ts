@@ -16,6 +16,7 @@ let ids: {
   clientA: number;
   clientB: number;
   clientDisabled: number;
+  subA: number;
 };
 
 before(async () => {
@@ -35,42 +36,56 @@ before(async () => {
     data: { host: 'server-b', token: 'tok-b', adminUrl: 'http://127.0.0.1:2', adminUser: 'u', adminPass: 'p' },
   });
 
-  // Δύο πακέτα στον ίδιο πελάτη: το όριό του (5 θεατές) είναι το άθροισμά τους,
-  // οπότε κάθε assert παρακάτω που περιμένει «5» ελέγχει και την άθροιση.
-  // maxStreams 1+1: φτάνει για το δεύτερο path που προσθέτει το test της
-  // διαγραφής, και δεν αφήνει περιθώριο για τρίτο.
-  const basic = await prisma.package.create({
+  // Τρία πλάνα, δύο μηχανήματα. Τα νούμερα είναι μικρά και ΔΙΑΦΟΡΕΤΙΚΑ μεταξύ
+  // τους: κάθε assert παρακάτω που περιμένει «3» ελέγχει ότι το όριο ήρθε από τη
+  // σωστή συνδρομή και δεν αθροίστηκε με καμία άλλη.
+  const basic = await prisma.plan.create({
     data: { name: 'basic', maxViewers: 3, maxStreams: 1, serverId: serverA.id },
   });
-  const extra = await prisma.package.create({
-    data: { name: 'extra', maxViewers: 2, maxStreams: 1, serverId: serverA.id },
+  await prisma.plan.create({
+    data: { name: 'extra', maxViewers: 2, maxStreams: 2, serverId: serverA.id },
+  });
+  const beta = await prisma.plan.create({
+    data: { name: 'beta', maxViewers: 7, maxStreams: 1, serverId: serverB.id },
   });
 
+  // Το path κρέμεται από τη ΣΥΝΔΡΟΜΗ — από εκεί παίρνει server και όριο.
   const clientA = await prisma.client.create({
     data: {
       name: 'pelatis-a',
-      packages: {
-        create: [
-          { packageId: basic.id, serverId: serverA.id },
-          { packageId: extra.id, serverId: serverA.id },
-        ],
+      subscriptions: {
+        create: [{
+          planId: basic.id,
+          serverId: serverA.id,
+          paths: { create: [{ path: '/live/kamera1', key: 'KEYA1', serverId: serverA.id }] },
+        }],
       },
-      paths: { create: [{ path: '/live/kamera1', key: 'KEYA1', serverId: serverA.id }] },
     },
+    include: { subscriptions: true },
   });
-  // Χωρίς πακέτα: το όριό του βγαίνει 0, δηλαδή «χωρίς όριο» — η σημερινή
-  // σημασία του 0 σε όλη τη διαδρομή ως τον stream server.
   const clientB = await prisma.client.create({
     data: {
       name: 'pelatis-b',
-      paths: { create: [{ path: '/live/kamerab', key: 'KEYB1', serverId: serverB.id }] },
+      subscriptions: {
+        create: [{
+          planId: beta.id,
+          serverId: serverB.id,
+          paths: { create: [{ path: '/live/kamerab', key: 'KEYB1', serverId: serverB.id }] },
+        }],
+      },
     },
   });
   const clientDisabled = await prisma.client.create({
     data: {
       name: 'pelatis-anenergos',
       disabled: true,
-      paths: { create: [{ path: '/live/kamerax', key: 'KEYX1', serverId: serverA.id }] },
+      subscriptions: {
+        create: [{
+          planId: basic.id,
+          serverId: serverA.id,
+          paths: { create: [{ path: '/live/kamerax', key: 'KEYX1', serverId: serverA.id }] },
+        }],
+      },
     },
   });
 
@@ -86,7 +101,12 @@ before(async () => {
 
   await prisma.$disconnect();
 
-  ids = { serverA: serverA.id, serverB: serverB.id, clientA: clientA.id, clientB: clientB.id, clientDisabled: clientDisabled.id };
+  ids = {
+    serverA: serverA.id, serverB: serverB.id,
+    clientA: clientA.id, clientB: clientB.id, clientDisabled: clientDisabled.id,
+    // Το κλειδί του clients.json είναι «όνομα#idΣυνδρομής» — δες sync.controller.ts.
+    subA: clientA.subscriptions[0]!.id,
+  };
 
   const started = await startTestApp();
   base = started.base;
@@ -144,13 +164,14 @@ test('sync: σωστό token -> μόνο οι μη-disabled πελάτες αυ�
   });
   assert.equal(res.status, 200);
   const body = await res.json();
+  // Μία εγγραφή ανά ΣΥΝΔΡΟΜΗ, με το όριο του πλάνου της — έτσι ο stream server,
+  // που ομαδοποιεί ανά εγγραφή, επιβάλλει όριο ανά πλάνο χωρίς να ξέρει τι είναι
+  // πλάνο. Το σχήμα του clients.json μένει ακριβώς ίδιο.
   assert.deepEqual(body, {
-    // limit 5 = 3 (basic) + 2 (extra): ο stream server παίρνει έτοιμο άθροισμα και
-    // το σχήμα του clients.json μένει ακριβώς ίδιο.
-    'pelatis-a': { limit: 5, paths: { '/live/kamera1': 'KEYA1' } },
+    [`pelatis-a#${ids.subA}`]: { limit: 3, paths: { '/live/kamera1': 'KEYA1' } },
   });
-  assert.ok(!('pelatis-anenergos' in body), 'ο disabled πελάτης δεν εμφανίζεται');
-  assert.ok(!('pelatis-b' in body), 'πελάτης άλλου server δεν εμφανίζεται');
+  assert.ok(!Object.keys(body).some((k) => k.startsWith('pelatis-anenergos')), 'ο disabled πελάτης δεν εμφανίζεται');
+  assert.ok(!Object.keys(body).some((k) => k.startsWith('pelatis-b')), 'συνδρομή άλλου server δεν εμφανίζεται');
 });
 
 test('roles: customer σε admin endpoint -> 403', async () => {
@@ -174,7 +195,7 @@ test('/me/streams: ο πελάτης Α δεν βλέπει τα paths του Β
   assert.equal(streamsA[0].path, '/live/kamera1');
   assert.equal(streamsA[0].key, 'KEYA1');
   assert.equal(streamsA[0].streamKey, 'kamera1?key=KEYA1');
-  assert.equal(streamsA[0].limit, 5);
+  assert.equal(streamsA[0].limit, 3, 'το όριο είναι της συνδρομής, όχι άθροισμα του πελάτη');
   assert.equal(streamsA[0].host, 'server-a', 'το panel χτίζει από αυτό τα URL αναπαραγωγής/OBS');
   assert.ok(!streamsA.some((s) => s.path === '/live/kamerab'), 'δεν βλέπει το path του πελάτη Β');
 
@@ -263,39 +284,65 @@ test('DELETE /clients/:id: σβήνει και τα paths του', async () => {
   const token = await login('admin', 'adminpass');
   const auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 
-  const created = await fetch(`${base}/clients`, {
-    method: 'POST',
-    headers: auth,
-    body: JSON.stringify({ name: 'προς-διαγραφή' }),
-  });
-  const client = (await created.json()) as { id: number };
+  const client = await mkClient(auth, 'προς-διαγραφή');
+  const sub = await mkSub(auth, client.id, await planId(auth, 'extra'));
   const path = await fetch(`${base}/clients/${client.id}/paths`, {
     method: 'POST',
     headers: auth,
-    body: JSON.stringify({ path: '/live/prosdiagrafi', serverId: ids.serverA }),
+    body: JSON.stringify({ path: '/live/prosdiagrafi', subscriptionId: sub.id }),
   });
   assert.equal(path.status, 201);
 
+  // Ο πελάτης σβήνει με ένα request: cascade Client -> Subscription -> Path.
   const del = await fetch(`${base}/clients/${client.id}`, { method: 'DELETE', headers: auth });
-  assert.equal(del.status, 200, 'ο πελάτης σβήνει παρότι έχει path');
+  assert.equal(del.status, 200, 'ο πελάτης σβήνει παρότι έχει συνδρομή με path');
 
   // Το path πρέπει να έχει φύγει μαζί, αλλιώς κρατάει το unique (serverId, path)
   // δεσμευμένο για πάντα.
-  const reuse = await fetch(`${base}/clients/${ids.clientA}/paths`, {
+  const other = await mkClient(auth, 'προς-διαγραφή-2');
+  const otherSub = await mkSub(auth, other.id, await planId(auth, 'extra'));
+  const reuse = await fetch(`${base}/clients/${other.id}/paths`, {
     method: 'POST',
     headers: auth,
-    body: JSON.stringify({ path: '/live/prosdiagrafi', serverId: ids.serverA }),
+    body: JSON.stringify({ path: '/live/prosdiagrafi', subscriptionId: otherSub.id }),
   });
   assert.equal(reuse.status, 201, 'το path ελευθερώθηκε');
 });
 
-// --- Πακέτα ----------------------------------------------------------------
-// Όλα τα παρακάτω φτιάχνουν δικά τους πακέτα/πελάτες: ο pelatis-a διαβάζεται από
+// --- Πλάνα και συνδρομές ---------------------------------------------------
+// Όλα τα παρακάτω φτιάχνουν δικά τους πλάνα/πελάτες: ο pelatis-a διαβάζεται από
 // τα προηγούμενα asserts και δεν πρέπει να μεταλλαχθεί.
 
 async function adminAuth() {
   const token = await login('admin', 'adminpass');
   return { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+}
+
+type Auth = Record<string, string>;
+const post = async (auth: Auth, url: string, body: unknown) =>
+  fetch(`${base}${url}`, { method: 'POST', headers: auth, body: JSON.stringify(body) });
+
+async function mkPlan(auth: Auth, name: string, maxViewers: number, maxStreams: number, serverId: number) {
+  const res = await post(auth, '/plans', { name, maxViewers, maxStreams, serverId });
+  assert.equal(res.status, 201, `το πλάνο ${name} έπρεπε να φτιαχτεί`);
+  return (await res.json()) as { id: number };
+}
+
+async function planId(auth: Auth, name: string) {
+  const plans = (await (await fetch(`${base}/plans`, { headers: auth })).json()) as { id: number; name: string }[];
+  return plans.find((p) => p.name === name)!.id;
+}
+
+async function mkClient(auth: Auth, name: string) {
+  const res = await post(auth, '/clients', { name });
+  assert.equal(res.status, 201, `ο πελάτης ${name} έπρεπε να φτιαχτεί`);
+  return (await res.json()) as { id: number };
+}
+
+async function mkSub(auth: Auth, clientId: number, planIdValue: number) {
+  const res = await post(auth, `/clients/${clientId}/subscriptions`, { planId: planIdValue });
+  assert.equal(res.status, 201, 'η συνδρομή έπρεπε να φτιαχτεί');
+  return (await res.json()) as { id: number; serverId: number };
 }
 
 const syncOf = async (host: string, token: string) => {
@@ -307,93 +354,120 @@ const syncOf = async (host: string, token: string) => {
   return (await res.json()) as Record<string, { limit: number; paths: Record<string, string> }>;
 };
 
-// Το νούμερο που φτάνει στον stream server είναι παράγωγο: αν σπάσει ο
-// πολλαπλασιασμός ή το include των πακέτων, ο πελάτης γίνεται σιωπηλά
-// απεριόριστος (limit 0) — δεν το πιάνει τίποτα άλλο.
-test('πακέτα: το sync δίνει Σ(qty × maxViewers)', async () => {
+// Ο πυρήνας του μοντέλου: δύο συνδρομές του ΙΔΙΟΥ πλάνου δεν φτιάχνουν έναν
+// πελάτη με διπλό όριο — φτιάχνουν δύο ξεχωριστά πλάνα με το δικό του όριο το
+// καθένα. Αν κάποτε ξαναμπεί άθροισμα, εδώ θα φανεί.
+test('συνδρομές: κάθε πλάνο κρατάει το δικό του όριο, χωρίς άθροισμα', async () => {
   const auth = await adminAuth();
-  const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'megalo', maxViewers: 50, maxStreams: 2, serverId: ids.serverA }),
-  })).json()) as { id: number };
+  const plan = await mkPlan(auth, 'diplo', 50, 1, ids.serverA);
+  const client = await mkClient(auth, 'me-dio-plana');
+  const first = await mkSub(auth, client.id, plan.id);
+  const second = await mkSub(auth, client.id, plan.id);
+  assert.notEqual(first.id, second.id, 'δύο αγορές = δύο γραμμές, χωρίς ποσότητα');
 
-  const client = (await (await fetch(`${base}/clients`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-posotita', packages: [{ packageId: pkg.id, qty: 3 }] }),
-  })).json()) as { id: number };
+  await post(auth, `/clients/${client.id}/paths`, { path: '/live/proto', subscriptionId: first.id });
+  await post(auth, `/clients/${client.id}/paths`, { path: '/live/deftero', subscriptionId: second.id });
 
-  assert.equal((await syncOf('server-a', 'tok-a'))['me-posotita'].limit, 150, '3 × 50 θεατές');
+  const body = await syncOf('server-a', 'tok-a');
+  assert.deepEqual(body[`me-dio-plana#${first.id}`], { limit: 50, paths: { '/live/proto': body[`me-dio-plana#${first.id}`]!.paths['/live/proto']! } });
+  assert.equal(body[`me-dio-plana#${second.id}`]!.limit, 50, 'όχι 100 — το όριο είναι της συνδρομής');
+  assert.deepEqual(Object.keys(body[`me-dio-plana#${second.id}`]!.paths), ['/live/deftero'], 'κάθε πλάνο βλέπει μόνο τα δικά του paths');
+});
 
-  // Ανάθεση = αντικατάσταση: άδεια λίστα σημαίνει κανένα πακέτο, άρα 0 = χωρίς όριο.
-  const patched = await fetch(`${base}/clients/${client.id}`, {
-    method: 'PATCH', headers: auth, body: JSON.stringify({ packages: [] }),
+// Το όριο θεατών αλλάζει από τον κατάλογο (σκόπιμα: δες README) — ο server όχι.
+test('πλάνα: αλλάζοντας τα όρια, οι υπάρχουσες συνδρομές ακολουθούν· ο server όχι', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'metavalomeno', 10, 1, ids.serverA);
+  const client = await mkClient(auth, 'akolouthei');
+  const sub = await mkSub(auth, client.id, plan.id);
+  assert.equal(sub.serverId, ids.serverA);
+
+  const patched = await fetch(`${base}/plans/${plan.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ maxViewers: 80, serverId: ids.serverB }),
   });
   assert.equal(patched.status, 200);
-  // Χωρίς αγορά και χωρίς path, ο πελάτης δεν ανήκει πια σε κανένα μηχάνημα —
-  // ο server δεν έχει τι να επιβάλει γι' αυτόν.
-  assert.equal((await syncOf('server-a', 'tok-a'))['me-posotita'], undefined);
 
-  // Ο πελάτης που δεν πήρε ποτέ πακέτο αλλά έχει path εδώ: χωρίς όριο, όπως πριν
-  // τα πακέτα — ο δρόμος αναδίπλωσης του «0 = απεριόριστο» μένει ανοιχτός.
-  assert.equal((await syncOf('server-b', 'tok-b'))['pelatis-b'].limit, 0);
+  assert.equal((await syncOf('server-a', 'tok-a'))[`akolouthei#${sub.id}`]!.limit, 80, 'το όριο ακολουθεί τον κατάλογο');
+  assert.equal((await syncOf('server-b', 'tok-b'))[`akolouthei#${sub.id}`], undefined, 'ο server της συνδρομής δεν άλλαξε');
+
+  // ...και η επόμενη αγορά πάει στον νέο server, με την παλιά να μένει.
+  const next = await mkSub(auth, client.id, plan.id);
+  assert.equal(next.serverId, ids.serverB);
+  assert.equal((await syncOf('server-a', 'tok-a'))[`akolouthei#${sub.id}`]!.limit, 80);
+  assert.equal((await syncOf('server-b', 'tok-b'))[`akolouthei#${next.id}`]!.limit, 80);
 });
 
 // Εδώ ζει ολόκληρο το όριο streams — πουθενά αλλού δεν επιβάλλεται.
-test('πακέτα: path πάνω από το maxStreams -> 409', async () => {
+test('συνδρομές: path πάνω από το maxStreams -> 409, με χώρο στην άλλη συνδρομή', async () => {
   const auth = await adminAuth();
-  const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'ena-stream', maxViewers: 10, maxStreams: 1, serverId: ids.serverA }),
-  })).json()) as { id: number };
-  const client = (await (await fetch(`${base}/clients`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-ena-stream', packages: [{ packageId: pkg.id }] }),
-  })).json()) as { id: number };
+  const plan = await mkPlan(auth, 'ena-stream', 10, 1, ids.serverA);
+  const client = await mkClient(auth, 'me-ena-stream');
+  const sub = await mkSub(auth, client.id, plan.id);
 
-  const first = await fetch(`${base}/clients/${client.id}/paths`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ path: '/live/proto', serverId: ids.serverA }),
-  });
-  assert.equal(first.status, 201);
+  assert.equal((await post(auth, `/clients/${client.id}/paths`, { path: '/live/ena', subscriptionId: sub.id })).status, 201);
 
-  const second = await fetch(`${base}/clients/${client.id}/paths`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ path: '/live/deftero', serverId: ids.serverA }),
-  });
+  const second = await post(auth, `/clients/${client.id}/paths`, { path: '/live/dio', subscriptionId: sub.id });
   assert.equal(second.status, 409);
   assert.match(((await second.json()) as { message: string }).message, /1 streams/);
+
+  // Δεύτερη συνδρομή = δεύτερη θέση. Το όριο δεν είναι του πελάτη.
+  const extra = await mkSub(auth, client.id, plan.id);
+  assert.equal((await post(auth, `/clients/${client.id}/paths`, { path: '/live/dio', subscriptionId: extra.id })).status, 201);
 });
 
-// Διαγραφή πακέτου εν χρήσει: αλλάζει σιωπηλά τα όρια πελατών που κανείς δεν
-// κοιτάζει εκείνη τη στιγμή. Το FK δεν το πιάνει (cascade προς τον πελάτη).
-test('DELETE /packages/:id με πελάτες -> 409, μετά την αποδέσμευση -> 200', async () => {
+// Η συνδρομή άλλου πελάτη δεν είναι δρόμος για path: χωρίς τον έλεγχο, ένα id
+// από άλλον πελάτη θα έγραφε path μέσα στο πλάνο του.
+test('συνδρομές: id άλλου πελάτη -> 404', async () => {
   const auth = await adminAuth();
-  const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'pros-diagrafi', maxViewers: 5, maxStreams: 5, serverId: ids.serverA }),
-  })).json()) as { id: number };
-  const client = (await (await fetch(`${base}/clients`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'kratos-paketo', packages: [{ packageId: pkg.id }] }),
-  })).json()) as { id: number };
+  const plan = await mkPlan(auth, 'xenos', 10, 2, ids.serverA);
+  const owner = await mkClient(auth, 'idioktitis');
+  const sub = await mkSub(auth, owner.id, plan.id);
+  const stranger = await mkClient(auth, 'perastikos');
 
-  const busy = await fetch(`${base}/packages/${pkg.id}`, { method: 'DELETE', headers: auth });
+  assert.equal((await post(auth, `/clients/${stranger.id}/paths`, { path: '/live/klemeno', subscriptionId: sub.id })).status, 404);
+  const del = await fetch(`${base}/clients/${stranger.id}/subscriptions/${sub.id}`, { method: 'DELETE', headers: auth });
+  assert.equal(del.status, 404);
+});
+
+// Συνδρομή με paths: το κλειδί εκπομπής δεν χάνεται με ένα κλικ «αφαίρεση».
+test('DELETE συνδρομής με streams -> 409, άδεια -> 200', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'pros-afairesi', 10, 2, ids.serverA);
+  const client = await mkClient(auth, 'afairei-plano');
+  const sub = await mkSub(auth, client.id, plan.id);
+  const path = (await (await post(auth, `/clients/${client.id}/paths`, { path: '/live/kratao', subscriptionId: sub.id })).json()) as { id: number };
+
+  const busy = await fetch(`${base}/clients/${client.id}/subscriptions/${sub.id}`, { method: 'DELETE', headers: auth });
   assert.equal(busy.status, 409);
 
-  await fetch(`${base}/clients/${client.id}`, {
-    method: 'PATCH', headers: auth, body: JSON.stringify({ packages: [] }),
-  });
-  const free = await fetch(`${base}/packages/${pkg.id}`, { method: 'DELETE', headers: auth });
+  await fetch(`${base}/clients/${client.id}/paths/${path.id}`, { method: 'DELETE', headers: auth });
+  const free = await fetch(`${base}/clients/${client.id}/subscriptions/${sub.id}`, { method: 'DELETE', headers: auth });
   assert.equal(free.status, 200);
 });
 
-test('πακέτα: όρια < 1 -> 400, άγνωστο πακέτο -> 400 (όχι 500)', async () => {
+// Διαγραφή πλάνου εν χρήσει: αλλάζει σιωπηλά τα όρια πελατών που κανείς δεν
+// κοιτάζει εκείνη τη στιγμή. Το FK δεν το πιάνει (cascade προς τον πελάτη).
+test('DELETE /plans/:id με συνδρομές -> 409, μετά την αποδέσμευση -> 200', async () => {
   const auth = await adminAuth();
-  const zero = await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth, body: JSON.stringify({ name: 'miden', maxViewers: 0, maxStreams: 1, serverId: ids.serverA }),
-  });
-  assert.equal(zero.status, 400, 'το «πακέτο του μηδενός» θα ζητούσε κανόνα 0 = απεριόριστο');
+  const plan = await mkPlan(auth, 'pros-diagrafi', 5, 5, ids.serverA);
+  const client = await mkClient(auth, 'kratos-plano');
+  const sub = await mkSub(auth, client.id, plan.id);
 
-  const unknown = await fetch(`${base}/clients`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-agnosto', packages: [{ packageId: 9999 }] }),
-  });
-  assert.equal(unknown.status, 400);
+  const busy = await fetch(`${base}/plans/${plan.id}`, { method: 'DELETE', headers: auth });
+  assert.equal(busy.status, 409);
+
+  await fetch(`${base}/clients/${client.id}/subscriptions/${sub.id}`, { method: 'DELETE', headers: auth });
+  const free = await fetch(`${base}/plans/${plan.id}`, { method: 'DELETE', headers: auth });
+  assert.equal(free.status, 200);
+});
+
+test('πλάνα: όρια < 1 -> 400, άγνωστο πλάνο -> 400 (όχι 500)', async () => {
+  const auth = await adminAuth();
+  const zero = await post(auth, '/plans', { name: 'miden', maxViewers: 0, maxStreams: 1, serverId: ids.serverA });
+  assert.equal(zero.status, 400, 'το «πλάνο του μηδενός» θα ζητούσε κανόνα 0 = απεριόριστο');
+
+  const client = await mkClient(auth, 'me-agnosto');
+  assert.equal((await post(auth, `/clients/${client.id}/subscriptions`, { planId: 9999 })).status, 400);
 });
 
 // Ο server ΔΕΝ κάνει cascade: καθαρό 409 αντί για 500, ώστε το panel να πει
@@ -577,80 +651,4 @@ test('seed force: ξαναγράφει τον κωδικό υπάρχοντος 
   // Επαναφορά για ό,τι τρέξει μετά.
   await run('node', [seed, 'force'], { env: { ...env, SEED_ADMIN_PASSWORD: 'adminpass' } });
   assert.ok(await login('admin', 'adminpass'));
-});
-
-// Ο κανόνας που κρατάει τους παλιούς πελάτες στη θέση τους: ο server της αγοράς
-// είναι στιγμιότυπο. Αν χαθεί, μια αλλαγή server σε ένα πακέτο θα μετακόμιζε
-// σιωπηλά όλους όσους το έχουν ήδη — και τα paths τους θα έμεναν πίσω.
-test('πακέτα: αλλάζοντας ο server του πακέτου, οι παλιές αγορές μένουν', async () => {
-  const auth = await adminAuth();
-  const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'metavlito', maxViewers: 50, maxStreams: 1, serverId: ids.serverA }),
-  })).json()) as { id: number };
-
-  const client = (await (await fetch(`${base}/clients`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'thomas', packages: [{ packageId: pkg.id }] }),
-  })).json()) as { id: number };
-  assert.equal((await syncOf('server-a', 'tok-a'))['thomas'].limit, 50, 'η αγορά πήγε εκεί που έδειχνε το πακέτο');
-
-  // Ο server-a γέμισε: το πακέτο πουλάει από δω και πέρα server-b.
-  const moved = await fetch(`${base}/packages/${pkg.id}`, {
-    method: 'PATCH', headers: auth, body: JSON.stringify({ serverId: ids.serverB }),
-  });
-  assert.equal(moved.status, 200);
-  assert.equal((await syncOf('server-a', 'tok-a'))['thomas'].limit, 50, 'ο παλιός πελάτης δεν μετακόμισε');
-  assert.equal((await syncOf('server-b', 'tok-b'))['thomas'], undefined);
-
-  // Δεύτερη αγορά του ίδιου πακέτου: γραμμή χωρίς serverId = νέα αγορά, πάει
-  // εκεί που δείχνει το πακέτο σήμερα. Η πρώτη γυρίζει με τον δικό της.
-  const owned = ((await (await fetch(`${base}/clients/${client.id}`, { headers: auth })).json()) as {
-    packages: { packageId: number; serverId: number; qty: number }[];
-  }).packages;
-  assert.deepEqual(owned.map((p) => p.serverId), [ids.serverA]);
-  const bought = await fetch(`${base}/clients/${client.id}`, {
-    method: 'PATCH', headers: auth,
-    body: JSON.stringify({ packages: [...owned, { packageId: pkg.id }] }),
-  });
-  assert.equal(bought.status, 200);
-
-  assert.equal((await syncOf('server-a', 'tok-a'))['thomas'].limit, 50);
-  assert.equal((await syncOf('server-b', 'tok-b'))['thomas'].limit, 50, 'η νέα αγορά κάθισε στον νέο server');
-});
-
-// Τα paths δεν είναι του πελάτη αλλά του μηχανήματος όπου αγόρασε: χωρίς αυτόν
-// τον έλεγχο ο διαχειριστής βάζει path σε server που ο πελάτης δεν πλήρωσε ποτέ,
-// και το sync του το δίνει με limit 0 — δηλαδή απεριόριστο.
-test('paths: ο server του path βγαίνει από τις αγορές, και τα όρια είναι ανά server', async () => {
-  const auth = await adminAuth();
-  const pkg = (await (await fetch(`${base}/packages`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'ana-server', maxViewers: 10, maxStreams: 1, serverId: ids.serverA }),
-  })).json()) as { id: number };
-  const client = (await (await fetch(`${base}/clients`, {
-    method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'ana-server-pelatis', packages: [{ packageId: pkg.id }] }),
-  })).json()) as { id: number };
-
-  const addPath = (path: string, serverId: number) =>
-    fetch(`${base}/clients/${client.id}/paths`, {
-      method: 'POST', headers: auth, body: JSON.stringify({ path, serverId }),
-    });
-
-  assert.equal((await addPath('/live/anaserver', ids.serverB)).status, 409, 'δεν έχει αγορά στον B');
-  assert.equal((await addPath('/live/anaserver', ids.serverA)).status, 201);
-  assert.equal((await addPath('/live/anaserver2', ids.serverA)).status, 409, 'maxStreams 1 στον A');
-
-  // Αγορά και στον B: το όριο streams μετριέται ανά server, οπότε εκεί υπάρχει θέση.
-  await fetch(`${base}/clients/${client.id}`, {
-    method: 'PATCH', headers: auth,
-    body: JSON.stringify({
-      packages: [
-        { packageId: pkg.id, serverId: ids.serverA, qty: 1 },
-        { packageId: pkg.id, serverId: ids.serverB, qty: 1 },
-      ],
-    }),
-  });
-  assert.equal((await addPath('/live/anaserver', ids.serverB)).status, 201, 'ίδιο όνομα, άλλο μηχάνημα');
 });

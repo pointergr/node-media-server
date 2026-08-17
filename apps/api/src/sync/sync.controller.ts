@@ -2,7 +2,6 @@ import { Body, Controller, HttpCode, Param, Post, Req, UseGuards } from '@nestjs
 import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from './sync.service';
-import { maxViewersOf, withPackages } from '../clients/clients.service';
 import { ServerTokenGuard } from './server-token.guard';
 import { Public } from '../auth/public.decorator';
 
@@ -27,25 +26,24 @@ export class SyncController {
     this.sync.record(host, snapshot);
     await this.prisma.server.update({ where: { id: server.id }, data: { lastSeen: new Date() } });
 
-    // Πελάτης «αυτού του server» = έχει αγορά εδώ ή (χωρίς πακέτα, άρα χωρίς
-    // όριο) έχει path εδώ. Ο πελάτης ο ίδιος δεν ανήκει πουθενά — δες
-    // schema.prisma. Τα paths φιλτράρονται κι αυτά: ο ίδιος πελάτης μπορεί να
-    // έχει άλλα paths σε άλλο μηχάνημα, που δεν αφορούν αυτόν εδώ.
-    const clients = await this.prisma.client.findMany({
-      where: {
-        disabled: false,
-        OR: [{ packages: { some: { serverId: server.id } } }, { paths: { some: { serverId: server.id } } }],
-      },
-      include: { paths: { where: { serverId: server.id } }, ...withPackages },
+    // Μία εγγραφή ανά **συνδρομή**, όχι ανά πελάτη. Ο stream server ομαδοποιεί
+    // τους θεατές ανά εγγραφή του clients.json (`config.js#clientOf`,
+    // `stats.js#overLimit`), οπότε έτσι το όριο του κάθε πλάνου επιβάλλεται στα
+    // δικά του paths και μόνο — χωρίς να αλλάξει γραμμή εκεί. Το κλειδί είναι
+    // εσωτερικό (ο stream server δεν το δείχνει πουθενά), αλλά πρέπει να είναι
+    // μοναδικό: δύο συνδρομές του ίδιου πελάτη θα έγραφαν η μία πάνω στην άλλη.
+    const subs = await this.prisma.subscription.findMany({
+      where: { serverId: server.id, client: { disabled: false } },
+      include: { plan: true, paths: true, client: true },
     });
 
     const body: ClientsJson = {};
-    for (const c of clients) {
-      body[c.name] = {
-        // Ο stream server δεν ξέρει τι είναι πακέτο: παίρνει έτοιμο νούμερο, όπως
+    for (const sub of subs) {
+      body[`${sub.client.name}#${sub.id}`] = {
+        // Ο stream server δεν ξέρει τι είναι πλάνο: παίρνει έτοιμο νούμερο, όπως
         // πάντα. Το σχήμα του clients.json δεν άλλαξε ποτέ γι' αυτόν.
-        limit: maxViewersOf(c.packages, server.id),
-        paths: Object.fromEntries(c.paths.map((p) => [p.path, p.key])),
+        limit: sub.plan.maxViewers,
+        paths: Object.fromEntries(sub.paths.map((p) => [p.path, p.key])),
       };
     }
     return body;

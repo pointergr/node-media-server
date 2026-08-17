@@ -5,13 +5,13 @@ import { AuthModule } from './auth/auth.module';
 import { SyncModule } from './sync/sync.module';
 import { ServersModule } from './servers/servers.module';
 import { ClientsModule } from './clients/clients.module';
-import { PackagesModule } from './packages/packages.module';
+import { PlansModule } from './plans/plans.module';
 import { MeModule } from './me/me.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 
 @Module({
-  imports: [PrismaModule, AuthModule, SyncModule, ServersModule, ClientsModule, PackagesModule, MeModule],
+  imports: [PrismaModule, AuthModule, SyncModule, ServersModule, ClientsModule, PlansModule, MeModule],
   providers: [
     // Σειρά σκόπιμη: πρώτα authentication (JWT ή @Public), μετά authorization
     // (@Roles) — το RolesGuard διαβάζει το req.user που έγραψε το προηγούμενο.

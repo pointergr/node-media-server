@@ -16,11 +16,13 @@ export type UpdateServerDto = Partial<CreateServerDto>;
 export class ServersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Πλήθος πακέτων που πουλάνε εδώ και paths που ζουν εδώ — όχι πελατών: ο
-  // πελάτης δεν ανήκει σε server πια (schema.prisma), και το _count δεν ξέρει
-  // distinct πάνω από τις αγορές.
+  // Πλήθος πλάνων που πουλάνε εδώ, συνδρομών που κάθονται εδώ και paths που ζουν
+  // εδώ — όχι πελατών: ο πελάτης δεν ανήκει σε server πια (schema.prisma), και το
+  // _count δεν ξέρει distinct πάνω από τις συνδρομές.
   list() {
-    return this.prisma.server.findMany({ include: { _count: { select: { packages: true, paths: true } } } });
+    return this.prisma.server.findMany({
+      include: { _count: { select: { plans: true, subscriptions: true, paths: true } } },
+    });
   }
 
   async get(id: number) {
@@ -55,7 +57,7 @@ export class ServersService {
       // και να εξαφανίζονται σιωπηλά paths, κλειδιά και αγορές πελατών είναι
       // χειρότερο από ένα σφάλμα. Χωρίς αυτό το catch έβγαινε 500.
       if (typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2003') {
-        throw new ConflictException('ο server χρησιμοποιείται από πακέτα, αγορές ή paths — σβήσε πρώτα αυτά');
+        throw new ConflictException('ο server χρησιμοποιείται από πλάνα, συνδρομές ή paths — σβήσε πρώτα αυτά');
       }
       throw e;
     }

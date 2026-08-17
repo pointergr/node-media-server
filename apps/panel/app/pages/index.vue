@@ -15,7 +15,11 @@ interface MyStream {
   path: string
   key: string
   streamKey: string // «όνομα?key=…», έτοιμο για το πεδίο Stream Key του OBS
-  limit: number // 0 = χωρίς όριο, αθροιστικά στα paths του πελάτη σε ΑΥΤΟΝ τον server
+  // Το όριο είναι του ΠΛΑΝΟΥ στο οποίο ανήκει το stream, όχι του λογαριασμού:
+  // δύο πλάνα των 50 δεν κάνουν 100 (δες apps/api/prisma/schema.prisma).
+  limit: number
+  plan: string
+  subscriptionId: number
   viewers: number
   since: number | null // unix seconds· null = δεν εκπέμπει αυτή τη στιγμή
   in_bps: number
@@ -42,19 +46,19 @@ const now = ref(Date.now())
 const live = computed(() => streams.value.filter(s => s.since))
 const idle = computed(() => streams.value.filter(s => !s.since))
 
-// Το όριο θεατών είναι **του πελάτη**, αθροιστικά σε όλα τα paths του — έτσι το
-// επιβάλλει και ο stream server (config.js#publishAllowed / stats.js#overLimit).
-// Δίπλα σε μία μόνο εκπομπή έλεγε ψέματα: «12 / 50» σε κάθε κάρτα, ενώ οι δύο
-// μαζί είχαν ήδη πιάσει 15. Το σύνολο ζει τώρα μία φορά, στην κορυφή — και είναι
-// ένα **ανά server**: ο πελάτης μπορεί να έχει πακέτα σε δύο μηχανήματα, που δεν
-// δανείζουν θεατές το ένα στο άλλο.
+// Ένα σύνολο **ανά πλάνο**: το όριο πιάνεται από το άθροισμα των streams της
+// συνδρομής, όχι από το καθένα χωριστά — έτσι το επιβάλλει και ο stream server
+// (μία εγγραφή ανά συνδρομή στο clients.json, δες stats.js#overLimit). Δίπλα σε
+// μία μόνο εκπομπή έλεγε ψέματα: «12 / 50» σε κάθε κάρτα, ενώ οι δύο μαζί είχαν
+// ήδη πιάσει 15.
 const totals = computed(() => {
-  const m: Record<string, { viewers: number, limit: number }> = {}
+  const m = new Map<number, { plan: string, viewers: number, limit: number }>()
   for (const s of streams.value) {
-    const t = m[s.host ?? ''] ??= { viewers: 0, limit: s.limit }
+    const t = m.get(s.subscriptionId) ?? { plan: s.plan, viewers: 0, limit: s.limit }
     t.viewers += s.viewers
+    m.set(s.subscriptionId, t)
   }
-  return Object.entries(m)
+  return [...m.values()]
 })
 
 // Σημεία ανά path, μία φορά ανά φόρτωση: υπολογισμός μέσα στο template θα έφτιαχνε
@@ -119,12 +123,10 @@ onBeforeUnmount(() => {
       <UIcon name="i-lucide-radio" class="text-primary size-5" />
       <h1>Τα streams μου</h1>
       <span class="grow" />
-      <!-- Ένα νούμερο ανά server: το όριο πιάνεται από το άθροισμα των εκπομπών
-           του λογαριασμού εκεί, όχι από την καθεμία χωριστά. -->
-      <UBadge v-for="[host, t] in totals" :key="host" color="neutral" variant="subtle" icon="i-lucide-users">
+      <!-- Ένα νούμερο ανά πλάνο: το όριο είναι της συνδρομής, όχι του λογαριασμού. -->
+      <UBadge v-for="(t, i) in totals" :key="i" color="neutral" variant="subtle" icon="i-lucide-users">
         {{ t.viewers }}<template v-if="t.limit"> / {{ t.limit }}</template> θεατές
-        <template v-if="totals.length > 1"> στον {{ host }}</template>
-        <template v-else> συνολικά</template>
+        <template v-if="totals.length > 1"> ({{ t.plan }})</template>
         <template v-if="!t.limit">(χωρίς όριο)</template>
       </UBadge>
     </div>
