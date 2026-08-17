@@ -1,9 +1,9 @@
-import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, ParseIntPipe, Post, Query, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from '../sync/sync.service';
 import { ServersService } from '../servers/servers.service';
-import { withSubscriptions } from '../clients/clients.service';
+import { ClientsService, withSubscriptions } from '../clients/clients.service';
 
 // Ελάχιστο σχήμα του snapshot που στέλνει ο stream server (stats.js#snapshot) —
 // μόνο ό,τι χρειάζεται εδώ, όχι όλο το contract.
@@ -28,6 +28,7 @@ export class MeController {
     private readonly prisma: PrismaService,
     private readonly sync: SyncService,
     private readonly servers: ServersService,
+    private readonly clients: ClientsService,
   ) {}
 
   // Ο πελάτης και οι συνδρομές του (με πλάνο, server και paths) σε μία ερώτηση:
@@ -56,6 +57,8 @@ export class MeController {
       return sub.paths.map((p) => {
       const now = live?.streams?.find((s) => s.stream === p.path);
       return {
+        // Το id ταξιδεύει μόνο για την ανανέωση κλειδιού (POST /me/streams/:id/key).
+        id: p.id,
         // Το host το χρειάζεται το panel για να χτίσει και το URL αναπαραγωγής
         // (https://<host><path>/index.m3u8) και το rtmp:// του OBS — χωρίς αυτό
         // ο πελάτης βλέπει κλειδί που δεν ξέρει πού να το βάλει.
@@ -87,6 +90,17 @@ export class MeController {
       };
       });
     });
+  }
+
+  // Ανανέωση του κλειδιού από τον ίδιο τον πελάτη: εκτεθειμένο κλειδί δεν περιμένει
+  // τον διαχειριστή. Ίδια συνάρτηση με το admin endpoint — ο έλεγχος ιδιοκτησίας
+  // ζει εκεί και εδώ το clientId βγαίνει από το token, ποτέ από τον caller.
+  @Post('streams/:id/key')
+  refreshKey(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
+    // Ο admin δεν έχει clientId — δεν έχει δικά του streams να ανανεώσει (τα κάνει
+    // από το /clients).
+    if (!req.user.clientId) throw new NotFoundException('path not found');
+    return this.clients.refreshKey(req.user.clientId, id);
   }
 
   // Ιστορικό μόνο των δικών του streams. Δεν ανοίγει το /servers/:host/series

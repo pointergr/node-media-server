@@ -247,6 +247,21 @@ async function removePath(c: ClientRow, p: PathRow) {
   }
 }
 
+async function refreshKey(c: ClientRow, p: PathRow) {
+  const ok = await ask({
+    title: `Νέο κλειδί για το ${p.path};`,
+    description: 'Το παλιό παύει να ισχύει — το OBS που εκπέμπει με αυτό κόβεται σε ≤10s και θέλει το νέο.',
+  })
+  if (!ok) return
+  try {
+    await api(`/clients/${c.id}/paths/${p.id}/key`, { method: 'POST' })
+    await load()
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
 // Ό,τι δίνεις στον πελάτη για το OBS: το όνομα του stream (τελευταίο κομμάτι
 // του path) + το κλειδί — ίδια μορφή με το streamKey του GET /me/streams.
 const streamKey = (p: PathRow) => `${p.path.split('/').pop()}?key=${p.key}`
@@ -416,6 +431,10 @@ onMounted(load)
                     </div>
                   </td>
                   <td>
+                    <UButton
+                      icon="i-lucide-refresh-cw" size="xs" color="neutral" variant="ghost"
+                      aria-label="Νέο κλειδί" title="Νέο κλειδί" @click="refreshKey(c, p)"
+                    />
                     <UButton
                       icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
                       aria-label="Διαγραφή stream" @click="removePath(c, p)"

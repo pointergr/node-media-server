@@ -447,6 +447,45 @@ test('συνδρομές: id άλλου πελάτη -> 404', async () => {
   assert.equal(del.status, 404);
 });
 
+// Εκτεθειμένο κλειδί: αλλάζει από τα δύο σημεία (admin και ο ίδιος ο πελάτης),
+// χωρίς να χαθεί το path — και το ξένο pathId δεν είναι δρόμος για το /me.
+test('ανανέωση κλειδιού: νέο κλειδί στο ίδιο path, από admin και από πελάτη', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'ananeosi', 10, 2, ids.serverA);
+  const created = await post(auth, '/clients', { name: 'diarroi', username: 'diarroi', password: 'passd' });
+  const client = (await created.json()) as { id: number };
+  const sub = await mkSub(auth, client.id, plan.id);
+  const path = (await (
+    await post(auth, `/clients/${client.id}/paths`, { path: '/live/diarroi', subscriptionId: sub.id })
+  ).json()) as { id: number; key: string };
+
+  const byAdmin = await post(auth, `/clients/${client.id}/paths/${path.id}/key`, {});
+  assert.equal(byAdmin.status, 201);
+  const fresh = (await byAdmin.json()) as { path: string; key: string };
+  assert.equal(fresh.path, '/live/diarroi', 'το path δεν αλλάζει — το ξέρουν ήδη το OBS και ο player');
+  assert.notEqual(fresh.key, path.key);
+  assert.equal(
+    (await syncOf('server-a', 'tok-a'))[`diarroi#${sub.id}`]!.paths['/live/diarroi'],
+    fresh.key,
+    'ο stream server παίρνει το νέο κλειδί στο επόμενο sync',
+  );
+
+  const token = await login('diarroi', 'passd');
+  const asCustomer = (headers: Auth, id: number) =>
+    fetch(`${base}/me/streams/${id}/key`, { method: 'POST', headers });
+  const mine = (await (
+    await fetch(`${base}/me/streams`, { headers: { authorization: `Bearer ${token}` } })
+  ).json()) as { id: number }[];
+
+  const own = await asCustomer({ authorization: `Bearer ${token}` }, mine[0].id);
+  assert.equal(own.status, 201);
+  assert.notEqual(((await own.json()) as { key: string }).key, fresh.key, 'ο πελάτης το αλλάζει μόνος του');
+
+  const other = await login('usera', 'passa');
+  const foreign = await asCustomer({ authorization: `Bearer ${other}` }, mine[0].id);
+  assert.equal(foreign.status, 404, 'ξένο path δεν αλλάζει κλειδί');
+});
+
 // Συνδρομή με paths: το κλειδί εκπομπής δεν χάνεται με ένα κλικ «αφαίρεση».
 test('DELETE συνδρομής με streams -> 409, άδεια -> 200', async () => {
   const auth = await adminAuth();

@@ -144,8 +144,7 @@ export class ClientsService {
       throw new ConflictException(`το πλάνο «${sub.plan.name}» επιτρέπει ${sub.plan.maxStreams} streams`);
     }
 
-    // ≥16 chars base64url, δες PLAN-multitenant.md #2 — 16 bytes -> 22 χαρακτήρες.
-    const key = randomBytes(16).toString('base64url');
+    const key = newKey();
     path ||= nextPath(clientId, sub.id, sub.paths);
     try {
       // Ο server έρχεται από τη συνδρομή, ποτέ από τον caller: αλλιώς θα υπήρχε
@@ -162,9 +161,25 @@ export class ClientsService {
   }
 
   async removePath(clientId: number, pathId: number) {
-    const path = await this.prisma.path.findUnique({ where: { id: pathId }, include: { subscription: true } });
-    if (!path || path.subscription.clientId !== clientId) throw new NotFoundException('path not found');
+    await this.pathOf(clientId, pathId);
     await this.prisma.path.delete({ where: { id: pathId } });
+  }
+
+  // Νέο κλειδί στο ίδιο path: για όταν εκτεθεί το παλιό. Το path μένει ως έχει —
+  // το ξέρει ήδη το OBS και η διεύθυνση προβολής — και ο παλιός publisher πέφτει
+  // στο επόμενο sync (≤10s, δες stats.js#sample). Το κάνει και ο ίδιος ο πελάτης
+  // από το /me: όποιος βλέπει το κλειδί μπορεί και να το αλλάξει.
+  async refreshKey(clientId: number, pathId: number) {
+    await this.pathOf(clientId, pathId);
+    return this.prisma.path.update({ where: { id: pathId }, data: { key: newKey() } });
+  }
+
+  // Ίδιος έλεγχος ιδιοκτησίας με το subscriptionOf, για τα paths: ένα pathId
+  // άλλου πελάτη δεν πρέπει να σβήνεται ούτε να αλλάζει κλειδί από εδώ.
+  private async pathOf(clientId: number, id: number) {
+    const path = await this.prisma.path.findUnique({ where: { id }, include: { subscription: true } });
+    if (!path || path.subscription.clientId !== clientId) throw new NotFoundException('path not found');
+    return path;
   }
 
   // Η συνδρομή **του συγκεκριμένου πελάτη**: ο έλεγχος ιδιοκτησίας ζει εδώ, ώστε
@@ -188,6 +203,11 @@ function nextPath(clientId: number, subscriptionId: number, paths: { path: strin
   const prefix = `/live/c${clientId}-s${subscriptionId}-`;
   const used = paths.filter((p) => p.path.startsWith(prefix)).map((p) => Number(p.path.slice(prefix.length)) || 0);
   return prefix + (Math.max(0, ...used) + 1);
+}
+
+// ≥16 chars base64url, δες PLAN-multitenant.md #2 — 16 bytes -> 22 χαρακτήρες.
+function newKey(): string {
+  return randomBytes(16).toString('base64url');
 }
 
 function isUniqueConstraintError(e: unknown): boolean {

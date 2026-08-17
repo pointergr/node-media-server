@@ -10,8 +10,10 @@
 import { bps, dur, type Series } from '~/utils/dash'
 
 const api = useApi()
+const ask = useConfirm()
 
 interface MyStream {
+  id: number // του Path — μόνο για την ανανέωση κλειδιού
   path: string
   key: string
   streamKey: string // «όνομα?key=…», έτοιμο για το πεδίο Stream Key του OBS
@@ -90,6 +92,22 @@ async function load() {
     streams.value = await api<MyStream[]>('/me/streams')
     now.value = Date.now()
     error.value = ''
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
+// Νέο κλειδί χωρίς να περιμένει τον διαχειριστή: αν διέρρευσε, μετράει η ώρα.
+async function refreshKey(s: MyStream) {
+  const ok = await ask({
+    title: `Νέο κλειδί για το ${s.path};`,
+    description: 'Το παλιό παύει να ισχύει — η εκπομπή που τρέχει κόβεται σε ≤10s και το OBS θέλει το νέο κλειδί.',
+  })
+  if (!ok) return
+  try {
+    await api(`/me/streams/${s.id}/key`, { method: 'POST' })
+    await load()
   }
   catch (e) {
     error.value = (e as Error).message
@@ -191,6 +209,12 @@ onBeforeUnmount(() => {
             <dd>
               <code>{{ s.streamKey }}</code>
               <CopyButton :text="s.streamKey" label="" />
+              <!-- Αν εκτεθεί: νέο κλειδί, ίδιο path — η διεύθυνση προβολής και ό,τι
+                   έχει ήδη ενσωματωθεί κάπου δεν αλλάζει. -->
+              <UButton
+                icon="i-lucide-refresh-cw" size="xs" color="neutral" variant="ghost"
+                aria-label="Νέο κλειδί" title="Νέο κλειδί" @click="refreshKey(s)"
+              />
             </dd>
 
             <!-- Το ίδιο playlist που παίζει ο player από πάνω: για embed σε ξένη
@@ -249,6 +273,10 @@ onBeforeUnmount(() => {
           <code v-if="s.host">{{ rtmp(s) }}</code>
           <code>{{ s.streamKey }}</code>
           <CopyButton :text="s.streamKey" label="" />
+          <UButton
+            icon="i-lucide-refresh-cw" size="xs" color="neutral" variant="ghost"
+            aria-label="Νέο κλειδί" title="Νέο κλειδί" @click="refreshKey(s)"
+          />
           <!-- Η διεύθυνση προβολής ισχύει και εκτός εκπομπής: από εδώ την παίρνει
                ο πελάτης για το embed, πριν ανοίξει το OBS. -->
           <template v-if="s.host">

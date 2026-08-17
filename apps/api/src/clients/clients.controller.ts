@@ -82,6 +82,11 @@ export class ClientsController {
     return this.clients.addPath(id, body.path, body.subscriptionId);
   }
 
+  @Post(':id/paths/:pathId/key')
+  refreshKey(@Param('id', ParseIntPipe) id: number, @Param('pathId', ParseIntPipe) pathId: number) {
+    return this.clients.refreshKey(id, pathId);
+  }
+
   @Delete(':id/paths/:pathId')
   removePath(@Param('id', ParseIntPipe) id: number, @Param('pathId', ParseIntPipe) pathId: number) {
     return this.clients.removePath(id, pathId);
