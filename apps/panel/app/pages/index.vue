@@ -22,6 +22,9 @@ interface MyStream {
   limit: number
   plan: string
   subscriptionId: number
+  // Το φιλικό όνομα του πακέτου — με δύο «basic» είναι το μόνο που τα ξεχωρίζει.
+  // null = δεν το έχει ονομάσει κανείς, δες title() παρακάτω.
+  subscriptionLabel: string | null
   // Πλάνο σε αναστολή (π.χ. έληξε): το stream δεν εκπέμπει και δεν παίζει. Το
   // δείχνουμε παρ' όλα αυτά, με τον λόγο του — αλλιώς ο πελάτης βλέπει το OBS να
   // κόβεται και το stream να εξαφανίζεται, χωρίς εξήγηση.
@@ -51,25 +54,54 @@ const error = ref('')
 // αρνητική και το dur() την πάτωνε στο «0λ 0δ».
 const now = ref(Date.now())
 
-// Κάρτα μόνο για ό,τι εκπέμπει τώρα· τα υπόλοιπα paths πάνε στη λίστα από κάτω —
-// χωρίς αυτήν, πελάτης εκτός εκπομπής δεν θα είχε πουθενά να δει το κλειδί του.
-const live = computed(() => streams.value.filter(s => s.since))
-const idle = computed(() => streams.value.filter(s => !s.since))
+// Η οθόνη είναι ομαδοποιημένη **ανά συνδρομή** και όχι μία ενιαία λίστα streams:
+// το όριο θεατών ανήκει στη συνδρομή (μία εγγραφή ανά συνδρομή στο clients.json,
+// δες stats.js#overLimit), οπότε ο πελάτης πρέπει να βλέπει ποια streams το
+// μοιράζονται. Με badge πάνω-δεξιά και λίστα από κάτω, δύο πακέτα «basic» έδιναν
+// δύο πανομοιότυπα «0 / 50 θεατές» και κανέναν τρόπο να πεις ποιο αφορά τι.
+interface Pack {
+  id: number
+  title: string
+  label: string | null
+  plan: string
+  host?: string
+  limit: number
+  viewers: number
+  suspended: boolean
+  live: MyStream[]
+  idle: MyStream[]
+}
 
-// Ένα σύνολο **ανά πλάνο**: το όριο πιάνεται από το άθροισμα των streams της
-// συνδρομής, όχι από το καθένα χωριστά — έτσι το επιβάλλει και ο stream server
-// (μία εγγραφή ανά συνδρομή στο clients.json, δες stats.js#overLimit). Δίπλα σε
-// μία μόνο εκπομπή έλεγε ψέματα: «12 / 50» σε κάθε κάρτα, ενώ οι δύο μαζί είχαν
-// ήδη πιάσει 15.
-const totals = computed(() => {
-  const m = new Map<number, { plan: string, viewers: number, limit: number }>()
+const packs = computed<Pack[]>(() => {
+  const m = new Map<number, Pack>()
   for (const s of streams.value) {
-    const t = m.get(s.subscriptionId) ?? { plan: s.plan, viewers: 0, limit: s.limit }
-    t.viewers += s.viewers
-    m.set(s.subscriptionId, t)
+    const p = m.get(s.subscriptionId) ?? {
+      id: s.subscriptionId,
+      title: '',
+      label: s.subscriptionLabel,
+      plan: s.plan,
+      host: s.host,
+      limit: s.limit,
+      viewers: 0,
+      suspended: s.suspended,
+      live: [],
+      idle: [],
+    }
+    p.viewers += s.viewers
+    ;(s.since ? p.live : p.idle).push(s)
+    m.set(s.subscriptionId, p)
   }
-  return [...m.values()]
+  // Σταθερή σειρά κατά id (σειρά αγοράς): η θέση είναι μέρος της ταυτότητας για
+  // όσα πακέτα δεν έχουν όνομα ακόμα — «Πακέτο 2» δεν πρέπει να αλλάζει θέση σε
+  // κάθε φόρτωση.
+  const list = [...m.values()].sort((a, b) => a.id - b.id)
+  list.forEach((p, i) => { p.title = p.label || `Πακέτο ${i + 1}` })
+  return list
 })
+
+// Κρατιέται για το «Καμία ενεργή εκπομπή» της κεφαλίδας και για το αν έχει νόημα
+// ο διακόπτης διαστημάτων: τα γραφήματα ζουν μόνο στις κάρτες που εκπέμπουν.
+const live = computed(() => streams.value.filter(s => s.since))
 
 // Σημεία ανά path, μία φορά ανά φόρτωση: υπολογισμός μέσα στο template θα έφτιαχνε
 // νέο array σε κάθε render και το MiniChart θα ξαναζωγράφιζε χωρίς λόγο.
@@ -118,6 +150,29 @@ async function refreshKey(s: MyStream) {
   }
 }
 
+// Το όνομα του πακέτου το δίνει ο ίδιος ο πελάτης: εκείνος ξέρει ότι το ένα
+// basic είναι η εκκλησία και το άλλο το δημαρχείο. Ένα πεδίο τη φορά — η
+// μετονομασία είναι σπάνια, φόρμα με «επεξεργασία όλων» θα ήταν βάρος για το
+// 99% των επισκέψεων.
+const editing = ref<number | null>(null)
+const draft = ref('')
+
+function startEdit(p: Pack) {
+  editing.value = p.id
+  draft.value = p.label ?? ''
+}
+
+async function saveLabel(p: Pack) {
+  try {
+    await api(`/me/subscriptions/${p.id}`, { method: 'PATCH', body: JSON.stringify({ label: draft.value }) })
+    editing.value = null
+    await load()
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
 // Ξεχωριστά από το load(): το ιστορικό το φέρνει το API κάνοντας proxy στον
 // stream server — δεν αξίζει κάθε 10s. Server κάτω σημαίνει άδεια γραφήματα,
 // όχι σφάλμα σε όλη τη σελίδα: το stream key και οι ρυθμίσεις του OBS ισχύουν.
@@ -150,12 +205,8 @@ onBeforeUnmount(() => {
       <UIcon name="i-lucide-radio" class="text-primary size-5" />
       <h1>Τα streams μου</h1>
       <span class="grow" />
-      <!-- Ένα νούμερο ανά πλάνο: το όριο είναι της συνδρομής, όχι του λογαριασμού. -->
-      <UBadge v-for="(t, i) in totals" :key="i" color="neutral" variant="subtle" icon="i-lucide-users">
-        {{ t.viewers }}<template v-if="t.limit"> / {{ t.limit }}</template> θεατές
-        <template v-if="totals.length > 1"> ({{ t.plan }})</template>
-        <template v-if="!t.limit">(χωρίς όριο)</template>
-      </UBadge>
+      <!-- Οι μετρητές θεατών ζουν στην κεφαλίδα του κάθε πακέτου, δίπλα στα
+           streams που μοιράζονται το όριο — δες την ομαδοποίηση παρακάτω. -->
 
       <!-- Μόνο όταν υπάρχουν γραφήματα να αλλάξουν: τα γραφήματα ζουν στην κάρτα
            της ενεργής εκπομπής. -->
@@ -171,9 +222,54 @@ onBeforeUnmount(() => {
 
     <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
 
-    <div class="hero">
+    <!-- Μία ενότητα ανά πακέτο. Ο τίτλος και το όριο θεατών στέκονται **πάνω από**
+         τα streams τους: το όριο είναι της συνδρομής και μοιράζεται μόνο ανάμεσα
+         σε αυτά, κάτι που καμία ετικέτα δίπλα σε ενιαία λίστα δεν μπορεί να πει
+         όταν δύο πακέτα λέγονται και τα δύο «basic». -->
+    <section v-for="p in packs" :key="p.id" class="pack">
+      <div class="pack-head">
+        <UIcon name="i-lucide-package" class="text-dimmed size-4" />
+
+        <!-- Το όνομα το γράφει ο πελάτης (PATCH /me/subscriptions/:id): μόνο
+             εκείνος ξέρει ποιο πακέτο είναι η εκκλησία και ποιο το δημαρχείο. -->
+        <template v-if="editing === p.id">
+          <UInput
+            v-model="draft" size="sm" autofocus placeholder="π.χ. Εκκλησία Αγ. Νικολάου"
+            :maxlength="60" @keyup.enter="saveLabel(p)" @keyup.esc="editing = null"
+          />
+          <UButton size="xs" color="primary" variant="subtle" icon="i-lucide-check" @click="saveLabel(p)">
+            Αποθήκευση
+          </UButton>
+          <UButton size="xs" color="neutral" variant="ghost" @click="editing = null">Άκυρο</UButton>
+        </template>
+        <template v-else>
+          <h2 :class="{ unnamed: !p.label }">{{ p.title }}</h2>
+          <UButton
+            icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost"
+            :aria-label="p.label ? 'Μετονομασία πακέτου' : 'Ονόμασε το πακέτο'"
+            :title="p.label ? 'Μετονομασία' : 'Δώσε όνομα στο πακέτο'"
+            @click="startEdit(p)"
+          />
+        </template>
+
+        <span class="spacer" />
+        <UBadge v-if="p.suspended" color="warning" variant="subtle" icon="i-lucide-circle-pause">
+          σε αναστολή
+        </UBadge>
+        <!-- Το πλάνο δίπλα στο όνομα και όχι αντί για αυτό: ο πελάτης θέλει να
+             ξέρει και τι πληρώνει, όχι μόνο πώς το λέει ο ίδιος. -->
+        <span class="viewers">{{ p.plan }}</span>
+        <UBadge color="neutral" variant="subtle" icon="i-lucide-users">
+          {{ p.viewers }}<template v-if="p.limit"> / {{ p.limit }}</template> θεατές<template
+            v-if="!p.limit"
+          > (χωρίς όριο)</template>
+        </UBadge>
+        <span v-if="p.host" class="viewers">{{ p.host }}</span>
+      </div>
+
+      <div v-if="p.live.length" class="hero">
       <UCard
-        v-for="s in live" :key="s.path"
+        v-for="s in p.live" :key="s.path"
         :ui="{ body: 'p-0 sm:p-0', header: 'px-4 py-3 sm:px-4' }"
       >
         <template #header>
@@ -265,15 +361,10 @@ onBeforeUnmount(() => {
       </UCard>
     </div>
 
-    <UCard v-if="!live.length && !error">
-      <div class="quiet">
-        {{ streams.length ? 'Καμία ενεργή εκπομπή.' : 'Δεν υπάρχει stream στον λογαριασμό σου.' }}
-      </div>
-    </UCard>
-
     <!-- Τα paths που δεν εκπέμπουν: χωρίς player, αλλά με το κλειδί τους — από εδώ
-         ξεκινάει ο πελάτης την εκπομπή. -->
-    <UCard v-if="idle.length">
+         ξεκινάει ο πελάτης την εκπομπή. Η αναστολή δεν επαναλαμβάνεται ανά stream:
+         είναι του πακέτου και το λέει η κεφαλίδα του. -->
+    <UCard v-if="p.idle.length">
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-circle-pause" class="text-dimmed size-4" />
@@ -281,11 +372,8 @@ onBeforeUnmount(() => {
         </div>
       </template>
       <div class="space-y-2">
-        <div v-for="s in idle" :key="s.path" class="flex items-center gap-2 flex-wrap">
+        <div v-for="s in p.idle" :key="s.path" class="flex items-center gap-2 flex-wrap">
           <strong>{{ s.path }}</strong>
-          <UBadge v-if="s.suspended" color="warning" variant="subtle" icon="i-lucide-circle-pause">
-            {{ s.plan }} σε αναστολή
-          </UBadge>
           <code v-if="s.host">{{ rtmp(s) }}</code>
           <code>{{ s.streamKey }}</code>
           <CopyButton :text="s.streamKey" label="" />
@@ -301,6 +389,13 @@ onBeforeUnmount(() => {
           </template>
         </div>
       </div>
+    </UCard>
+    </section>
+
+    <!-- Λογαριασμός χωρίς κανένα πακέτο: ούτε κεφαλίδα ούτε λίστα έχουν τι να
+         δείξουν. Το σφάλμα το λέει ήδη το UAlert από πάνω. -->
+    <UCard v-if="!packs.length && !error">
+      <div class="quiet">Δεν υπάρχει stream στον λογαριασμό σου.</div>
     </UCard>
 
     <!-- Οι αναλυτικές οδηγίες ζουν στο /help — εδώ μένει μόνο η υπενθύμιση ότι το
@@ -320,6 +415,15 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Η ενότητα του πακέτου: οι κάρτες του μαζεύονται κάτω από την κεφαλίδα του, με
+   λιγότερο κενό μεταξύ τους απ' ό,τι ανάμεσα σε δύο πακέτα — αλλιώς δεν φαίνεται
+   πού τελειώνει το ένα και πού αρχίζει το άλλο. */
+.pack { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+.pack-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pack-head h2 { margin: 0; font-size: 16px; }
+/* Πακέτο χωρίς όνομα: το «Πακέτο 2» είναι θέση, όχι ταυτότητα — φαίνεται σβηστό
+   ώστε να τραβάει το μολύβι δίπλα του. */
+.pack-head h2.unnamed { color: var(--muted); font-weight: 500; }
 .viewers { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .viewers em { font-style: normal; }
 /* Δύο γραφήματα δίπλα-δίπλα όταν χωράνε, το ένα κάτω από το άλλο σε κινητό. */

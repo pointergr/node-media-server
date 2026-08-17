@@ -116,11 +116,17 @@ export class ClientsService {
     });
   }
 
-  // Αναστολή μόνο αυτής της συνδρομής: ο πελάτης μπορεί να έχει τρία πλάνα και να
-  // έχει λήξει το ένα. Το `Client.disabled` μένει για «όλα κάτω».
-  async setSubscriptionDisabled(clientId: number, subscriptionId: number, disabled: boolean) {
+  // Αναστολή μόνο αυτής της συνδρομής (ο πελάτης μπορεί να έχει τρία πλάνα και να
+  // έχει λήξει το ένα — το `Client.disabled` μένει για «όλα κάτω») και το φιλικό
+  // της όνομα. Μία συνάρτηση για τα δύο: το `label` το αλλάζει και ο πελάτης από
+  // το /me, το `disabled` ποτέ — τον έλεγχο τον κάνει ο caller, δες me.controller.
+  async updateSubscription(
+    clientId: number,
+    subscriptionId: number,
+    data: { disabled?: boolean; label?: string | null },
+  ) {
     await this.subscriptionOf(clientId, subscriptionId);
-    return this.prisma.subscription.update({ where: { id: subscriptionId }, data: { disabled } });
+    return this.prisma.subscription.update({ where: { id: subscriptionId }, data });
   }
 
   async removeSubscription(clientId: number, subscriptionId: number) {
@@ -192,6 +198,19 @@ export class ClientsService {
     if (!sub || sub.clientId !== clientId) throw new NotFoundException('subscription not found');
     return sub;
   }
+}
+
+// Το φιλικό όνομα συνδρομής, καθαρισμένο: εδώ και όχι σε δύο controllers, γιατί
+// το ίδιο πεδίο το γράφουν και ο admin και ο πελάτης. Σκέτα κενά ισοδυναμούν με
+// «σβήσε το» (null) — αλλιώς το panel θα έδειχνε κενή κεφαλίδα αντί να πέσει πίσω
+// στο όνομα του πλάνου. Το όριο είναι κεφαλίδα κάρτας, όχι κείμενο.
+export const LABEL_MAX = 60;
+export function cleanLabel(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== 'string') throw new BadRequestException('label: κείμενο ή null');
+  const label = value.trim();
+  if (label.length > LABEL_MAX) throw new BadRequestException(`label έως ${LABEL_MAX} χαρακτήρες`);
+  return label || null;
 }
 
 // Path χωρίς να το σκεφτεί κανείς: `/live/c3-s7-1`. Τα ids αντί για το όνομα του

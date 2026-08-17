@@ -1,9 +1,21 @@
-import { Controller, Get, NotFoundException, Param, ParseIntPipe, Post, Query, Req } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from '../sync/sync.service';
 import { ServersService } from '../servers/servers.service';
-import { ClientsService, withSubscriptions } from '../clients/clients.service';
+import { cleanLabel, ClientsService, withSubscriptions } from '../clients/clients.service';
 
 // Ελάχιστο σχήμα του snapshot που στέλνει ο stream server (stats.js#snapshot) —
 // μόνο ό,τι χρειάζεται εδώ, όχι όλο το contract.
@@ -72,6 +84,10 @@ export class MeController {
         // συνδρομές του ίδιου πλάνου δεν είναι η ίδια.
         plan: sub.plan.name,
         subscriptionId: sub.id,
+        // Το φιλικό όνομα της συνδρομής, αν του το έχουν δώσει: με δύο πακέτα
+        // «basic» είναι το μόνο που ξεχωρίζει ποιο stream μοιράζεται όριο με
+        // ποιο. null = δεν ονομάστηκε ποτέ, το panel δείχνει το πλάνο.
+        subscriptionLabel: sub.label,
         // Σε αναστολή το stream δεν εκπέμπει και δεν παίζει — φαίνεται όμως, με
         // τον λόγο του: αλλιώς ο πελάτης βλέπει το OBS να κόβεται και το stream
         // να εξαφανίζεται από το panel, χωρίς να ξέρει γιατί.
@@ -101,6 +117,18 @@ export class MeController {
     // από το /clients).
     if (!req.user.clientId) throw new NotFoundException('path not found');
     return this.clients.refreshKey(req.user.clientId, id);
+  }
+
+  // Το φιλικό όνομα του πακέτου, από τον ίδιο τον πελάτη: εκείνος ξέρει ότι το
+  // ένα basic είναι η εκκλησία και το άλλο το δημαρχείο, όχι ο διαχειριστής.
+  // Μόνο το `label` — η αναστολή είναι εμπορική απόφαση και μένει στο /clients.
+  @Patch('subscriptions/:id')
+  setLabel(@Req() req: Request, @Param('id', ParseIntPipe) id: number, @Body() body: { label?: string | null }) {
+    if (!req.user.clientId) throw new NotFoundException('subscription not found');
+    if (!('label' in body)) throw new BadRequestException('label απαιτείται');
+    // Ο έλεγχος ιδιοκτησίας ζει στο ClientsService (subscriptionOf): το id έρχεται
+    // από τον caller, το clientId ποτέ — μόνο από το token.
+    return this.clients.updateSubscription(req.user.clientId, id, { label: cleanLabel(body.label) });
   }
 
   // Ιστορικό μόνο των δικών του streams. Δεν ανοίγει το /servers/:host/series

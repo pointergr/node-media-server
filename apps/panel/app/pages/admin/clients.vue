@@ -13,6 +13,10 @@ interface SubscriptionRow {
   // Αναστολή της συνδρομής, ξεχωριστά από το disabled του πελάτη: ένα πλάνο
   // μπορεί να έχει λήξει ενώ τα υπόλοιπα τρέχουν κανονικά.
   disabled: boolean
+  // Φιλικό όνομα της αγοράς — δύο συνδρομές του ίδιου πλάνου είναι αλλιώς δύο
+  // ίδιες γραμμές «basic». Το αλλάζει και ο πελάτης από το panel του. Έρχεται
+  // `null` από το API και γίνεται `''` στη φόρτωση, δες load().
+  label: string
   plan: PlanRow
   server: ServerOption
   paths: PathRow[]
@@ -68,7 +72,7 @@ const shown = computed(() => {
   return clients.value.filter(c => [
     c.name,
     ...c.users.map(u => u.username),
-    ...c.subscriptions.flatMap(s => [s.plan.name, s.server.host, ...s.paths.map(p => p.path)]),
+    ...c.subscriptions.flatMap(s => [s.label ?? '', s.plan.name, s.server.host, ...s.paths.map(p => p.path)]),
   ].some(v => v.toLowerCase().includes(t)))
 })
 
@@ -84,7 +88,12 @@ async function load() {
       api<ServerOption[]>('/servers'),
       api<PlanRow[]>('/plans'),
     ])
-    for (const c of clients.value) cred[c.id] = { username: c.users[0]?.username ?? '', password: '' }
+    for (const c of clients.value) {
+      cred[c.id] = { username: c.users[0]?.username ?? '', password: '' }
+      // Το API στέλνει null για «χωρίς όνομα»· το UInput θέλει string. Στην
+      // αντίθετη κατεύθυνση το κενό ξαναγίνεται null (cleanLabel του API).
+      for (const s of c.subscriptions) s.label ??= ''
+    }
     error.value = ''
   }
   catch (e) {
@@ -180,6 +189,21 @@ async function toggleSubscription(c: ClientRow, s: SubscriptionRow) {
     await api(`/clients/${c.id}/subscriptions/${s.id}`, {
       method: 'PATCH', body: JSON.stringify({ disabled: !s.disabled }),
     })
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+  finally {
+    await load()
+  }
+}
+
+// Το ίδιο πεδίο που γράφει και ο πελάτης από το panel του: εδώ για τη στιγμή της
+// πώλησης (ο admin ξέρει τι πούλησε) και για τους πελάτες που δεν θα μπουν ποτέ
+// να το ονομάσουν μόνοι τους.
+async function renameSubscription(c: ClientRow, s: SubscriptionRow) {
+  try {
+    await api(`/clients/${c.id}/subscriptions/${s.id}`, { method: 'PATCH', body: JSON.stringify({ label: s.label }) })
   }
   catch (e) {
     error.value = (e as Error).message
@@ -372,11 +396,19 @@ onMounted(load)
           <table v-if="c.subscriptions.length">
             <thead>
               <tr>
-                <th>Πλάνο</th><th>Server</th><th>Θεατές</th><th>Streams</th><th>Κατάσταση</th><th />
+                <th>Όνομα</th><th>Πλάνο</th><th>Server</th><th>Θεατές</th><th>Streams</th><th>Κατάσταση</th><th />
               </tr>
             </thead>
             <tbody>
               <tr v-for="s in c.subscriptions" :key="s.id">
+                <!-- Δύο συνδρομές του ίδιου πλάνου είναι αλλιώς δύο πανομοιότυπες
+                     γραμμές. Αποθηκεύεται μόνο του, όπως τα υπόλοιπα του πίνακα. -->
+                <td>
+                  <UInput
+                    v-model="s.label" size="xs" placeholder="— χωρίς όνομα —" :maxlength="60"
+                    class="min-w-40" @change="renameSubscription(c, s)"
+                  />
+                </td>
                 <td>{{ s.plan.name }}</td>
                 <td class="host">{{ s.server.host }}</td>
                 <td>{{ s.plan.maxViewers }}</td>

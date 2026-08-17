@@ -738,6 +738,75 @@ test('συνδρομές: suspend μόνο της μίας, οι υπόλοιπ�
   assert.deepEqual(Object.keys((await syncOf('server-a', 'tok-a'))[`me-anastoli#${expired.id}`]!.paths), ['/live/ligomeno']);
 });
 
+// Δύο συνδρομές του ίδιου πλάνου είναι δύο φορές «basic»: χωρίς φιλικό όνομα ο
+// πελάτης δεν έχει κανέναν τρόπο να δει ποιο stream μοιράζεται όριο θεατών με
+// ποιο. Το όνομα το γράφουν και οι δύο πλευρές — ο πελάτης ξέρει τι είναι το
+// κάθε πακέτο, ο admin το βλέπει στο /clients.
+test('συνδρομές: φιλικό όνομα από admin και από πελάτη, ξένη συνδρομή 404', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'onomata', 10, 2, ids.serverA);
+  const created = await post(auth, '/clients', { name: 'onomasia', username: 'onomasia', password: 'passo' });
+  const client = (await created.json()) as { id: number };
+  const ekklisia = await mkSub(auth, client.id, plan.id);
+  const dimarcheio = await mkSub(auth, client.id, plan.id);
+  await post(auth, `/clients/${client.id}/paths`, { path: '/live/ekklisia', subscriptionId: ekklisia.id });
+  await post(auth, `/clients/${client.id}/paths`, { path: '/live/dimarcheio', subscriptionId: dimarcheio.id });
+
+  const patchSub = (headers: Auth, url: string, body: unknown) =>
+    fetch(`${base}${url}`, { method: 'PATCH', headers, body: JSON.stringify(body) });
+
+  const named = await patchSub(auth, `/clients/${client.id}/subscriptions/${ekklisia.id}`, { label: 'Εκκλησία' });
+  assert.equal(named.status, 200);
+  assert.equal(((await named.json()) as { label: string }).label, 'Εκκλησία');
+
+  // Το όνομα φτάνει στον πελάτη μαζί με τα streams — εκεί το χρειάζεται η
+  // ομαδοποίηση της οθόνης.
+  const token = await login('onomasia', 'passo');
+  const customer = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const streams = async () =>
+    (await (await fetch(`${base}/me/streams`, { headers: customer })).json()) as
+      { path: string; subscriptionId: number; subscriptionLabel: string | null }[];
+  const first = await streams();
+  assert.equal(first.find((s) => s.path === '/live/ekklisia')!.subscriptionLabel, 'Εκκλησία');
+  assert.equal(first.find((s) => s.path === '/live/dimarcheio')!.subscriptionLabel, null, 'χωρίς όνομα μένει null');
+
+  // Ο ίδιος ο πελάτης ονομάζει το δεύτερο πακέτο του.
+  const byCustomer = await patchSub(customer, `/me/subscriptions/${dimarcheio.id}`, { label: '  Δημαρχείο  ' });
+  assert.equal(byCustomer.status, 200);
+  assert.equal(
+    (await streams()).find((s) => s.path === '/live/dimarcheio')!.subscriptionLabel,
+    'Δημαρχείο',
+    'το όνομα αποθηκεύεται χωρίς τα κενά των άκρων',
+  );
+
+  // Σκέτα κενά σημαίνουν «σβήσ' το»: κενή κεφαλίδα είναι χειρότερη από το όνομα
+  // του πλάνου.
+  await patchSub(customer, `/me/subscriptions/${dimarcheio.id}`, { label: '   ' });
+  assert.equal((await streams()).find((s) => s.path === '/live/dimarcheio')!.subscriptionLabel, null);
+
+  assert.equal(
+    (await patchSub(customer, `/me/subscriptions/${dimarcheio.id}`, { label: 'x'.repeat(61) })).status,
+    400,
+    'το όνομα είναι κεφαλίδα κάρτας, όχι κείμενο',
+  );
+
+  // Το /me δεν είναι δεύτερος δρόμος για την αναστολή: εμπορική απόφαση, μένει
+  // στον admin. Το `disabled` απλώς αγνοείται και το label είναι υποχρεωτικό.
+  assert.equal((await patchSub(customer, `/me/subscriptions/${ekklisia.id}`, { disabled: true })).status, 400);
+  const stillOn = await syncOf('server-a', 'tok-a');
+  assert.ok(stillOn[`onomasia#${ekklisia.id}`], 'η συνδρομή δεν μπήκε σε αναστολή από το /me');
+
+  // Ξένη συνδρομή: το clientId βγαίνει από το token, όχι από το URL.
+  const other = await login('usera', 'passa');
+  const foreign = await patchSub(
+    { authorization: `Bearer ${other}`, 'content-type': 'application/json' },
+    `/me/subscriptions/${ekklisia.id}`,
+    { label: 'δικό μου τώρα' },
+  );
+  assert.equal(foreign.status, 404);
+  assert.equal((await streams()).find((s) => s.path === '/live/ekklisia')!.subscriptionLabel, 'Εκκλησία');
+});
+
 // --- API keys ---------------------------------------------------------------
 // Εξωτερική υπηρεσία που κάνει provisioning: το 12ωρο JWT δεν κάνει, και μακρόβιο
 // JWT δεν ανακαλείται χωρίς αλλαγή του JWT_SECRET — δηλαδή χωρίς να πέσουν έξω

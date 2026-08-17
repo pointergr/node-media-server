@@ -9,7 +9,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { ClientsService, CreateClientDto, UpdateClientDto } from './clients.service';
+import { cleanLabel, ClientsService, CreateClientDto, UpdateClientDto } from './clients.service';
 import { Roles } from '../auth/roles.decorator';
 
 @Roles('admin')
@@ -55,10 +55,19 @@ export class ClientsController {
   setSubscription(
     @Param('id', ParseIntPipe) id: number,
     @Param('subId', ParseIntPipe) subId: number,
-    @Body() body: { disabled?: boolean },
+    @Body() body: { disabled?: boolean; label?: string | null },
   ) {
-    if (typeof body.disabled !== 'boolean') throw new BadRequestException('disabled (boolean) απαιτείται');
-    return this.clients.setSubscriptionDisabled(id, subId, body.disabled);
+    // Τα δύο πεδία είναι ανεξάρτητα (αναστολή χωρίς να πειραχτεί το όνομα και
+    // αντίστροφα), αλλά άδειο σώμα είναι λάθος του caller και όχι no-op: θα
+    // επέστρεφε 200 χωρίς να έχει αλλάξει τίποτα.
+    const data: { disabled?: boolean; label?: string | null } = {};
+    if ('disabled' in body) {
+      if (typeof body.disabled !== 'boolean') throw new BadRequestException('disabled: boolean');
+      data.disabled = body.disabled;
+    }
+    if ('label' in body) data.label = cleanLabel(body.label);
+    if (!Object.keys(data).length) throw new BadRequestException('disabled ή label απαιτείται');
+    return this.clients.updateSubscription(id, subId, data);
   }
 
   @Delete(':id/subscriptions/:subId')

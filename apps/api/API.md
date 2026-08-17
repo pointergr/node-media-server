@@ -142,6 +142,18 @@ curl -X POST "${auth[@]}" -d '{"planId":1}' $API/clients/7/subscriptions
 Μία αγορά = μία κλήση. **Δεν υπάρχει ποσότητα**: δύο φορές το ίδιο πλάνο = δύο
 κλήσεις = δύο συνδρομές με χωριστά όρια.
 
+Αν πουλάς στον ίδιο πελάτη δεύτερη φορά το ίδιο πλάνο, δώσ' του και όνομα:
+
+```bash
+curl -X PATCH "${auth[@]}" -d '{"label":"Εκκλησία Αγ. Νικολάου"}' \
+  $API/clients/7/subscriptions/3
+```
+
+Χωρίς αυτό, οι δύο συνδρομές είναι δύο φορές «basic» — και στη δική σου οθόνη και
+στου πελάτη, που ομαδοποιεί τα streams του ανά συνδρομή. Ως 60 χαρακτήρες· κενό
+ή `null` το σβήνει. Μπορεί να το αλλάξει και ο ίδιος ο πελάτης
+(`PATCH /me/subscriptions/:id`).
+
 ### 4. Φτιάξε το stream
 
 ```bash
@@ -214,7 +226,7 @@ curl -X POST "${auth[@]}" -d '{"clientId":7}' $API/auth/login-link
 | Endpoint | Σώμα | Απάντηση / σφάλματα |
 |---|---|---|
 | `POST /clients/:id/subscriptions` | `{planId}` | `201` η συνδρομή με `plan`, `server`, `paths`· `400` άγνωστο πλάνο, `404` άγνωστος πελάτης |
-| `PATCH /clients/:id/subscriptions/:subId` | `{disabled}` | **αναστολή/επαναφορά μιας μόνο συνδρομής**· η εκπομπή πέφτει σε ≤10s, paths και κλειδιά μένουν ανέπαφα· `400` αν το `disabled` δεν είναι boolean, `404` αν είναι άλλου πελάτη |
+| `PATCH /clients/:id/subscriptions/:subId` | `{disabled}` ή/και `{label}` | **αναστολή/επαναφορά μιας μόνο συνδρομής**· η εκπομπή πέφτει σε ≤10s, paths και κλειδιά μένουν ανέπαφα. Το `label` είναι το φιλικό όνομα της αγοράς (≤60 χαρακτήρες, κενό/`null` το σβήνει)· `400` σε λάθος τύπο ή άδειο σώμα, `404` αν είναι άλλου πελάτη |
 | `DELETE /clients/:id/subscriptions/:subId` | — | `409` όσο κρατάει streams (σβήσ' τα πρώτα, για να μη χαθούν σιωπηλά κλειδιά) |
 
 Για «έληξε η συνδρομή» χρησιμοποίησε `disabled`, όχι `DELETE`: η επαναφορά είναι
@@ -258,8 +270,9 @@ curl -X POST "${auth[@]}" -d '{"clientId":7}' $API/auth/login-link
 
 | Endpoint | Τι δίνει |
 |---|---|
-| `GET /me/streams` | τα streams του πελάτη με `host`, `path`, `key`, `streamKey`, `plan`, `subscriptionId`, `suspended`, `limit`, `viewers`, `since` (`null` = δεν εκπέμπει), `in_bps`, `out_bps`, `r2Estimate` |
+| `GET /me/streams` | τα streams του πελάτη με `host`, `path`, `key`, `streamKey`, `plan`, `subscriptionId`, `subscriptionLabel`, `suspended`, `limit`, `viewers`, `since` (`null` = δεν εκπέμπει), `in_bps`, `out_bps`, `r2Estimate` |
 | `POST /me/streams/:id/key` | νέο κλειδί, από τον ίδιο τον πελάτη |
+| `PATCH /me/subscriptions/:id` | `{label}` — ο πελάτης ονομάζει τα πακέτα του· μόνο το `label` (η αναστολή μένει στον admin) |
 | `GET /me/series?range=` | ιστορικό μόνο των δικών του paths, χωρίς CPU/μνήμη του μηχανήματος |
 
 ### Χρήστες και σύνδεση
