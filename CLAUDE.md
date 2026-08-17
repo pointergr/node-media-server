@@ -20,6 +20,7 @@ npm run test-stream [-- <rtmp host>] # δοκιμαστική εκπομπή μ�
 npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps/stream/config.json + apps/stream/data/passwords.json
 npm run seed -w apps/api            # φτιάχνει τον πρώτο admin χρήστη του κεντρικού panel
 npm run seed -w apps/api force      # ...ή ξαναγράφει τον κωδικό του (χαμένος κωδικός admin)
+docker compose exec api node dist/src/seed.js force   # το ίδιο σε Docker, από apps/api/
 npm run dev -w apps/panel           # Nuxt dev server, με devProxy /api -> localhost:3000 (χρειάζεται το apps/api να τρέχει)
 npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public, τα στατικά που σερβίρει ο Caddy
 ```
@@ -29,6 +30,10 @@ npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public
 και `apps/panel` (`test-dash.js`, σκέτο script).
 
 Θέλει **Node 24** (το `node:sqlite` του `stats.js`) — pinned στο volta. Σε Docker: `docker compose exec stream npm test` (μέσα στο container το cwd είναι ήδη `apps/stream`).
+
+Το `seed` σε Docker θέλει σκέτο `node`, όχι το npm script: το script είναι
+`node --env-file=.env …` και μέσα στο container δεν υπάρχει `.env` — τις μεταβλητές τις
+δίνει το compose, οπότε το `--env-file` σκάει με `node: .env: not found`.
 
 Τα tests είναι `assert`-based scripts με χειροποίητα mocks (δες το fake `nms` στην αρχή του `test-stats.js`, το `globalThis.fetch` override στο `test-r2.js`). Νέο test = νέο `test-*.js` + μια γραμμή στο `apps/stream/package.json`. Όποιο test αγγίζει πελάτες βάζει `process.env.CLIENTS_FILE` σε προσωρινό αρχείο και κάνει **δυναμικό** import (το path διαβάζεται στο import του `config.js`) — και `clearClientsCache()` μετά από κάθε γράψιμο.
 
