@@ -69,6 +69,7 @@ docker compose exec api node dist/src/seed.js
 | Endpoint | Auth | Σημείωση |
 |---|---|---|
 | `POST /auth/login` | καμία | `{username,password}` → `{access_token}` |
+| `PATCH /auth/me` | οποιοσδήποτε συνδεδεμένος | `{currentPassword, username?, password?}` — αλλάζει τα **δικά του** στοιχεία (το id βγαίνει από το token, ποτέ από το σώμα). Λάθος `currentPassword` → **401**, username που υπάρχει → **409**. Το token μένει έγκυρο: το payload δεν αλλάζει |
 | `POST /servers/:host/sync` | `Bearer <Server.token>` | σώμα = snapshot του stream server, απάντηση = clients.json (μόνο μη-disabled πελάτες αυτού του server) |
 | `GET /live` | admin | τελευταίο snapshot όλων των servers, από τη μνήμη· `online: false` αν `ts` > 30s |
 | `GET /servers` / `POST /servers` | admin | CRUD server· το `token` παράγεται μόνο του αν δεν δοθεί |
@@ -77,8 +78,8 @@ docker compose exec api node dist/src/seed.js
 | `GET /servers/:host/sessions` | admin | proxy → `/admin/api/sessions` |
 | `DELETE /servers/:host/sessions/:id` | admin | proxy → `/admin/api/sessions/:id` |
 | `POST /servers/:host/restart` | admin | proxy → `/admin/api/restart` |
-| `GET /clients` / `POST /clients` | admin | `POST` δέχεται προαιρετικά `username`+`password` — φτιάχνει μαζί και τον customer χρήστη (δες «Αποφάσεις» παρακάτω) |
-| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `disabled`, `name`, `serverId` και `packages` (η **τελική** λίστα `[{packageId, qty}]` — ό,τι λείπει αφαιρείται)· `DELETE` σβήνει και τα paths του (cascade) |
+| `GET /clients` / `POST /clients` | admin | `POST` δέχεται προαιρετικά `username`+`password` — φτιάχνει μαζί και τον customer χρήστη (δες «Αποφάσεις» παρακάτω). Το `GET` δίνει και `users: [{id, username}]`, **χωρίς** το hash του κωδικού |
+| `GET/PATCH/DELETE /clients/:id` | admin | `PATCH` για `disabled`, `name`, `serverId`, `packages` (η **τελική** λίστα `[{packageId, qty}]` — ό,τι λείπει αφαιρείται) και `username`/`password` του χρήστη του πελάτη (ό,τι δεν σταλεί μένει ως έχει· μόνο `password` σε πελάτη **χωρίς** χρήστη → **400**, username που υπάρχει → **409**)· `DELETE` σβήνει και τα paths του (cascade) |
 | `GET /packages` / `POST /packages` | admin | `{name, maxViewers, maxStreams}`, και τα δύο όρια ακέραιοι **≥1** |
 | `PATCH/DELETE /packages/:id` | admin | `DELETE` με πελάτες που το κρατούν → **409** |
 | `POST /clients/:id/paths` | admin | `{path}` → παράγει κλειδί (16 bytes, base64url)· **409** αν τα πακέτα του πελάτη δεν χωράνε άλλο stream |
@@ -121,6 +122,23 @@ server δεν πρέπει να σβήνει σιωπηλά και τους πε
   ο πελάτης — παρά να προσθέσω ένα ολόκληρο users module, το `POST /clients`
   δέχεται προαιρετικά `username`/`password` και τα δύο γίνονται σε ένα
   `$transaction`.
+- **Καμία διαχείριση χρηστών πέρα από αυτά τα δύο endpoints.** Χωρίς users
+  module, τα στοιχεία σύνδεσης άλλαζαν μόνο με `UPDATE` στη sqlite: ο πελάτης
+  έμενε για πάντα με τον κωδικό της δημιουργίας του και ο admin με του `seed`.
+  Δύο σημεία τα καλύπτουν, με διαφορετικό έλεγχο σε καθένα:
+  - `PATCH /clients/:id` — ο **admin** ορίζει κωδικό πελάτη χωρίς να τον ξέρει
+    (reset). Δημιουργία και αλλαγή περνάνε από την ίδια `setUser`, όπως τα
+    πακέτα από την `setPackages`: χωριστά, το ένα από τα δύο θα ξέχναγε το
+    `hashPassword` ή το 409 του διπλού username.
+  - `PATCH /auth/me` — ο **καθένας** τα δικά του, με το `sub` του token (αλλιώς
+    ο πελάτης θα άλλαζε τον κωδικό του admin) και με τον τρέχοντα κωδικό ξανά:
+    το token μόνο δεν αρκεί, μια ξεχασμένη συνεδρία δεν πρέπει να μπορεί να
+    κλειδώσει έξω τον κάτοχο. Είναι και ο μόνος δρόμος για τον admin — δεν
+    υπάρχει δεύτερος admin να του κάνει reset.
+
+  Ο admin **δεν** μπορεί να δει κωδικό, μόνο να ορίσει νέο: το `GET /clients`
+  γυρίζει `users` με ρητό `select` (id, username), ώστε το hash να μη φύγει
+  ποτέ από το API.
 - **`db.$queryRaw`/migrations: όχι.** `prisma db push` αρκεί σε ένα μικρό
   σχήμα χωρίς ιστορικό αλλαγών σε production ακόμα.
 - **Χωρίς CORS.** Το panel σερβίρεται από τον ίδιο Caddy (`/api/*` → εδώ) και

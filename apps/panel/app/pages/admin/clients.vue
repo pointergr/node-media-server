@@ -12,6 +12,9 @@ interface ClientRow {
   server: ServerOption
   paths: PathRow[]
   packages: { packageId: number, qty: number }[]
+  // Ένας στην πράξη (το API αλλάζει τον παλαιότερο) — λίστα γιατί το σχήμα
+  // επιτρέπει πολλούς. Χωρίς hash κωδικού, δεν το στέλνει το API.
+  users: { id: number, username: string }[]
 }
 
 const api = useApi()
@@ -34,6 +37,10 @@ const qty = reactive<Record<number, Record<number, number>>>({})
 const newQty = reactive<Record<number, number>>({})
 // Ένα πεδίο "νέο path" ανά πελάτη, όχι ξεχωριστό ref το καθένα — key = client.id.
 const newPath = reactive<Record<number, string>>({})
+// Στοιχεία σύνδεσης ανά πελάτη. Ξεχωριστά από το `c` και όχι v-model πάνω στο
+// c.users[0]: ο πελάτης μπορεί να μην έχει χρήστη ακόμα, άρα ούτε αντικείμενο να
+// δεθεί. Το πεδίο κωδικού είναι πάντα κενό — δεν έχουμε τι να δείξουμε.
+const cred = reactive<Record<number, { username: string, password: string }>>({})
 
 // Τα όρια είναι άθροισμα επί ποσότητα — ο ίδιος κανόνας με το API
 // (clients.service.ts#maxViewersOf). Εδώ μόνο για να βλέπει ο διαχειριστής τι
@@ -66,6 +73,7 @@ async function load() {
       qty[c.id] = Object.fromEntries(
         catalog.value.map(p => [p.id, c.packages.find(x => x.packageId === p.id)?.qty ?? 0]),
       )
+      cred[c.id] = { username: c.users[0]?.username ?? '', password: '' }
     }
     error.value = ''
   }
@@ -102,15 +110,19 @@ async function createClient() {
 // τιμές πάνω από ό,τι πληκτρολόγησε ο χρήστης στα inputs.
 async function saveClient(c: ClientRow) {
   try {
-    await api(`/clients/${c.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        name: c.name,
-        serverId: c.serverId,
-        // Η λίστα είναι η τελική: ό,τι λείπει, αφαιρείται από τον πελάτη.
-        packages: packagesBody(id => qty[c.id]?.[id] ?? 0),
-      }),
-    })
+    const body: Record<string, unknown> = {
+      name: c.name,
+      serverId: c.serverId,
+      // Η λίστα είναι η τελική: ό,τι λείπει, αφαιρείται από τον πελάτη.
+      packages: packagesBody(id => qty[c.id]?.[id] ?? 0),
+    }
+    // Κενό πεδίο = αμετάβλητο, γι' αυτό μπαίνουν στο σώμα μόνο όταν έχουν τιμή:
+    // ένα `password: ''` θα άλλαζε τον κωδικό σε κενό με την πρώτη «Αποθήκευση»
+    // που ο διαχειριστής έκανε για τα πακέτα.
+    const { username, password } = cred[c.id] ?? { username: '', password: '' }
+    if (username) body.username = username
+    if (password) body.password = password
+    await api(`/clients/${c.id}`, { method: 'PATCH', body: JSON.stringify(body) })
   }
   catch (e) {
     error.value = (e as Error).message
@@ -265,10 +277,25 @@ onMounted(load)
 
         <PackagePicker v-if="qty[c.id]" v-model="qty[c.id]!" :catalog="catalog" :totals="totalsOf(c)" />
 
+        <div v-if="cred[c.id]" class="grid gap-4 sm:grid-cols-2">
+          <UFormField label="Όνομα χρήστη">
+            <UInput v-model="cred[c.id]!.username" autocomplete="off" class="w-full" />
+          </UFormField>
+          <UFormField label="Νέος κωδικός">
+            <UInput
+              v-model="cred[c.id]!.password" type="password" autocomplete="new-password"
+              placeholder="κενό = αμετάβλητος" class="w-full"
+            />
+          </UFormField>
+        </div>
+
         <p class="note">
           Το disable/enable κόβει ή ξαναφέρνει τις εκπομπές του πελάτη μέσα σε ≤10s — όσο κάνει ο
-          server να ξανασυγχρονίσει τη λίστα των πελατών του. Οι αλλαγές στα πακέτα θέλουν
-          «Αποθήκευση».
+          server να ξανασυγχρονίσει τη λίστα των πελατών του. Οι αλλαγές στα πακέτα και στα
+          στοιχεία σύνδεσης θέλουν «Αποθήκευση».
+          <template v-if="!c.users.length">
+            Ο πελάτης δεν έχει χρήστη ακόμα — συμπλήρωσε <em>και</em> όνομα <em>και</em> κωδικό.
+          </template>
         </p>
 
         <div class="scroll">

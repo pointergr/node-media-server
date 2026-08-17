@@ -104,7 +104,11 @@ Caddy. Τα SVG γραφήματα του `/admin` (`app/utils/dash.ts`) είν�
 παλιό `admin/dashboard.html`. Κάλυψη admin (`/admin/*`: servers, clients,
 live streams όλων των servers) και customer (`/`: τα streams του πελάτη, stream key έτοιμο
 για αντιγραφή, κατάσταση εκπομπής και γραφήματα 24ώρου) στην ίδια εφαρμογή — δες
-PLAN-monorepo.md για το γιατί όχι δύο apps.
+PLAN-monorepo.md για το γιατί όχι δύο apps. Το `/account` είναι κοινό στους δύο
+ρόλους (`PATCH /auth/me`): ο πελάτης αλλάζει μόνος τα στοιχεία σύνδεσής του και ο
+admin τον κωδικό που του έδωσε το `seed` — δεν υπάρχει δεύτερος admin να του κάνει
+reset. Ο κωδικός **πελάτη** αλλάζει και από το `/admin/clients` (ο admin ορίζει νέο
+χωρίς να ξέρει τον παλιό).
 
 **Nuxt UI v4** (Tailwind v4 από κάτω) για ό,τι είναι διεπαφή: header/πλοήγηση, κάρτες,
 φόρμες, badges, ειδοποιήσεις. Το `app/assets/dashboard.css` κράτησε μόνο ό,τι δεν δίνει

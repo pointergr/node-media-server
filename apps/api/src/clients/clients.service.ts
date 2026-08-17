@@ -26,7 +26,9 @@ export interface CreateClientDto {
   password?: string;
 }
 
-export type UpdateClientDto = Partial<Pick<CreateClientDto, 'name' | 'serverId' | 'packages'>> & {
+export type UpdateClientDto = Partial<
+  Pick<CreateClientDto, 'name' | 'serverId' | 'packages' | 'username' | 'password'>
+> & {
   disabled?: boolean;
 };
 
@@ -43,18 +45,25 @@ export const maxStreamsOf = (ps: Owned[]) => ps.reduce((n, p) => n + p.qty * p.p
 // nested include σε κάποιον από τους τρεις καλούντες (χωρίς αυτό, όρια = 0).
 export const withPackages = { packages: { include: { package: true } } } as const;
 
+// Ρητό `select` και όχι `include`: το User κρατάει το hash του κωδικού, που δεν
+// έχει λόγο να φύγει ποτέ από το API — ούτε στον admin. Μόνο εδώ (πελάτες), όχι
+// στο withPackages: το sync και το /me/streams δεν δείχνουν χρήστες.
+const withUser = { users: { select: { id: true, username: true } } } as const;
+
 @Injectable()
 export class ClientsService {
   constructor(private readonly prisma: PrismaService) {}
 
   list() {
-    return this.prisma.client.findMany({ include: { paths: true, server: true, ...withPackages } });
+    return this.prisma.client.findMany({
+      include: { paths: true, server: true, ...withPackages, ...withUser },
+    });
   }
 
   async get(id: number) {
     const client = await this.prisma.client.findUnique({
       where: { id },
-      include: { paths: true, server: true, ...withPackages },
+      include: { paths: true, server: true, ...withPackages, ...withUser },
     });
     if (!client) throw new NotFoundException('client not found');
     return client;
@@ -67,22 +76,45 @@ export class ClientsService {
     return this.prisma.$transaction(async (tx) => {
       const client = await tx.client.create({ data: clientData });
       if (packages?.length) await this.setPackages(tx, client.id, packages);
-      if (username && password) {
-        await tx.user.create({
-          data: { username, password: hashPassword(password), role: 'customer', clientId: client.id },
-        });
-      }
+      await this.setUser(tx, client.id, username, password);
       return client;
     });
   }
 
   async update(id: number, dto: UpdateClientDto) {
     await this.get(id);
-    const { packages, ...clientData } = dto;
+    const { packages, username, password, ...clientData } = dto;
     return this.prisma.$transaction(async (tx) => {
       if (packages) await this.setPackages(tx, id, packages);
+      await this.setUser(tx, id, username, password);
       return tx.client.update({ where: { id }, data: clientData });
     });
+  }
+
+  // Ο χρήστης σύνδεσης του πελάτη — δημιουργία ΚΑΙ αλλαγή στο ίδιο σημείο, όπως
+  // το setPackages: δεν υπάρχει users module (δες README#Αποφάσεις), οπότε αν το
+  // create και το update το έγραφαν ξεχωριστά, το ένα από τα δύο θα ξέχναγε το
+  // hashPassword ή το 409 του διπλού username.
+  private async setUser(tx: PrismaTx, clientId: number, username?: string, password?: string) {
+    if (!username && !password) return;
+    // Το σχήμα επιτρέπει πολλούς χρήστες ανά πελάτη, η πράξη έχει έναν: ο
+    // παλαιότερος είναι «ο χρήστης του πελάτη».
+    const user = await tx.user.findFirst({ where: { clientId }, orderBy: { id: 'asc' } });
+    if (!user && !(username && password)) {
+      throw new BadRequestException('ο πελάτης δεν έχει χρήστη ακόμα — δώσε username και password μαζί');
+    }
+    // `undefined` στο update σημαίνει «μην το αγγίξεις» για το Prisma: κενός
+    // κωδικός αφήνει το username να αλλάξει μόνο του, και αντίστροφα.
+    const hash = password ? hashPassword(password) : undefined;
+    try {
+      await (user
+        ? tx.user.update({ where: { id: user.id }, data: { username, password: hash } })
+        : tx.user.create({ data: { username: username!, password: hash!, role: 'customer', clientId } }));
+    } catch (e) {
+      // Χωρίς αυτό ένα username που υπάρχει ήδη έβγαινε ως HTTP 500.
+      if (isUniqueConstraintError(e)) throw new ConflictException(`το όνομα χρήστη ${username} χρησιμοποιείται ήδη`);
+      throw e;
+    }
   }
 
   // Αντικατάσταση, όχι πρόσθεση: το panel στέλνει πάντα την τελική λίστα. Σβήνει

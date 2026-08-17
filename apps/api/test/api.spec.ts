@@ -440,3 +440,102 @@ test('/me/series: μόνο τα paths του πελάτη, χωρίς το serve
 
   await new Promise<void>((r) => stub.close(() => r()));
 });
+
+// Πριν από αυτό, τα στοιχεία σύνδεσης ήταν γράψε-μια-φορά: ο πελάτης έμενε για
+// πάντα με τον κωδικό της δημιουργίας του και ο admin με του seed — η μόνη λύση
+// ήταν UPDATE στη sqlite με το χέρι.
+test('PATCH /clients/:id: ο admin αλλάζει username/password του πελάτη', async () => {
+  const auth = await adminAuth();
+  const client = (await (await fetch(`${base}/clients`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ name: 'me-xristi', serverId: ids.serverA, username: 'palio', password: 'palios' }),
+  })).json()) as { id: number };
+  assert.ok(await login('palio', 'palios'));
+
+  const res = await fetch(`${base}/clients/${client.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ username: 'neo', password: 'neos' }),
+  });
+  assert.equal(res.status, 200);
+  assert.ok(await login('neo', 'neos'));
+
+  const old = await fetch(`${base}/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'palio', password: 'palios' }),
+  });
+  assert.equal(old.status, 401, 'το παλιό username δεν υπάρχει πια');
+
+  // Μόνο κωδικός: το username μένει ως έχει (undefined = «μην το αγγίξεις»).
+  await fetch(`${base}/clients/${client.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ password: 'neoteros' }),
+  });
+  assert.ok(await login('neo', 'neoteros'));
+
+  // Και ο πελάτης που δημιουργήθηκε χωρίς χρήστη αποκτά έναν αργότερα.
+  const bare = (await (await fetch(`${base}/clients`, {
+    method: 'POST', headers: auth, body: JSON.stringify({ name: 'xoris-xristi', serverId: ids.serverA }),
+  })).json()) as { id: number };
+  const half = await fetch(`${base}/clients/${bare.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ password: 'monos-kodikos' }),
+  });
+  assert.equal(half.status, 400, 'χωρίς username δεν ξέρουμε ποιον χρήστη να φτιάξουμε');
+  const full = await fetch(`${base}/clients/${bare.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ username: 'argoporimenos', password: 'kodikos' }),
+  });
+  assert.equal(full.status, 200);
+  assert.ok(await login('argoporimenos', 'kodikos'));
+});
+
+test('username που υπάρχει ήδη -> 409 (όχι 500)', async () => {
+  const auth = await adminAuth();
+  const dup = await fetch(`${base}/clients`, {
+    method: 'POST', headers: auth,
+    body: JSON.stringify({ name: 'diplos', serverId: ids.serverA, username: 'admin', password: 'x' }),
+  });
+  assert.equal(dup.status, 409);
+});
+
+// Το hash δεν έχει λόγο να φύγει από το API — ούτε στον admin, που έτσι κι αλλιώς
+// μπορεί να ορίσει νέο κωδικό.
+test('GET /clients: username ναι, hash κωδικού όχι', async () => {
+  const auth = await adminAuth();
+  const clients = (await (await fetch(`${base}/clients`, { headers: auth })).json()) as {
+    name: string; users: { username: string; password?: string }[];
+  }[];
+  const mine = clients.find((c) => c.name === 'me-xristi')!;
+  assert.deepEqual(mine.users.map((u) => u.username), ['neo']);
+  assert.equal(mine.users[0].password, undefined);
+});
+
+test('PATCH /auth/me: ο καθένας αλλάζει μόνο τον δικό του λογαριασμό', async () => {
+  const tokenB = await login('userb', 'passb');
+  const headersB = { authorization: `Bearer ${tokenB}`, 'content-type': 'application/json' };
+
+  const wrong = await fetch(`${base}/auth/me`, {
+    method: 'PATCH', headers: headersB, body: JSON.stringify({ currentPassword: 'λάθος', password: 'neos' }),
+  });
+  assert.equal(wrong.status, 401, 'το token μόνο δεν αρκεί για αλλαγή κωδικού');
+
+  const ok = await fetch(`${base}/auth/me`, {
+    method: 'PATCH', headers: headersB, body: JSON.stringify({ currentPassword: 'passb', password: 'passb2' }),
+  });
+  assert.equal(ok.status, 200);
+  assert.ok(await login('userb', 'passb2'));
+  assert.ok(await login('usera', 'passa'), 'ο άλλος πελάτης δεν επηρεάστηκε');
+
+  // Και ο admin: το ίδιο endpoint, ο μόνος τρόπος να αλλάξει ο κωδικός του seed.
+  const auth = await adminAuth();
+  const asAdmin = await fetch(`${base}/auth/me`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ currentPassword: 'adminpass', password: 'adminpass2' }),
+  });
+  assert.equal(asAdmin.status, 200);
+  assert.ok(await login('admin', 'adminpass2'));
+
+  // Επαναφορά: τα υπόλοιπα tests (και το adminAuth) περιμένουν τον αρχικό κωδικό.
+  const token2 = await login('admin', 'adminpass2');
+  await fetch(`${base}/auth/me`, {
+    method: 'PATCH',
+    headers: { authorization: `Bearer ${token2}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ currentPassword: 'adminpass2', password: 'adminpass' }),
+  });
+  assert.ok(await login('admin', 'adminpass'));
+});

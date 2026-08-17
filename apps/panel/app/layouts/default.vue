@@ -16,6 +16,9 @@ const items = computed<NavigationMenuItem[]>(() => [
         { label: 'Servers', icon: 'i-lucide-server', to: '/admin/servers' },
       ]
     : []),
+  // Τελευταίο και για τους δύο ρόλους: ο admin δεν έχει άλλο σημείο να αλλάξει
+  // τον κωδικό που του έδωσε το seed.
+  { label: 'Ο λογαριασμός μου', icon: 'i-lucide-user-cog', to: '/account' },
 ])
 
 // Ο διακόπτης θέματος γράφει στο color-mode του Nuxt UI, που βάζει την κλάση
