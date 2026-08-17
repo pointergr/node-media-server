@@ -192,6 +192,16 @@ onBeforeUnmount(() => {
               <code>{{ s.streamKey }}</code>
               <CopyButton :text="s.streamKey" label="" />
             </dd>
+
+            <!-- Το ίδιο playlist που παίζει ο player από πάνω: για embed σε ξένη
+                 σελίδα ή για VLC. Χωρίς host δεν υπάρχει διεύθυνση — δες Server. -->
+            <template v-if="s.host">
+              <dt>Διεύθυνση προβολής (HLS)</dt>
+              <dd>
+                <code>{{ hls(s) }}</code>
+                <CopyButton :text="hls(s)" label="" />
+              </dd>
+            </template>
           </dl>
         </div>
 
@@ -239,6 +249,12 @@ onBeforeUnmount(() => {
           <code v-if="s.host">{{ rtmp(s) }}</code>
           <code>{{ s.streamKey }}</code>
           <CopyButton :text="s.streamKey" label="" />
+          <!-- Η διεύθυνση προβολής ισχύει και εκτός εκπομπής: από εδώ την παίρνει
+               ο πελάτης για το embed, πριν ανοίξει το OBS. -->
+          <template v-if="s.host">
+            <code>{{ hls(s) }}</code>
+            <CopyButton :text="hls(s)" label="" />
+          </template>
         </div>
       </div>
     </UCard>
