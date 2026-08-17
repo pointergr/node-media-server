@@ -36,9 +36,10 @@ async function submit() {
   <UContainer class="flex min-h-screen items-center justify-center">
     <UCard class="w-full max-w-sm">
       <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-radio" class="text-primary size-5" />
-          <h1>Pointer — Σύνδεση</h1>
+        <div class="flex flex-col items-center gap-3">
+          <img src="/logo-dark.svg" alt="Pointer" class="h-9 w-auto dark:hidden">
+          <img src="/logo-light.svg" alt="Pointer" class="hidden h-9 w-auto dark:block">
+          <h1>Σύνδεση</h1>
         </div>
       </template>
 

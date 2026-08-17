@@ -40,7 +40,10 @@ function logout() {
   <div>
     <UHeader :ui="{ container: 'max-w-(--ui-container)' }">
       <template #title>
-        <span class="font-semibold">Pointer</span>
+        <!-- Δύο αρχεία, όχι ένα με φίλτρο: το logo-dark έχει σκούρα γράμματα και
+             χάνεται στο σκοτεινό θέμα, το logo-light λευκά και χάνεται στο φωτεινό. -->
+        <img src="/logo-dark.svg" alt="Pointer" class="h-7 w-auto dark:hidden">
+        <img src="/logo-light.svg" alt="Pointer" class="hidden h-7 w-auto dark:block">
       </template>
 
       <UNavigationMenu :items="items" />
