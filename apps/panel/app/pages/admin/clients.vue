@@ -210,7 +210,16 @@ async function removeSubscription(c: ClientRow, s: SubscriptionRow) {
 async function addPath(c: ClientRow) {
   const path = newPath[c.id]?.trim()
   const subscriptionId = newPathSub[c.id]
-  if (!subscriptionId) return
+  if (!subscriptionId) {
+    // Το γεμάτο πλάνο βγαίνει disabled στο select (δες subItems), οπότε δεν
+    // υπάρχει τίποτα να διαλεχτεί και το κουμπί έμοιαζε χαλασμένο: σιωπηλό return.
+    error.value = !c.subscriptions.length
+      ? 'Ο πελάτης δεν έχει πλάνο ακόμα — πρόσθεσε πρώτα ένα.'
+      : subItems(c).every(i => i.disabled)
+        ? 'Όλα τα πλάνα του πελάτη είναι γεμάτα — πρόσθεσε πλάνο ή σβήσε ένα stream.'
+        : 'Διάλεξε πλάνο για το νέο stream.'
+    return
+  }
   try {
     // Κενό path = το ονομάζει το API (δες clients.service.ts#nextPath).
     await api(`/clients/${c.id}/paths`, { method: 'POST', body: JSON.stringify({ path: path || undefined, subscriptionId }) })
