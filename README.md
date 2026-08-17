@@ -542,7 +542,12 @@ cd apps/api
 cp .env.example .env      # DOMAIN=panel.example.com, JWT_SECRET
 docker compose up -d --build
 docker compose exec api node dist/src/seed.js   # πρώτος admin χρήστης
+docker compose exec api node dist/src/apikey.js "<υπηρεσία>"   # μόνο αν κάνει provisioning εξωτερική υπηρεσία
 ```
+
+Το API key είναι για **μηχανές**: `Authorization: Bearer pk_…` στα ίδια admin endpoints,
+χωρίς login και χωρίς λήξη, με ανάκληση σε μία εντολή (`apikey.js revoke`). Πλήρης ροή
+provisioning στο [`apps/api/README.md`](apps/api/README.md#provisioning-από-εξωτερική-υπηρεσία).
 
 Το σχήμα της βάσης εφαρμόζεται μόνο του σε κάθε boot (`prisma db push`, καμία migrations
 directory). Μία αλλαγή που **σβήνει** στήλη είναι η μόνη εξαίρεση: το `db push` αρνείται

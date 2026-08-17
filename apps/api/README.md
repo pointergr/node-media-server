@@ -101,6 +101,45 @@ docker compose exec api node dist/src/apikey.js revoke 3     # ή revoke "e-shop
 υπηρεσία, ώστε η ανάκληση του ενός να μη σταματάει τις άλλες. (Scoped keys ανά
 πελάτη θα ήθελαν `role`/`clientId` στο μοντέλο — δεν μπήκαν μέχρι να χρειαστούν.)
 
+### Provisioning από εξωτερική υπηρεσία
+
+Η σειρά είναι πελάτης → συνδρομή → path, γιατί το path παίρνει server και όριο
+θεατών **από τη συνδρομή** (δες «Πλάνα και συνδρομές» παρακάτω). Τα δύο πρώτα
+βήματα γίνονται μία φορά ανά αγορά, το τρίτο μία φορά ανά stream:
+
+```bash
+API=https://panel.example.com/api
+KEY=pk_…
+
+# 0. ποια πλάνα πουλάμε (το planId είναι ό,τι διάλεξε ο πελάτης στο site)
+curl -H "authorization: Bearer $KEY" $API/plans
+
+# 1. ο πελάτης — προαιρετικά με τα στοιχεία εισόδου του στο panel
+curl -X POST -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"name":"Πελάτης ΑΕ","username":"pelatis","password":"…"}' $API/clients
+
+# 2. μία αγορά ενός πλάνου (ο server παγώνει εδώ, δεν ξαναλλάζει)
+curl -X POST -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"planId":1}' $API/clients/7/subscriptions
+
+# 3. το stream — χωρίς `path` το ονομάζει μόνο του (/live/c7-s3-1)
+curl -X POST -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"subscriptionId":3}' $API/clients/7/paths
+```
+
+Το βήμα 3 επιστρέφει το `key` εκπομπής. Τη διεύθυνση RTMP δεν την επιστρέφει
+κανένα endpoint — τη συνθέτει ο caller: `rtmp://rtmp.<host της συνδρομής>/<πρώτο
+κομμάτι του path>`, ακριβώς όπως το `apps/panel/app/pages/index.vue`.
+
+Ό,τι πάει στραβά έχει δικό του status και **δεν** είναι 500: άγνωστο πλάνο ή
+όρια < 1 → 400, συνδρομή άλλου πελάτη → 404, γεμάτο πλάνο ή path που υπάρχει
+ήδη → 409, ίδιο `name`/`username` → 409. Δηλαδή το retry έχει νόημα μόνο στα
+5xx — τα 4xx θέλουν διόρθωση των δεδομένων, όχι ξανά την ίδια κλήση.
+
+Ακύρωση συνδρομής: `PATCH /clients/:id/subscriptions/:subId {"disabled":true}` —
+η εκπομπή πέφτει σε ≤10s, τα paths και τα κλειδιά μένουν για την επαναφορά. Το
+`DELETE` είναι για τα οριστικά, και επιστρέφει 409 όσο κρατάει streams.
+
 ## Endpoints
 
 | Endpoint | Auth | Σημείωση |
