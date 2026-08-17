@@ -19,6 +19,7 @@ cd apps/stream && node test-stats.js   # ένα μόνο test — σκέτα nod
 npm run test-stream [-- <rtmp host>] # δοκιμαστική εκπομπή με ffmpeg testsrc, χωρίς OBS
 npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps/stream/config.json + apps/stream/data/passwords.json
 npm run seed -w apps/api            # φτιάχνει τον πρώτο admin χρήστη του κεντρικού panel
+npm run seed -w apps/api force      # ...ή ξαναγράφει τον κωδικό του (χαμένος κωδικός admin)
 npm run dev -w apps/panel           # Nuxt dev server, με devProxy /api -> localhost:3000 (χρειάζεται το apps/api να τρέχει)
 npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public, τα στατικά που σερβίρει ο Caddy
 ```

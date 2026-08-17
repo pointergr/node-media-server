@@ -46,6 +46,22 @@ docker compose up -d --build
 docker compose exec api node dist/src/seed.js
 ```
 
+(Μέσα στο container **όχι** `npm run seed`: το npm script έχει `--env-file=.env`
+και το image δεν κουβαλάει `.env` — τις μεταβλητές τις δίνει το compose.)
+
+**Χαμένος κωδικός admin:** το `PATCH /auth/me` ζητάει τον τρέχοντα και δεύτερος
+admin που θα έκανε reset δεν υπάρχει, οπότε η ανάκτηση γίνεται από τον host —
+ίδια σύμβαση `force` με το `generate-passwords` του stream server:
+
+```bash
+docker compose exec api node dist/src/seed.js force            # τυχαίος, τον τυπώνει
+docker compose exec -e SEED_ADMIN_PASSWORD=... api node dist/src/seed.js force
+```
+
+Χωρίς `force` ο υπάρχων χρήστης δεν αγγίζεται. Το `force` γράφει **μόνο** τον
+κωδικό, όχι τον ρόλο: με `SEED_ADMIN_USER` πελάτη σκάει, αλλιώς ένα λάθος
+username θα προήγαγε σιωπηλά πελάτη σε admin.
+
 Δύο services: `api` (Nest, το sqlite σε named volume) και `caddy` (χτισμένο
 από το `apps/panel/Dockerfile` — κουβαλάει τα στατικά του Nuxt panel στο
 `/srv`)· `/api/*` → Nest, ό,τι άλλο → `file_server` με SPA fallback (δες
@@ -133,8 +149,9 @@ server δεν πρέπει να σβήνει σιωπηλά και τους πε
   - `PATCH /auth/me` — ο **καθένας** τα δικά του, με το `sub` του token (αλλιώς
     ο πελάτης θα άλλαζε τον κωδικό του admin) και με τον τρέχοντα κωδικό ξανά:
     το token μόνο δεν αρκεί, μια ξεχασμένη συνεδρία δεν πρέπει να μπορεί να
-    κλειδώσει έξω τον κάτοχο. Είναι και ο μόνος δρόμος για τον admin — δεν
-    υπάρχει δεύτερος admin να του κάνει reset.
+    κλειδώσει έξω τον κάτοχο. Είναι και ο μόνος δρόμος **μέσα από την
+    εφαρμογή** για τον admin — δεν υπάρχει δεύτερος admin να του κάνει reset,
+    οπότε ο χαμένος κωδικός θέλει `seed ... force` από τον host (δες «Docker»).
 
   Ο admin **δεν** μπορεί να δει κωδικό, μόνο να ορίσει νέο: το `GET /clients`
   γυρίζει `users` με ρητό `select` (id, username), ώστε το hash να μη φύγει

@@ -539,3 +539,33 @@ test('PATCH /auth/me: ο καθένας αλλάζει μόνο τον δικό 
   });
   assert.ok(await login('admin', 'adminpass'));
 });
+
+// Το seed είναι ο μόνος δρόμος για χαμένο κωδικό admin (το PATCH /auth/me ζητάει
+// τον τρέχοντα και δεύτερος admin δεν υπάρχει): αν σπάσει το `force`, η μόνη
+// εναλλακτική είναι UPDATE στη sqlite με το χέρι.
+test('seed force: ξαναγράφει τον κωδικό υπάρχοντος admin, όχι πελάτη', async () => {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const seed = `${__dirname}/../src/seed.js`;
+  // Ξεχωριστή διεργασία, ίδια βάση: το DATABASE_URL το βλέπει από το env.
+  const env = { ...process.env, SEED_ADMIN_USER: 'admin', SEED_ADMIN_PASSWORD: 'anaktisi' };
+
+  const noForce = await run('node', [seed], { env });
+  assert.match(noForce.stderr, /υπάρχει ήδη/);
+  assert.ok(await login('admin', 'adminpass'), 'χωρίς force δεν αγγίζει τίποτα');
+
+  await run('node', [seed, 'force'], { env });
+  assert.ok(await login('admin', 'anaktisi'));
+
+  // Ένα `force` σε πελάτη δεν πρέπει να τον προάγει σε admin.
+  await assert.rejects(
+    run('node', [seed, 'force'], { env: { ...env, SEED_ADMIN_USER: 'usera' } }),
+    /δεν είναι admin/,
+  );
+  assert.ok(await login('usera', 'passa'), 'ο κωδικός του πελάτη έμεινε ως ήταν');
+
+  // Επαναφορά για ό,τι τρέξει μετά.
+  await run('node', [seed, 'force'], { env: { ...env, SEED_ADMIN_PASSWORD: 'adminpass' } });
+  assert.ok(await login('admin', 'adminpass'));
+});
