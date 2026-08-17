@@ -7,7 +7,8 @@ const session = computed(() => useSession())
 const admin = computed(() => session.value?.role === 'admin')
 
 const items = computed<NavigationMenuItem[]>(() => [
-  { label: 'Τα streams μου', icon: 'i-lucide-radio', to: '/' },
+  // Το «Τα streams μου» μόνο στον πελάτη: ο admin δεν έχει clientId, το `/` τον
+  // στέλνει στο `/admin` (pages/index.vue) — δύο links στην ίδια σελίδα.
   ...(admin.value
     ? [
         { label: 'Διαχείριση', icon: 'i-lucide-activity', to: '/admin' },
@@ -15,7 +16,7 @@ const items = computed<NavigationMenuItem[]>(() => [
         { label: 'Πλάνα', icon: 'i-lucide-package', to: '/admin/plans' },
         { label: 'Servers', icon: 'i-lucide-server', to: '/admin/servers' },
       ]
-    : []),
+    : [{ label: 'Τα streams μου', icon: 'i-lucide-radio', to: '/' }]),
   // Τελευταίο και για τους δύο ρόλους: ο admin δεν έχει άλλο σημείο να αλλάξει
   // τον κωδικό που του έδωσε το seed.
   { label: 'Ο λογαριασμός μου', icon: 'i-lucide-user-cog', to: '/account' },
