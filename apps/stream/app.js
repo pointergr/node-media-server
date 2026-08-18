@@ -7,7 +7,7 @@ import { startPanelSync } from "./panel.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
 import { patchAvc1 } from "./ertmp.js";
-import { ffmpegArgs, renditions } from "./ladder.js";
+import { ffmpegArgs, renditions, waitForHeight } from "./ladder.js";
 
 patchAvc1();
 
@@ -64,6 +64,9 @@ const RESPAWN_MS = 2000;
 const RESPAWN_MIN_LIFE_MS = 5000;
 const RESPAWN_MAX = 5;
 
+// Κάθε πόσο κοιτάμε αν ήρθαν τα metadata της πηγής — δες spawnWhenReady.
+const HEIGHT_TICK_MS = 100;
+
 // Ο φάκελος έχει ήδη ετοιμαστεί από το postPublish — εδώ μόνο ο ffmpeg, ώστε το
 // respawn να μη σβήνει τα segments που παίζουν αυτή τη στιγμή οι θεατές.
 function startFfmpeg(streamPath, job) {
@@ -105,6 +108,31 @@ function startFfmpeg(streamPath, job) {
     console.error(`HLS ffmpeg ${streamPath}: exit ${code}, respawn σε ${RESPAWN_MS}ms`);
     job.timer = setTimeout(() => startFfmpeg(streamPath, job), RESPAWN_MS);
   });
+}
+
+// Το ύψος της πηγής φτάνει με τα metadata, λίγο *μετά* το postPublish — δες
+// waitForHeight στο ladder.js. Μόνο τα streams με ladder περιμένουν· τα υπόλοιπα
+// σηκώνουν ffmpeg ακαριαία, όπως πάντα. Ίδιο job.timer με το respawn, ώστε το
+// donePublish/shutdown να ακυρώνει την αναμονή από το ίδιο σημείο — και έλεγχος
+// ταυτότητας του job, γιατί ο publisher μπορεί να έχει φύγει στο μεταξύ.
+function spawnWhenReady(streamPath, job, session, waited = 0) {
+  if (hlsJobs.get(streamPath) !== job) return;
+  if (waitForHeight({ ladder: job.ladder, srcHeight: session.videoHeight, waited })) {
+    job.timer = setTimeout(
+      () => spawnWhenReady(streamPath, job, session, waited + HEIGHT_TICK_MS),
+      HEIGHT_TICK_MS
+    );
+    return;
+  }
+  // Υπολογίζεται μία φορά, εδώ: το respawn ξαναχρησιμοποιεί τα ίδια σκαλοπάτια,
+  // ώστε ένας ffmpeg που πέθανε να μη γυρίσει με άλλο σύνολο variants πάνω στα
+  // ίδια ονόματα αρχείων.
+  job.steps = renditions({
+    ladder: job.ladder,
+    srcHeight: session.videoHeight,
+    maxRenditions: config.hls.maxRenditions,
+  });
+  startFfmpeg(streamPath, job);
 }
 
 nms.on("postPublish", (session) => {
@@ -153,14 +181,10 @@ nms.on("postPublish", (session) => {
     ff: null,
     timer: null,
     fails: 0,
-    // Διαβάζονται εδώ και μόνο εδώ: το respawn ξαναχρησιμοποιεί τις ίδιες τιμές,
-    // ώστε ένας ffmpeg που πέθανε να μη γυρίσει με άλλο σύνολο variants πάνω
-    // στα ίδια ονόματα αρχείων.
-    steps: renditions({
-      ladder: ladderOf(session.streamPath),
-      srcHeight: session.videoHeight,
-      maxRenditions: config.hls.maxRenditions,
-    }),
+    // Το ladder του πακέτου διαβάζεται εδώ και μόνο εδώ — τα σκαλοπάτια που θα
+    // βγουν στ' αλήθεια τα κρίνει το spawnWhenReady, όταν μάθει το ύψος.
+    ladder: ladderOf(session.streamPath),
+    steps: [],
     // Το bytes×θεατές τρέχει μέσα στο stats.js (αυτό ξέρει τους HLS θεατές) — το
     // r2.js μόνο αναφέρει τι ανέβηκε, δεν κάνει require το stats.js. Ζει όσο ο
     // publisher, όχι όσο ένας ffmpeg: το respawn γράφει στον ίδιο φάκελο.
@@ -168,7 +192,7 @@ nms.on("postPublish", (session) => {
       stats.addR2Out(session.streamPath, name, bytes)),
   };
   hlsJobs.set(session.streamPath, job);
-  startFfmpeg(session.streamPath, job);
+  spawnWhenReady(session.streamPath, job, session);
 });
 
 nms.on("donePublish", (session) => {

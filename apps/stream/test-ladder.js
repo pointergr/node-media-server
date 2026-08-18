@@ -1,6 +1,6 @@
 // Έλεγχος του χτισίματος των args του ffmpeg: node test-ladder.js
 import assert from "node:assert";
-import { BITRATES, ffmpegArgs } from "./ladder.js";
+import { BITRATES, ffmpegArgs, waitForHeight } from "./ladder.js";
 
 const base = { dir: "/m/live/x", streamPath: "/live/x", prefix: 1700000000000, rtmpPort: 1935 };
 const r2 = { publicUrl: "https://cdn" };
@@ -115,5 +115,24 @@ assert.equal(
 assert.ok(!args({ ladder: [720], srcHeight: 1080 }).some((x) => String(x).includes("/ff/")),
   "χωρίς R2 κανένα ff/: όλα επίπεδα στον φάκελο του stream");
 
+// --- αναμονή για το ύψος της πηγής ------------------------------------------
+// Το videoHeight γεμίζει όταν φτάσει το @setDataFrame (broadcast_server.js:200),
+// ενώ το postPublish εκπέμπεται με την εντολή publish (:159) — δηλαδή *πριν*.
+// Χωρίς αναμονή το φίλτρο «ποτέ upscale» δεν κόβει ποτέ τίποτα, γιατί το ύψος
+// είναι πάντα 0: πηγή 480p με ladder [480] έβγαζε δεύτερο, ταυτόσημο rendition.
+assert.equal(waitForHeight({ ladder: [480], srcHeight: 0, waited: 0 }), true);
+assert.equal(waitForHeight({ ladder: [480], srcHeight: 1080, waited: 0 }), false, "ήρθε το ύψος, φύγαμε");
+
+// Χωρίς ladder δεν περιμένουμε ούτε ένα tick: η συντριπτική πλειοψηφία των
+// εκπομπών δεν έχει κανέναν λόγο να ξεκινήσει αργότερα.
+assert.equal(waitForHeight({ ladder: [], srcHeight: 0, waited: 0 }), false);
+assert.equal(waitForHeight({ srcHeight: 0, waited: 0 }), false);
+
+// Publisher που δεν στέλνει ποτέ metadata δεν κρατάει όμηρο το HLS — μετά τη
+// λήξη ξεκινάμε με ό,τι ξέρουμε (και το min(h,ih) του scale κρατάει την εγγύηση).
+assert.equal(waitForHeight({ ladder: [480], srcHeight: 0, waited: 2000 }), false, "λήξη αναμονής");
+assert.equal(waitForHeight({ ladder: [480], srcHeight: 0, waited: 1900 }), true, "λίγο πριν τη λήξη");
+
 assert.equal(BITRATES[240].v, "400k", "ο πίνακας των bitrates εξάγεται");
 console.log("ladder.js OK");
+

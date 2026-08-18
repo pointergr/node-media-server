@@ -130,3 +130,20 @@ export function ffmpegArgs({ dir, streamPath, prefix, rtmpPort, ladder, srcHeigh
     `${out}/v%v.m3u8`,
   ];
 }
+
+// Πόσο περιμένουμε τα metadata της πηγής πριν σηκώσουμε ffmpeg με ladder. Το
+// πρώτο segment θέλει ούτως ή άλλως 2s, οπότε η καθυστέρηση δεν φαίνεται.
+const HEIGHT_WAIT_MS = 2000;
+
+// Το `videoHeight` της συνεδρίας γεμίζει όταν φτάσει το `@setDataFrame`
+// (broadcast_server.js:200), ενώ το `postPublish` εκπέμπεται με την εντολή
+// publish (:159) — δηλαδή *πριν*. Χωρίς αναμονή το φίλτρο «ποτέ upscale» δεν
+// κόβει ποτέ τίποτα (srcHeight πάντα 0) και μια πηγή 480p με ladder [480]
+// πλήρωνε κωδικοποίηση για ένα δεύτερο, ταυτόσημο rendition.
+// Περιμένουμε **μόνο** όταν υπάρχει ladder: η συντριπτική πλειοψηφία των
+// εκπομπών δεν έχει κανέναν λόγο να ξεκινήσει έστω και ένα tick αργότερα. Και
+// περιμένουμε με λήξη: publisher που δεν στέλνει ποτέ metadata δεν κρατάει
+// όμηρο το HLS — μετά τη λήξη ξεκινάμε με ό,τι ξέρουμε, και την εγγύηση την
+// κρατάει το min(h,ih) του scale.
+export const waitForHeight = ({ ladder, srcHeight, waited, maxWaitMs = HEIGHT_WAIT_MS }) =>
+  Boolean(ladder?.length) && !srcHeight && waited < maxWaitMs;

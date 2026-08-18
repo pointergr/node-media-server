@@ -59,6 +59,12 @@ master playlist + variants: `split`/`scale` ανά σκαλοπάτι, `-var_str
 `clientOf`, `overLimit`, samples και panel. Πλαφόν encoded σκαλοπατιών ανά server
 (`config.hls.maxRenditions`), γιατί το πλάνο είναι εμπορική υπόσχεση και το πλαφόν είναι τι
 σηκώνει το μηχάνημα.
+Το «ποτέ upscale» θέλει το ύψος της πηγής, που **δεν υπάρχει ακόμα στο `postPublish`**: το
+`videoHeight` γράφεται όταν φτάσει το `@setDataFrame` (`broadcast_server.js:200`), ενώ το
+event εκπέμπεται με την εντολή publish (`:159`). Γι' αυτό το `app.js#spawnWhenReady`
+περιμένει (100ms tick, λήξη 2s — `waitForHeight`) πριν σηκώσει ffmpeg, **μόνο** όταν υπάρχει
+ladder· χωρίς ladder δεν καθυστερεί ούτε ένα tick. Χωρίς την αναμονή το φίλτρο δεν έκοβε ποτέ
+τίποτα και μια πηγή 480p με ladder `[480]` πλήρωνε ένα δεύτερο, ταυτόσημο rendition.
 
 **`ertmp.js`** — monkey patch στο `Flv.parserTag` του nms. Το v4.2.8 αναγνωρίζει enhanced RTMP μόνο για av01/vp09/hvc1· το `avc1` του OBS πέφτει έξω από κάθε κλάδο και μένει με `flags=0` («audio sequence header»), οπότε το avcC δεν μπαίνει ποτέ στο `rtmpVideoHeader`. Όποιος συνδεθεί μετά τον publisher — δηλαδή και ο ffmpeg του HLS, που κοστίζει ένα spawn — δεν παίρνει ποτέ SPS/PPS.
 
