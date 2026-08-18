@@ -32,11 +32,15 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
   const uploaded = new Set();
   // Τα bytes όσων δεν ανέβηκαν ακόμα — δες το σχόλιο στο sync().
   const cache = new Map();
-  const src = `${dir}/ff.m3u8`;
-  const dst = `${dir}/index.m3u8`;
+  // Ο ffmpeg γράφει εδώ, με τα *τελικά* ονόματα· εμείς δημοσιεύουμε τα ίδια
+  // ονόματα ένα επίπεδο πάνω. Ένας κανόνας για όλες τις περιπτώσεις: με ή χωρίς
+  // ladder, ένα playlist ή πέντε, το ff/ είναι η σκαλωσιά και ο φάκελος του
+  // stream είναι ό,τι βλέπει ο θεατής.
+  const src = `${dir}/ff`;
   let stopped = false;
-  // Ό,τι έχει ήδη δημοσιευτεί: ο γύρος που δεν αλλάζει τίποτα δεν ξαναγράφει.
-  let published = null;
+  // Ό,τι έχει ήδη δημοσιευτεί, ανά όνομα: ο γύρος που δεν αλλάζει τίποτα δεν
+  // ξαναγράφει.
+  const published = new Map();
 
   const put = async (name, body) => {
     const res = await aws.fetch(`${r2.endpoint}/${r2.bucket}${streamPath}/${name}`, {
@@ -61,6 +65,20 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
     onUpload?.(name, body.length);
   };
 
+  // Το writeFileSync είναι open(O_TRUNC) και μετά write: όποιος player ζητήσει
+  // το playlist ανάμεσα στις δύο κλήσεις παίρνει 0 bytes και ο hls.js πεθαίνει
+  // με levelParsingError. Ίδιος λόγος που ο ffmpeg γράφει με temp_file — και
+  // αυτό εδώ είναι το αρχείο που ζητάνε στ' αλήθεια οι θεατές.
+  const publish = (name, body) => {
+    // Ο φάκελος μπορεί να ανήκει ήδη στην επόμενη εκπομπή: ίδιο path, άλλα
+    // segments. Χωρίς αυτό ο καθυστερημένος γύρος δημοσιεύει το playlist της
+    // προηγούμενης, που υπάρχει ακόμα στο R2 και παίζει κανονικά.
+    if (stopped || published.get(name) === body) return;
+    fs.writeFileSync(`${dir}/${name}.tmp`, body);
+    fs.renameSync(`${dir}/${name}.tmp`, `${dir}/${name}`);
+    published.set(name, body);
+  };
+
   // Το playlist γράφεται *μετά* τα uploads: αλλιώς ο player διαβάζει ένα segment
   // που δεν έχει ανέβει ακόμα στο R2 και τρώει 404.
   const sync = async () => {
@@ -68,41 +86,58 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
     // Ο ffmpeg δεν έχει γράψει ακόμα playlist (πρώτο segment, ή respawn μετά από
     // rmSync). Χωρίς αυτό ο περιοδικός γύρος παρακάτω γεμίζει τα logs με ENOENT.
     if (!fs.existsSync(src)) return;
-    const playlist = fs.readFileSync(src, "utf8");
+    const lists = fs.readdirSync(src)
+      .filter((name) => name.endsWith(".m3u8"))
+      .map((name) => ({ name, body: fs.readFileSync(`${src}/${name}`, "utf8") }));
+    // Το master δεν έχει segments, έχει variants: αντιγράφεται αυτούσιο, γιατί
+    // δείχνει σε *σχετικά* ονόματα playlist που μένουν στο origin — εκεί
+    // μετράμε τους θεατές. Το -hls_base_url αγγίζει μόνο τα segments *μέσα* στα
+    // variants.
+    const media = lists.filter((l) => !l.body.includes("#EXT-X-STREAM-INF"));
     // Διαβάζουμε όλα τα segments πριν από το πρώτο upload: ο ffmpeg σβήνει όσα
     // βγαίνουν από το παράθυρο, οπότε ένας αργός γύρος θα έβρισκε ENOENT και θα
     // χανόταν ολόκληρος — ακριβώς τη στιγμή που είμαστε ήδη πίσω. Έτσι το «πίσω»
     // κοστίζει latency, όχι playlist.
-    const names = playlistSegments(playlist);
-    const pending = names.filter((name) => !uploaded.has(name));
-    // Και τα κρατάμε μέχρι να ανέβουν: ένα PUT που σκάει (timeout, 503) ξαναδοκιμάζεται
-    // στον επόμενο γύρο, αλλά ως τότε ο ffmpeg μπορεί να έχει σβήσει το αρχείο.
-    // Χωρίς το cache, το ENOENT έριχνε *κάθε* επόμενο γύρο όσο το όνομα ήταν ακόμα
-    // στο playlist: ένα αργό PUT πάγωνε το index.m3u8 για δευτερόλεπτα, όχι για έναν
-    // γύρο, και ο θεατής άδειαζε τον buffer του.
-    for (const name of pending) {
-      if (!cache.has(name)) cache.set(name, fs.readFileSync(`${dir}/${name}`));
+    for (const l of media) {
+      l.segments = playlistSegments(l.body);
+      // Και τα κρατάμε μέχρι να ανέβουν: ένα PUT που σκάει (timeout, 503) ξαναδοκιμάζεται
+      // στον επόμενο γύρο, αλλά ως τότε ο ffmpeg μπορεί να έχει σβήσει το αρχείο.
+      // Χωρίς το cache, το ENOENT έριχνε *κάθε* επόμενο γύρο όσο το όνομα ήταν ακόμα
+      // στο playlist: ένα αργό PUT πάγωνε το index.m3u8 για δευτερόλεπτα, όχι για έναν
+      // γύρο, και ο θεατής άδειαζε τον buffer του.
+      for (const name of l.segments) {
+        if (!uploaded.has(name) && !cache.has(name)) cache.set(name, fs.readFileSync(`${src}/${name}`));
+      }
     }
     // Ό,τι βγήκε από το παράθυρο δεν το ζητάει πια κανείς — μην κρατάς τη μνήμη.
-    for (const name of cache.keys()) if (!names.includes(name)) cache.delete(name);
-    // Παράλληλα: ο γύρος που προλαβαίνει στοιχίζει ένα RTT, όχι τρία.
-    await Promise.all(pending.map((name) => put(name, cache.get(name))));
-    // Ο φάκελος μπορεί να ανήκει ήδη στην επόμενη εκπομπή: ίδιο path, άλλα
-    // segments. Χωρίς αυτό ο καθυστερημένος γύρος δημοσιεύει το playlist της
-    // προηγούμενης, που υπάρχει ακόμα στο R2 και παίζει κανονικά.
-    if (stopped || playlist === published) return;
-    // Το writeFileSync είναι open(O_TRUNC) και μετά write: όποιος player ζητήσει
-    // το playlist ανάμεσα στις δύο κλήσεις παίρνει 0 bytes και ο hls.js πεθαίνει
-    // με levelParsingError. Ίδιος λόγος που ο ffmpeg γράφει με temp_file — και
-    // αυτό εδώ είναι το αρχείο που ζητάνε στ' αλήθεια οι θεατές.
-    fs.writeFileSync(`${dst}.tmp`, playlist);
-    fs.renameSync(`${dst}.tmp`, dst);
-    published = playlist;
+    const live = new Set(media.flatMap((l) => l.segments));
+    for (const name of cache.keys()) if (!live.has(name)) cache.delete(name);
+
+    // Ανά variant, όχι όλα μαζί: ένα σκαλοπάτι που δεν ανεβαίνει (PUT 5xx) δεν
+    // επιτρέπεται να παγώσει τα υπόλοιπα — ο θεατής θα έπρεπε να πέσει σε αυτό
+    // ακριβώς που δουλεύει. Παράλληλα μέσα σε κάθε variant: ο γύρος που
+    // προλαβαίνει στοιχίζει ένα RTT, όχι τρία.
+    const rounds = await Promise.allSettled(media.map(async (l) => {
+      await Promise.all(
+        l.segments.filter((name) => !uploaded.has(name)).map((name) => put(name, cache.get(name)))
+      );
+      publish(l.name, l.body);
+    }));
+
+    // Το master μόνο αφού δημοσιευτεί το πρώτο variant: αλλιώς οι πρώτοι 2-4s
+    // δίνουν 404 σε variant που το master υπόσχεται.
+    if (media.some((l) => published.has(l.name))) {
+      for (const l of lists) if (!media.includes(l)) publish(l.name, l.body);
+    }
+
     // Αν ένας γύρος αργεί περισσότερο από το hls_time, τα uploads δεν προλαβαίνουν
     // τον ffmpeg και το latency μεγαλώνει μόνιμα. Είναι το μόνο σημείο που σπάει
     // σιωπηλά, γι' αυτό ουρλιάζει.
     const took = Date.now() - started;
     if (took > 2000) console.warn(`R2 sync ${streamPath}: ${took}ms, πιο αργό από το segment`);
+
+    const failed = rounds.find((r) => r.status === "rejected");
+    if (failed) throw failed.reason;
   };
 
   // Watch στο directory, όχι στο αρχείο: με το temp_file flag ο ffmpeg γράφει
@@ -112,8 +147,8 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
   const queue = () => {
     chain = chain.then(sync).catch((err) => console.error(`R2 sync ${streamPath}: ${err.message}`));
   };
-  const watcher = fs.watch(dir, (_, file) => {
-    if (file === "ff.m3u8") queue();
+  const watcher = fs.watch(src, (_, file) => {
+    if (file?.endsWith(".m3u8")) queue();
   });
   // Χωρίς listener, ένα σφάλμα του watcher βγαίνει ως uncaught exception και
   // ρίχνει ολόκληρο τον server — μαζί και τα streams που δεν έφταιγαν σε τίποτα.

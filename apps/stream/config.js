@@ -82,6 +82,16 @@ export const clearClientsCache = () => (cache = { ts: 0, data: {}, ok: false });
 export const clientOf = (path) =>
   Object.values(loadClients()).find((c) => c.paths?.[path] !== undefined);
 
+// Το ladder (ύψη προς κωδικοποίηση) είναι ιδιότητα της εγγραφής — δηλαδή της
+// συνδρομής, όπως και το limit — και το γράφει το sync του panel. Το διαβάζουμε
+// ανεκτικά: απόν, κενό ή χαλασμένο σημαίνει «σημερινή συμπεριφορά» (σκέτο copy),
+// γιατί ένα τυπογραφικό στον κατάλογο των πλάνων δεν επιτρέπεται να ρίξει
+// εκπομπή. Ό,τι δεν είναι έγκυρο ύψος το πετάει έτσι κι αλλιώς το ffmpegArgs.
+export const ladderOf = (path) => {
+  const l = clientOf(path)?.ladder;
+  return Array.isArray(l) ? l.map(Number).filter(Number.isFinite) : [];
+};
+
 // Ο έλεγχος ζει εδώ και μόνο εδώ: τον καλεί το app.js στο postPublish (τη στιγμή
 // της σύνδεσης) και το stats.js στο sample() (ανάκληση εν ώρα εκπομπής). Δύο
 // αντίγραφα θα απέκλιναν και το ένα από τα δύο σημεία θα άφηνε τρύπα.
