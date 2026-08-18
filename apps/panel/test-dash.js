@@ -48,6 +48,20 @@ assert.deepEqual(
 // Ένα μόνο level = stream χωρίς ladder: επιλογέας με μία γραμμή είναι σκουπίδι.
 assert.deepEqual(qualityLevels([{ height: 1080 }]), []);
 assert.deepEqual(qualityLevels([]), []);
+// Η αρχική ποιότητα ξεχωρίζει: είναι η ίδια η εκπομπή σε copy, όχι rendition
+// που φτιάξαμε εμείς. Χωρίς την ένδειξη ο admin βλέπει «720p» δίπλα σε «480p»
+// και νομίζει ότι το πακέτο παράγει και τα δύο. Το vsrc.m3u8 είναι δικό μας
+// συμβόλαιο (ladder.js: name:src στο var_stream_map).
+assert.deepEqual(
+  qualityLevels([{ height: 480, url: ["https://h/live/x/v480.m3u8"] }, { height: 720, url: ["https://h/live/x/vsrc.m3u8"] }]),
+  [{ i: 1, label: "720p (αρχική)" }, { i: 0, label: "480p" }]
+);
+// Playlist που δεν βγήκε από εμάς (άλλος encoder, δοκιμή): καμία ένδειξη, καμία υπόθεση.
+assert.deepEqual(
+  qualityLevels([{ height: 480, url: ["/a/480.m3u8"] }, { height: 720, url: ["/a/720.m3u8"] }]),
+  [{ i: 1, label: "720p" }, { i: 0, label: "480p" }]
+);
+
 // Master χωρίς RESOLUTION στο EXT-X-STREAM-INF: πέφτουμε στο bitrate.
 assert.deepEqual(
   qualityLevels([{ bitrate: 800_000 }, { bitrate: 2_500_000 }]),
