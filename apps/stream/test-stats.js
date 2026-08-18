@@ -301,6 +301,24 @@ function freshStats(hls, opts) {
   s.server.close();
 }
 
+// --- ABR: το snapshot λέει τι όντως παράγει ο ffmpeg -------------------------
+// Όχι το ladder του πακέτου: τα σκαλοπάτια ≥ της πηγής κόβονται και το πλαφόν
+// του server κόβει κι άλλα, οπότε ένα «720+480» σε πηγή 480p είναι στην πράξη
+// καθόλου ABR. Ο admin πρέπει να βλέπει το δεύτερο — αλλιώς η ένδειξη στο panel
+// λέει ψέματα ακριβώς όταν χρειάζεται να πει την αλήθεια.
+{
+  const s = freshStats(null, { stepsOf: (p) => (p === "/live/stream" ? [720, 480] : []) });
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+  assert.deepEqual(s.snapshot().streams[0].ladder, [720, 480], "τα ενεργά σκαλοπάτια στο snapshot");
+  s.server.close();
+}
+{
+  const s = freshStats(null);
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+  assert.deepEqual(s.snapshot().streams[0].ladder, [], "χωρίς ABR: άδειος πίνακας, όχι undefined");
+  s.server.close();
+}
+
 // --- restart button (POST /admin/api/restart) -------------------------------
 // Το πραγματικό onRestart (process.exit) θα σκότωνε το test· εδώ το injected
 // callback απλά σημειώνει ότι κλήθηκε — το app.js δίνει το δικό του shutdown

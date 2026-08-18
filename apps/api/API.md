@@ -137,7 +137,7 @@ curl -X POST "${auth[@]}" -d '{"planId":1}' $API/clients/7/subscriptions
 ```
 
 `201` → `{ "id": 3, "disabled": false, "clientId": 7, "planId": 1, "serverId": 1,
-"plan": {…}, "server": {…}, "paths": [] }`
+"plan": {…}, "server": { "id": 1, "host": "stream1.example.com" }, "paths": [] }`
 
 Μία αγορά = μία κλήση. **Δεν υπάρχει ποσότητα**: δύο φορές το ίδιο πλάνο = δύο
 κλήσεις = δύο συνδρομές με χωριστά όρια.
@@ -225,7 +225,7 @@ curl -X POST "${auth[@]}" -d '{"clientId":7}' $API/auth/login-link
 
 | Endpoint | Σώμα | Απάντηση / σφάλματα |
 |---|---|---|
-| `POST /clients/:id/subscriptions` | `{planId}` | `201` η συνδρομή με `plan`, `server`, `paths`· `400` άγνωστο πλάνο, `404` άγνωστος πελάτης |
+| `POST /clients/:id/subscriptions` | `{planId}` | `201` η συνδρομή με `plan`, `server` (μόνο `{id, host}` — τα μυστικά του server μόνο στο `/servers`) και `paths`· `400` άγνωστο πλάνο, `404` άγνωστος πελάτης |
 | `PATCH /clients/:id/subscriptions/:subId` | `{disabled}` ή/και `{label}` | **αναστολή/επαναφορά μιας μόνο συνδρομής**· η εκπομπή πέφτει σε ≤10s, paths και κλειδιά μένουν ανέπαφα. Το `label` είναι το φιλικό όνομα της αγοράς (≤60 χαρακτήρες, κενό/`null` το σβήνει)· `400` σε λάθος τύπο ή άδειο σώμα, `404` αν είναι άλλου πελάτη |
 | `DELETE /clients/:id/subscriptions/:subId` | — | `409` όσο κρατάει streams (σβήσ' τα πρώτα, για να μη χαθούν σιωπηλά κλειδιά) |
 

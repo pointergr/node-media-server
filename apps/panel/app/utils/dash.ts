@@ -10,6 +10,10 @@ export interface StreamRow {
   since: number
   video: string
   resolution: string
+  // Τα σκαλοπάτια που κωδικοποιεί όντως ο ffmpeg αυτή τη στιγμή — άδειο σε κάθε
+  // εκπομπή χωρίς ABR, και σε πηγή που είναι ήδη πιο χαμηλή από το ladder του
+  // πακέτου (stats.js#snapshot). Παλιός stream server: απόν.
+  ladder?: number[]
   audio: string
   viewers: number
   in_bps: number

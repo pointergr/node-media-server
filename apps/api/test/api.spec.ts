@@ -1089,3 +1089,27 @@ test('DELETE /me/streams/:id: όχι όσο εκπέμπει, ναι όταν σ
   })).json()) as { id: number }[];
   assert.equal((await del(foreign[0]!.id)).status, 404);
 });
+
+// Ο server που κρέμεται από συνδρομή ή πλάνο είναι εκεί για να πει «πού» — και
+// κουβαλούσε ολόκληρη τη γραμμή του: το bearer του sync και τον κωδικό του admin
+// dashboard, σε κάθε provisioning κλήση εξωτερικής υπηρεσίας (το API key έχει
+// ρόλο admin). Το `/servers` μένει η μόνη πόρτα που τα δείχνει.
+test('συνδρομές και πλάνα: ο server μόνο ως {id, host}, χωρίς token/adminPass', async () => {
+  const auth = await adminAuth();
+  const client = await mkClient(auth, 'xoris-mystika');
+  const created = (await (await post(auth, `/clients/${client.id}/subscriptions`, {
+    planId: await planId(auth, 'basic'),
+  })).json()) as { server: Record<string, unknown> };
+  assert.deepEqual(Object.keys(created.server).sort(), ['host', 'id']);
+
+  const clients = (await (await fetch(`${base}/clients`, { headers: auth })).json()) as {
+    name: string; subscriptions: { server: Record<string, unknown> }[];
+  }[];
+  const listed = clients.find((c) => c.name === 'xoris-mystika')!;
+  assert.deepEqual(Object.keys(listed.subscriptions[0]!.server).sort(), ['host', 'id']);
+
+  const plans = (await (await fetch(`${base}/plans`, { headers: auth })).json()) as {
+    server: Record<string, unknown>;
+  }[];
+  assert.deepEqual(Object.keys(plans[0]!.server).sort(), ['host', 'id']);
+});

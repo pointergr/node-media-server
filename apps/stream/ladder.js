@@ -45,18 +45,25 @@ const HLS = [
 // stream και σκάει.
 const BSF = "h264_mp4toannexb,dump_extra";
 
+// Τα σκαλοπάτια που θα κωδικοποιηθούν στ' αλήθεια, δηλαδή το ladder του πακέτου
+// αφού κοπούν όσα δεν έχουν νόημα. Ξεχωριστά εξαγόμενο γιατί το ίδιο νούμερο το
+// θέλει και το snapshot του stats.js: ένα «720+480» σε πηγή 480p είναι στην
+// πράξη καθόλου ABR, και ο admin πρέπει να βλέπει αυτό που τρέχει.
+// Ποτέ upscale: σκαλοπάτι ≥ της πηγής είναι διπλάσιο κόστος για χειρότερη
+// εικόνα. Άγνωστο ύψος (το videoHeight μπορεί να μην έχει φτάσει ακόμα στο
+// postPublish) δεν φιλτράρει τίποτα — την εγγύηση την κρατάει τότε το min(h,ih)
+// του scale.
+export const renditions = ({ ladder, srcHeight, maxRenditions = MAX_RENDITIONS }) =>
+  (Array.isArray(ladder) ? ladder : [])
+    .filter((h) => BITRATES[h] && (!srcHeight || h < srcHeight))
+    .slice(0, maxRenditions);
+
 export function ffmpegArgs({ dir, streamPath, prefix, rtmpPort, ladder, srcHeight, r2, maxRenditions = MAX_RENDITIONS }) {
   // Με R2 ο ffmpeg γράφει σε υποφάκελο με τα *τελικά* ονόματα και το r2.js
   // δημοσιεύει τα ίδια ονόματα ένα επίπεδο πάνω, αφού ανέβουν τα segments.
   // Χωρίς R2 τα σερβίρει ο static server κατευθείαν από τον φάκελο του stream.
   const out = r2 ? `${dir}/ff` : dir;
-  // Ποτέ upscale: σκαλοπάτι ≥ της πηγής είναι διπλάσιο κόστος για χειρότερη
-  // εικόνα. Άγνωστο ύψος (το videoHeight μπορεί να μην έχει φτάσει ακόμα στο
-  // postPublish) δεν φιλτράρει τίποτα — την εγγύηση την κρατάει τότε το
-  // min(h,ih) του scale παρακάτω.
-  const steps = (Array.isArray(ladder) ? ladder : [])
-    .filter((h) => BITRATES[h] && (!srcHeight || h < srcHeight))
-    .slice(0, maxRenditions);
+  const steps = renditions({ ladder, srcHeight, maxRenditions });
 
   const src = ["-i", `rtmp://127.0.0.1:${rtmpPort}${streamPath}`];
   const baseUrl = r2 ? ["-hls_base_url", `${r2.publicUrl}${streamPath}/`] : [];

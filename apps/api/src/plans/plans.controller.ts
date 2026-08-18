@@ -12,6 +12,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { serverBrief } from '../clients/clients.service';
 import { Roles } from '../auth/roles.decorator';
 
 interface PlanDto {
@@ -36,7 +37,7 @@ export class PlansController {
   @Get()
   list() {
     return this.prisma.plan.findMany({
-      include: { server: true, _count: { select: { subscriptions: true } } },
+      include: { server: serverBrief, _count: { select: { subscriptions: true } } },
       orderBy: { maxViewers: 'asc' },
     });
   }

@@ -7,7 +7,7 @@ import { startPanelSync } from "./panel.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
 import { patchAvc1 } from "./ertmp.js";
-import { ffmpegArgs } from "./ladder.js";
+import { ffmpegArgs, renditions } from "./ladder.js";
 
 patchAvc1();
 
@@ -83,10 +83,8 @@ function startFfmpeg(streamPath, job) {
     ffmpegArgs({
       dir, streamPath, prefix,
       rtmpPort: config.rtmp.port,
-      ladder: job.ladder,
-      srcHeight: job.srcHeight,
+      ladder: job.steps,
       r2,
-      maxRenditions: config.hls.maxRenditions,
     }),
     { stdio: ["ignore", "ignore", "inherit"] }
   );
@@ -158,8 +156,11 @@ nms.on("postPublish", (session) => {
     // Διαβάζονται εδώ και μόνο εδώ: το respawn ξαναχρησιμοποιεί τις ίδιες τιμές,
     // ώστε ένας ffmpeg που πέθανε να μη γυρίσει με άλλο σύνολο variants πάνω
     // στα ίδια ονόματα αρχείων.
-    ladder: ladderOf(session.streamPath),
-    srcHeight: session.videoHeight,
+    steps: renditions({
+      ladder: ladderOf(session.streamPath),
+      srcHeight: session.videoHeight,
+      maxRenditions: config.hls.maxRenditions,
+    }),
     // Το bytes×θεατές τρέχει μέσα στο stats.js (αυτό ξέρει τους HLS θεατές) — το
     // r2.js μόνο αναφέρει τι ανέβηκε, δεν κάνει require το stats.js. Ζει όσο ο
     // publisher, όχι όσο ένας ffmpeg: το respawn γράφει στον ίδιο φάκελο.
@@ -210,7 +211,12 @@ function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-const stats = startStats(nms, config, { onRestart: shutdown });
+// stepsOf: μόνο το app.js ξέρει τι κωδικοποιεί στ' αλήθεια ο κάθε ffmpeg — το
+// snapshot πρέπει να δείχνει αυτό και όχι το ladder του πακέτου.
+const stats = startStats(nms, config, {
+  onRestart: shutdown,
+  stepsOf: (streamPath) => hlsJobs.get(streamPath)?.steps ?? [],
+});
 startPanelSync(config, stats.snapshot);
 
 nms.run();

@@ -36,7 +36,11 @@ function isLocal(session) {
 // onRestart: injectable ώστε το test να μην τερματίζει τον εαυτό του — σε
 // production είναι το graceful shutdown του app.js (σκοτώνει τα ffmpeg jobs
 // πριν το exit), εδώ απλά process.exit(0) γιατί δεν υπάρχουν jobs να ξέρει.
-export function startStats(nms, config, { onRestart = () => process.exit(0) } = {}) {
+// stepsOf: τα σκαλοπάτια που όντως κωδικοποιεί ο ffmpeg αυτού του stream. Το
+// ξέρει μόνο το app.js (εκεί ζουν τα jobs), και το snapshot πρέπει να δείχνει
+// αυτό — όχι το ladder του πακέτου, που μπορεί να έχει κοπεί ολόκληρο από την
+// ανάλυση της πηγής ή από το πλαφόν του server.
+export function startStats(nms, config, { onRestart = () => process.exit(0), stepsOf = () => [] } = {}) {
   // Τα env overrides υπάρχουν για το docker-compose: αλλιώς κάθε deployment θα
   // έπρεπε να πειράξει με το χέρι το mounted config.json.
   const dbPath = process.env.ADMIN_DB ?? config.admin.db;
@@ -338,6 +342,7 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
         video: VIDEO_CODECS[pub.videoCodec] ?? String(pub.videoCodec || "-"),
         resolution: pub.videoWidth ? `${pub.videoWidth}x${pub.videoHeight}` : "-",
         audio: AUDIO_CODECS[pub.audioCodec] ?? String(pub.audioCodec || "-"),
+        ladder: stepsOf(stream),
         viewers: viewersOf(stream),
         ...(lastBps.get(stream) ?? { in_bps: 0, out_bps: 0 }),
       })),
