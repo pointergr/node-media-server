@@ -351,7 +351,15 @@ const syncOf = async (host: string, token: string) => {
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ streams: [] }),
   });
-  return (await res.json()) as Record<string, { limit: number; ladder?: number[]; paths: Record<string, string> }>;
+  return (await res.json()) as Record<
+    string,
+    {
+      limit: number;
+      ladder?: number[];
+      paths: Record<string, string>;
+      relays?: Record<string, { name: string; url: string }[]>;
+    }
+  >;
 };
 
 // Ο πυρήνας του μοντέλου: δύο συνδρομές του ΙΔΙΟΥ πλάνου δεν φτιάχνουν έναν
@@ -1051,11 +1059,13 @@ test('/me/subscriptions: τα πακέτα του πελάτη με τα όρι�
 
   const subs = (await (await fetch(`${base}/me/subscriptions`, { headers: me })).json()) as {
     id: number; plan: string; label: string | null; host: string;
-    maxStreams: number; maxViewers: number; streams: number; suspended: boolean;
+    maxStreams: number; maxViewers: number; maxRelays: number; streams: number; suspended: boolean;
   }[];
   assert.deepEqual(subs, [{
     id: sub.id, plan: 'adeio-paketo', label: null, host: 'server-a',
-    maxStreams: 4, maxViewers: 9, streams: 0, suspended: false,
+    // maxRelays 0: το mkPlan δεν το δίνει, και «καθόλου αναδιανομή» είναι η
+    // σωστή προεπιλογή για κάθε πλάνο που δεν το ζήτησε ρητά.
+    maxStreams: 4, maxViewers: 9, maxRelays: 0, streams: 0, suspended: false,
   }], 'άδειο πακέτο, με το όριο και τα μηδέν streams του');
 
   assert.equal((await post(me, '/me/streams', { subscriptionId: sub.id })).status, 201);
@@ -1135,4 +1145,177 @@ test('συνδρομές και πλάνα: ο server μόνο ως {id, host}, 
     server: Record<string, unknown>;
   }[];
   assert.deepEqual(Object.keys(plans[0]!.server).sort(), ['host', 'id']);
+});
+
+// --- Αναδιανομή σε εξωτερικούς προορισμούς (YouTube κ.λπ.) ------------------
+// Ο stream server δεν ξέρει τι είναι «πλατφόρμα»: όλη η γνώση ζει εδώ και
+// καταλήγει σε ένα έτοιμο rtmp:// URL μέσα στο clients.json.
+
+// Πλάνο με αναδιανομή, πελάτης με χρήστη, ένα stream: το στήσιμο που θέλουν όλα
+// τα παρακάτω. Δικό του σε κάθε test, ώστε το ένα να μη βλέπει τα δεδομένα του
+// άλλου (ίδια σύμβαση με τα υπόλοιπα tests των πλάνων).
+async function mkRelayFixture(auth: Auth, name: string, maxRelays: number) {
+  const plan = await post(auth, '/plans', {
+    name: `plan-${name}`, maxViewers: 5, maxStreams: 2, serverId: ids.serverA, maxRelays,
+  });
+  assert.equal(plan.status, 201);
+  const planCreated = (await plan.json()) as { id: number };
+
+  const created = await post(auth, '/clients', { name, username: `u-${name}`, password: 'pass1234' });
+  assert.equal(created.status, 201);
+  const client = (await created.json()) as { id: number };
+
+  const sub = await mkSub(auth, client.id, planCreated.id);
+  const pathRes = await post(auth, `/clients/${client.id}/paths`, { subscriptionId: sub.id });
+  assert.equal(pathRes.status, 201);
+  const path = (await pathRes.json()) as { id: number; path: string };
+
+  return { client, sub, path, planId: planCreated.id, name };
+}
+
+const YT = { name: 'YouTube', url: 'rtmp://a.rtmp.youtube.com/live2', key: 'abcd-efgh-ijkl' };
+
+test('προορισμοί: ο πελάτης συνδέει μόνος του το κανάλι του, ξένο stream -> 404', async () => {
+  const auth = await adminAuth();
+  const mine = await mkRelayFixture(auth, 'relay-dikos', 2);
+  const other = await mkRelayFixture(auth, 'relay-allos', 2);
+
+  const token = await login(`u-${mine.name}`, 'pass1234');
+  const asMe: Auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const ok = await post(asMe, `/me/streams/${mine.path.id}/destinations`, YT);
+  assert.equal(ok.status, 201, 'ο πελάτης βάζει προορισμό στο δικό του stream');
+
+  // Το clientId βγαίνει από το token, ποτέ από τον caller: το pathId του άλλου
+  // πελάτη δεν πρέπει να δίνει ούτε καν την πληροφορία ότι υπάρχει.
+  const ksenos = await post(asMe, `/me/streams/${other.path.id}/destinations`, YT);
+  assert.equal(ksenos.status, 404, 'stream άλλου πελάτη');
+});
+
+test('προορισμοί: το όριο είναι του πλάνου και μετριέται ανά stream', async () => {
+  const auth = await adminAuth();
+  const xoris = await mkRelayFixture(auth, 'relay-xoris', 0);
+  const enas = await mkRelayFixture(auth, 'relay-enas', 1);
+
+  // 0 σημαίνει «το πλάνο δεν πουλάει αναδιανομή» — όχι «χωρίς όριο», αντίθετα
+  // από τα maxViewers/maxStreams.
+  const off = await post(auth, `/clients/${xoris.client.id}/paths/${xoris.path.id}/destinations`, YT);
+  assert.equal(off.status, 409, 'πλάνο χωρίς αναδιανομή');
+
+  const first = await post(auth, `/clients/${enas.client.id}/paths/${enas.path.id}/destinations`, YT);
+  assert.equal(first.status, 201);
+  const second = await post(auth, `/clients/${enas.client.id}/paths/${enas.path.id}/destinations`, {
+    ...YT, name: 'Facebook', url: 'rtmps://live-api-s.facebook.com:443/rtmp',
+  });
+  assert.equal(second.status, 409, 'δεύτερος προορισμός πάνω από το όριο');
+
+  // Ανά stream, όχι ανά συνδρομή: το δεύτερο stream της ίδιας συνδρομής έχει το
+  // δικό του όριο, γιατί κάθε κάμερα πάει στο δικό της κανάλι.
+  const dyo = await post(auth, `/clients/${enas.client.id}/paths`, { subscriptionId: enas.sub.id });
+  assert.equal(dyo.status, 201);
+  const path2 = (await dyo.json()) as { id: number };
+  const allo = await post(auth, `/clients/${enas.client.id}/paths/${path2.id}/destinations`, YT);
+  assert.equal(allo.status, 201, 'άλλο stream, δικό του όριο');
+});
+
+test('προορισμοί: ό,τι δεν είναι rtmp προς τα έξω -> 400', async () => {
+  const auth = await adminAuth();
+  const f = await mkRelayFixture(auth, 'relay-elenxoi', 5);
+  const url = `/clients/${f.client.id}/paths/${f.path.id}/destinations`;
+
+  const cases: [string, unknown][] = [
+    ['http δεν είναι RTMP', { ...YT, url: 'http://example.com/live' }],
+    ['σκουπίδια αντί για URL', { ...YT, url: 'δεν είναι διεύθυνση' }],
+    // Ο πελάτης δίνει διεύθυνση και ο ΔΙΚΟΣ ΜΑΣ server συνδέεται: χωρίς αυτόν
+    // τον έλεγχο το πεδίο γίνεται σαρωτής του εσωτερικού μας δικτύου.
+    ['loopback', { ...YT, url: 'rtmp://127.0.0.1:1935/live/x' }],
+    ['localhost', { ...YT, url: 'rtmp://localhost/live/x' }],
+    ['ιδιωτικό δίκτυο', { ...YT, url: 'rtmp://10.0.0.5/live/x' }],
+    ['cloud metadata', { ...YT, url: 'rtmp://169.254.169.254/live/x' }],
+    ['IPv6 loopback', { ...YT, url: 'rtmp://[::1]/live/x' }],
+    ['χωρίς κλειδί', { ...YT, key: '' }],
+    ['κλειδί με κενό', { ...YT, key: 'abcd efgh' }],
+    ['χωρίς όνομα', { ...YT, name: '  ' }],
+  ];
+  for (const [why, body] of cases) {
+    const res = await post(auth, url, body);
+    assert.equal(res.status, 400, why);
+  }
+
+  // Οι παύλες ΕΙΝΑΙ κανονικό μέρος του κλειδιού του YouTube — ένας έλεγχος που
+  // τις έκοβε θα απέρριπτε κάθε πραγματικό κλειδί.
+  const me_pafles = await post(auth, url, YT);
+  assert.equal(me_pafles.status, 201, 'κλειδί με παύλες');
+  // Και το rtmps το απαιτεί το Facebook.
+  const rtmps = await post(auth, url, {
+    name: 'Facebook', url: 'rtmps://live-api-s.facebook.com:443/rtmp', key: 'FB-KEY',
+  });
+  assert.equal(rtmps.status, 201, 'rtmps');
+});
+
+test('sync: ο προορισμός φτάνει ως έτοιμο URL· ανενεργός ή κανένας -> εκτός', async () => {
+  const auth = await adminAuth();
+  const f = await mkRelayFixture(auth, 'relay-sync', 3);
+  const url = `/clients/${f.client.id}/paths/${f.path.id}/destinations`;
+
+  // Trailing slash στο URL της πλατφόρμας: το ίδιο σφάλμα με το R2 endpoint —
+  // "//" στη μέση και σκέτη αποσύνδεση, χωρίς ίχνος πουθενά.
+  const added = await post(auth, url, { ...YT, url: 'rtmp://a.rtmp.youtube.com/live2/' });
+  assert.equal(added.status, 201);
+  const yt = (await added.json()) as { id: number };
+
+  const body = await syncOf('server-a', 'tok-a');
+  const entry = body[`${f.name}#${f.sub.id}`]!;
+  assert.deepEqual(
+    entry.relays![f.path.path],
+    [{ name: 'YouTube', url: 'rtmp://a.rtmp.youtube.com/live2/abcd-efgh-ijkl' }],
+    'URL και κλειδί ενωμένα, με μία κάθετο',
+  );
+  // Το κλειδί εκπομπής ΜΑΣ δεν άλλαξε σχήμα: το `paths` το διαβάζει ο έλεγχος
+  // publish χαρακτήρα-χαρακτήρα (config.js#publishAllowed).
+  assert.equal(typeof entry.paths[f.path.path], 'string', 'το paths μένει path→κλειδί');
+
+  // Ανενεργός = εκτός λίστας, χωρίς να χαθεί το κλειδί της πλατφόρμας.
+  const off = await fetch(`${base}${url}/${yt.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ enabled: false }),
+  });
+  assert.equal(off.status, 200);
+  const after = await syncOf('server-a', 'tok-a');
+  assert.ok(!('relays' in after[`${f.name}#${f.sub.id}`]!), 'χωρίς ενεργό προορισμό, ούτε το κλειδί');
+
+  // Και ένας πελάτης που δεν έβαλε ποτέ τίποτα δεν αποκτά καν το πεδίο: το
+  // clients.json των σημερινών μένει byte-για-byte ίδιο.
+  assert.ok(!('relays' in after[`pelatis-a#${ids.subA}`]!), 'παλιός πελάτης, ίδιο αρχείο');
+});
+
+test('/me/streams: οι προορισμοί με τη ζωντανή τους κατάσταση', async () => {
+  const auth = await adminAuth();
+  const f = await mkRelayFixture(auth, 'relay-live', 2);
+  const added = await post(auth, `/clients/${f.client.id}/paths/${f.path.id}/destinations`, YT);
+  assert.equal(added.status, 201);
+
+  // Το ταίριασμα γίνεται με το όνομα: ο stream server δεν ξέρει ids της βάσης.
+  await fetch(`${base}/servers/server-a/sync`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer tok-a', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      streams: [{
+        stream: f.path.path, viewers: 0, since: 1, in_bps: 0, out_bps: 0,
+        relays: [{ name: 'YouTube', state: 'retrying', since: null }],
+      }],
+    }),
+  });
+
+  const token = await login(`u-${f.name}`, 'pass1234');
+  const streams = (await (await fetch(`${base}/me/streams`, {
+    headers: { authorization: `Bearer ${token}` },
+  })).json()) as { path: string; destinations: { name: string; key: string; state: string | null }[] }[];
+
+  const mine = streams.find((s) => s.path === f.path.path)!;
+  assert.equal(mine.destinations.length, 1);
+  // Η κατάσταση είναι το μόνο σημείο απ' όπου φαίνεται ότι το YouTube δεν παίρνει
+  // σήμα: από παντού αλλού η εκπομπή δείχνει μια χαρά.
+  assert.equal(mine.destinations[0]!.state, 'retrying', 'η κατάσταση από το snapshot');
+  // Ο ιδιοκτήτης βλέπει το κλειδί του — το κρύβει το panel, όχι το API.
+  assert.equal(mine.destinations[0]!.key, YT.key, 'ο πελάτης μπορεί να ελέγξει τι έβαλε');
 });

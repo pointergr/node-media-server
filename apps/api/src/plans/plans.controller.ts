@@ -24,6 +24,9 @@ interface PlanDto {
   serverId: number;
   // csv από ύψη ("720,480"), κενό/παραλειπόμενο = καθόλου transcoding.
   ladder?: string | null;
+  // Πόσους εξωτερικούς προορισμούς (YouTube κ.λπ.) επιτρέπει ανά stream.
+  // 0 = καθόλου αναδιανομή, δες schema.prisma.
+  maxRelays?: number;
 }
 
 // Χωρίς service: πέντε pass-through κλήσεις στο Prisma δεν χρειάζονται τρίτο
@@ -47,7 +50,13 @@ export class PlansController {
     const { name, maxViewers, maxStreams, serverId, ladder } = valid(body, true);
     return knownServer(
       this.prisma.plan.create({
-        data: { name: name!, maxViewers: maxViewers!, maxStreams: maxStreams!, serverId: serverId!, ladder: ladder ?? null },
+        data: {
+          name: name!, maxViewers: maxViewers!, maxStreams: maxStreams!, serverId: serverId!,
+          ladder: ladder ?? null,
+          // Παραλειπόμενο = 0, δηλαδή «χωρίς αναδιανομή»: η σωστή προεπιλογή για
+          // κάθε πλάνο που φτιάχτηκε πριν υπάρξει το χαρακτηριστικό.
+          maxRelays: body.maxRelays ?? 0,
+        },
       }),
     );
   }
@@ -105,6 +114,11 @@ function valid(body: Partial<PlanDto>, required: boolean) {
       continue;
     }
     if (!Number.isInteger(v) || v < 1) throw new BadRequestException(`${field}: ακέραιος ≥ 1`);
+  }
+  // Το maxRelays είναι το μόνο όριο που επιτρέπει 0: εκεί το 0 σημαίνει «το
+  // πλάνο δεν πουλάει αναδιανομή» και όχι «χωρίς όριο» — δες schema.prisma.
+  if (body.maxRelays !== undefined && (!Number.isInteger(body.maxRelays) || body.maxRelays < 0)) {
+    throw new BadRequestException('maxRelays: ακέραιος ≥ 0');
   }
   if (body.ladder !== undefined) body.ladder = normalizedLadder(body.ladder);
   return body;

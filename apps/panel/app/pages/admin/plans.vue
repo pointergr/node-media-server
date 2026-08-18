@@ -9,6 +9,9 @@ interface Row {
   maxStreams: number
   // csv από ύψη, φθίνουσα — δες LADDER παρακάτω. null = καθόλου transcoding.
   ladder: string | null
+  // Προορισμοί αναδιανομής ανά stream. Εδώ το 0 σημαίνει «δεν πουλάει
+  // αναδιανομή» και όχι «χωρίς όριο», αντίθετα από τα δύο παραπάνω.
+  maxRelays: number
   serverId: number
   server: { host: string }
   _count: { subscriptions: number }
@@ -35,8 +38,8 @@ const busy = ref(false)
 
 const serverItems = computed(() => servers.value.map(s => ({ label: s.host, value: s.id })))
 const ladderItems = LADDER.map(h => ({ label: `${h}p`, value: h }))
-const form = reactive<{ name: string, maxViewers: number, maxStreams: number, ladder: number[], serverId: number | undefined }>({
-  name: '', maxViewers: 50, maxStreams: 1, ladder: [], serverId: undefined,
+const form = reactive<{ name: string, maxViewers: number, maxStreams: number, maxRelays: number, ladder: number[], serverId: number | undefined }>({
+  name: '', maxViewers: 50, maxStreams: 1, maxRelays: 0, ladder: [], serverId: undefined,
 })
 
 // heights: μόνο για το UI, δεν ταξιδεύει ποτέ προς το API — το `ladder` του
@@ -64,7 +67,7 @@ async function createPlan() {
   busy.value = true
   try {
     await api('/plans', { method: 'POST', body: JSON.stringify({ ...form, ladder: toCsv(form.ladder) }) })
-    Object.assign(form, { name: '', maxViewers: 50, maxStreams: 1, ladder: [], serverId: undefined })
+    Object.assign(form, { name: '', maxViewers: 50, maxStreams: 1, maxRelays: 0, ladder: [], serverId: undefined })
     await load()
   }
   catch (e) {
@@ -86,7 +89,7 @@ async function savePlan(p: EditRow) {
       method: 'PATCH',
       body: JSON.stringify({
         name: p.name, maxViewers: p.maxViewers, maxStreams: p.maxStreams,
-        ladder: toCsv(p.heights), serverId: p.serverId,
+        maxRelays: p.maxRelays, ladder: toCsv(p.heights), serverId: p.serverId,
       }),
     })
     toast.add({
@@ -140,7 +143,7 @@ onMounted(load)
       </template>
 
       <form class="space-y-4" @submit.prevent="createPlan">
-        <div class="grid gap-4 sm:grid-cols-5">
+        <div class="grid gap-4 sm:grid-cols-6">
           <UFormField label="Όνομα">
             <UInput v-model="form.name" placeholder="basic" required class="w-full" />
           </UFormField>
@@ -149,6 +152,9 @@ onMounted(load)
           </UFormField>
           <UFormField label="Μέγιστα streams">
             <UInputNumber v-model="form.maxStreams" :min="1" class="w-full" />
+          </UFormField>
+          <UFormField label="Αναδιανομή" help="προορισμοί ανά stream, 0 = καθόλου">
+            <UInputNumber v-model="form.maxRelays" :min="0" class="w-full" />
           </UFormField>
           <UFormField label="Αναλύσεις" help="κενό = καμία μετατροπή">
             <USelectMenu v-model="form.ladder" multiple value-key="value" :items="ladderItems" placeholder="— καμία —" class="w-full" />
@@ -172,13 +178,21 @@ onMounted(load)
           αντέχει.
         </p>
 
+        <p class="note">
+          Η <b>αναδιανομή</b> είναι πόσους εξωτερικούς προορισμούς (YouTube, Facebook, Twitch…)
+          δέχεται <em>κάθε stream</em> του πλάνου. Δεν κοστίζει CPU — η εκπομπή προωθείται
+          αυτούσια — αλλά κάθε προορισμός είναι ένα ακόμα αντίγραφό της στο upstream του
+          μηχανήματος: τρεις προορισμοί σε εκπομπή 6 Mbps είναι 18 Mbps έξω, πάνω από τους
+          θεατές. Εδώ το <b>0 σημαίνει «καθόλου»</b>, όχι «απεριόριστοι».
+        </p>
+
         <UButton type="submit" icon="i-lucide-plus" :loading="busy">Δημιουργία πλάνου</UButton>
       </form>
     </UCard>
 
     <UCard v-for="p in rows" :key="p.id">
       <div class="space-y-4">
-        <div class="grid gap-4 sm:grid-cols-5">
+        <div class="grid gap-4 sm:grid-cols-6">
           <UFormField label="Όνομα">
             <UInput v-model="p.name" class="w-full" />
           </UFormField>
@@ -187,6 +201,9 @@ onMounted(load)
           </UFormField>
           <UFormField label="Μέγιστα streams">
             <UInputNumber v-model="p.maxStreams" :min="1" class="w-full" />
+          </UFormField>
+          <UFormField label="Αναδιανομή" help="0 = καθόλου">
+            <UInputNumber v-model="p.maxRelays" :min="0" class="w-full" />
           </UFormField>
           <UFormField label="Αναλύσεις" help="ισχύει από την επόμενη εκπομπή">
             <USelectMenu v-model="p.heights" multiple value-key="value" :items="ladderItems" placeholder="— καμία —" class="w-full" />

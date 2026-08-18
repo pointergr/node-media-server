@@ -240,12 +240,34 @@ curl -X POST "${auth[@]}" -d '{"clientId":7}' $API/auth/login-link
 | `POST /clients/:id/paths/:pathId/key` | — | **νέο κλειδί στο ίδιο path** (για εκτεθειμένο κλειδί): διεύθυνση προβολής και ό,τι έχει ενσωματωθεί μένουν, ο publisher με το παλιό κόβεται σε ≤10s |
 | `DELETE /clients/:id/paths/:pathId` | — | `404` αν είναι άλλου πελάτη |
 
+### Αναδιανομή (προορισμοί του stream)
+
+Πού αλλού πάει η ίδια εκπομπή: YouTube, Facebook, Twitch — οτιδήποτε δέχεται
+RTMP. Δίνεις το Stream URL της πλατφόρμας και το Stream key της χωριστά· τα ενώνει
+το API. Δεν υπάρχει κατάλογος πλατφορμών: ό,τι είναι `rtmp://` ή `rtmps://`
+δουλεύει.
+
+| Endpoint | Σώμα | Απάντηση / σφάλματα |
+|---|---|---|
+| `POST /clients/:id/paths/:pathId/destinations` | `{name, url, key, enabled?}` | `201` ο προορισμός. `409` αν το πλάνο έχει `maxRelays: 0` (δεν πουλάει αναδιανομή) ή αν γέμισε το όριο· `400` αν το `url` δεν είναι `rtmp`/`rtmps` ή δείχνει σε loopback/ιδιωτικό δίκτυο, αν το `key` έχει κενά, αν λείπει το `name`· `404` ξένο path |
+| `PATCH /clients/:id/paths/:pathId/destinations/:destId` | οποιοδήποτε από τα ίδια πεδία | `enabled: false` = προσωρινό κλείσιμο **χωρίς** να χαθεί το κλειδί της πλατφόρμας |
+| `DELETE /clients/:id/paths/:pathId/destinations/:destId` | — | το κλειδί της πλατφόρμας χάνεται |
+
+Το όριο (`Plan.maxRelays`) μετριέται **ανά stream**, όχι ανά συνδρομή: κάθε
+κάμερα πάει στο δικό της κανάλι. Το `0` σημαίνει «καθόλου αναδιανομή» και όχι
+«χωρίς όριο» — είναι το μόνο όριο του σχήματος με αυτή τη σημασία.
+
+Η αλλαγή **δεν πιάνει στην εκπομπή που τρέχει**: οι προορισμοί διαβάζονται στην
+αρχή της, οπότε ισχύουν από την επόμενη. Η εκπομπή προωθείται αυτούσια, χωρίς
+επανακωδικοποίηση — τα όρια της πλατφόρμας (keyframe interval 2s, ήχος AAC, το
+~6 Mbps του Twitch) τα τηρεί το πρόγραμμα εκπομπής του πελάτη.
+
 ### Πλάνα
 
 | Endpoint | Σώμα | Απάντηση / σφάλματα |
 |---|---|---|
 | `GET /plans` | — | ο κατάλογος με `server` και `_count.subscriptions`, ταξινομημένος κατά `maxViewers` |
-| `POST /plans` | `{name, maxViewers, maxStreams, serverId, ladder?}` | τα δύο όρια ακέραιοι **≥1** (`400`), άγνωστος server → `400`. Το `ladder` (επιπλέον αναλύσεις, ABR) είναι csv από ύψη σε φθίνουσα σειρά, χωρίς διπλά, από τα `1080,720,480,360,240` — αλλιώς `400`· κενό = `null`. Πλάνο με `ladder` κοστίζει CPU στο μηχάνημα του `serverId` — με τι κωδικοποιείται εκεί (x264, QSV, NVENC) είναι ρύθμιση του ίδιου του stream server και δεν φαίνεται από το API |
+| `POST /plans` | `{name, maxViewers, maxStreams, serverId, ladder?, maxRelays?}` | τα δύο όρια ακέραιοι **≥1** (`400`)· το `maxRelays` (προορισμοί αναδιανομής ανά stream) ακέραιος **≥0**, όπου `0` = καθόλου, άγνωστος server → `400`. Το `ladder` (επιπλέον αναλύσεις, ABR) είναι csv από ύψη σε φθίνουσα σειρά, χωρίς διπλά, από τα `1080,720,480,360,240` — αλλιώς `400`· κενό = `null`. Πλάνο με `ladder` κοστίζει CPU στο μηχάνημα του `serverId` — με τι κωδικοποιείται εκεί (x264, QSV, NVENC) είναι ρύθμιση του ίδιου του stream server και δεν φαίνεται από το API |
 | `PATCH /plans/:id` | ίδια πεδία, όλα προαιρετικά | αλλαγή ορίων ισχύει **και για τις υπάρχουσες** συνδρομές· αλλαγή `serverId` μόνο για τις επόμενες |
 | `DELETE /plans/:id` | — | `409` αν το έχουν συνδρομές |
 
@@ -270,8 +292,10 @@ curl -X POST "${auth[@]}" -d '{"clientId":7}' $API/auth/login-link
 
 | Endpoint | Τι δίνει |
 |---|---|
-| `GET /me/streams` | τα streams του πελάτη με `host`, `path`, `key`, `streamKey`, `plan`, `subscriptionId`, `subscriptionLabel`, `suspended`, `limit`, `viewers`, `since` (`null` = δεν εκπέμπει), `in_bps`, `out_bps`, `r2Estimate` |
+| `GET /me/streams` | τα streams του πελάτη με `host`, `path`, `key`, `streamKey`, `plan`, `subscriptionId`, `subscriptionLabel`, `suspended`, `limit`, `viewers`, `since` (`null` = δεν εκπέμπει), `in_bps`, `out_bps`, `r2Estimate`, και `destinations` (οι προορισμοί αναδιανομής, με `state`: `live`/`retrying` όσο εκπέμπει, `null` αλλιώς) |
 | `POST /me/streams/:id/key` | νέο κλειδί, από τον ίδιο τον πελάτη |
+| `POST /me/streams/:id/destinations` | ο πελάτης συνδέει **μόνος του** το κανάλι του — ίδιο σώμα και ίδια σφάλματα με το admin endpoint |
+| `PATCH/DELETE /me/streams/:id/destinations/:destId` | το ίδιο, για αλλαγή και αφαίρεση |
 | `PATCH /me/subscriptions/:id` | `{label}` — ο πελάτης ονομάζει τα πακέτα του· μόνο το `label` (η αναστολή μένει στον admin) |
 | `GET /me/series?range=` | ιστορικό μόνο των δικών του paths, χωρίς CPU/μνήμη του μηχανήματος |
 

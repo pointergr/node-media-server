@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword } from '../auth/password';
+import { cleanDestination, DestinationDto } from './destinations';
 
 import type { Prisma } from '@prisma/client';
 
@@ -30,8 +31,13 @@ export const serverBrief = { select: { id: true, host: true } } as const;
 // τα όρια (δεν αντιγράφονται στη συνδρομή), ο server το πού, τα paths το τι.
 // Μία φορά, ώστε να μη διαφύγει το nested include σε κάποιον καλούντα — χωρίς το
 // `plan` δεν υπάρχει όριο να επιβληθεί.
+// Οι προορισμοί ταξιδεύουν μαζί με το path: όπου φαίνεται ένα stream (admin ή
+// /me), φαίνεται και το πού αναμεταδίδεται. Το `key` της πλατφόρμας είναι μέσα —
+// το κρύβει το panel, όπως και το δικό μας stream key (SecretKey.vue).
 export const withSubscriptions = {
-  subscriptions: { include: { plan: true, server: serverBrief, paths: true } },
+  subscriptions: {
+    include: { plan: true, server: serverBrief, paths: { include: { destinations: true } } },
+  },
 } as const;
 
 // Ρητό `select` και όχι `include`: το User κρατάει το hash του κωδικού, που δεν
@@ -191,10 +197,63 @@ export class ClientsService {
     return this.prisma.path.update({ where: { id: pathId }, data: { key: newKey() } });
   }
 
+  // Ένας εξωτερικός προορισμός (YouTube, Facebook...) πάνω σε stream του πελάτη.
+  // Το όριο είναι **του πλάνου** και μετριέται ανά stream, όχι ανά συνδρομή: κάθε
+  // κάμερα πάει στο δικό της κανάλι, και δύο κάμερες με από δύο προορισμούς είναι
+  // τέσσερα αντίγραφα της εκπομπής προς τα έξω — γι' αυτό το νούμερο είναι μικρό.
+  // Ελέγχεται μόνο εδώ, τη στιγμή της προσθήκης: προορισμοί που υπάρχουν ήδη δεν
+  // κόβονται αν αργότερα μικρύνει το πλάνο, ίδια συμπεριφορά με το maxStreams.
+  async addDestination(clientId: number, pathId: number, dto: Partial<DestinationDto>) {
+    const path = await this.pathOf(clientId, pathId);
+    const data = cleanDestination(dto) as DestinationDto;
+
+    // 0 σημαίνει «το πλάνο δεν πουλάει αναδιανομή» — ΟΧΙ «χωρίς όριο», αντίθετα
+    // από τα maxViewers/maxStreams. Δες το σχόλιο στο schema.prisma.
+    const max = path.subscription.plan.maxRelays;
+    if (!max) {
+      throw new ConflictException(`το πλάνο «${path.subscription.plan.name}» δεν περιλαμβάνει αναδιανομή`);
+    }
+    if (path.destinations.length >= max) {
+      throw new ConflictException(`το πλάνο «${path.subscription.plan.name}» επιτρέπει ${max} προορισμούς ανά stream`);
+    }
+
+    return this.prisma.destination.create({ data: { ...data, pathId } });
+  }
+
+  // Αλλαγή στοιχείων ή on/off. Το `enabled: false` κρατάει το κλειδί και απλώς
+  // βγάζει την εγγραφή από το clients.json — αλλά, σε αντίθεση με την αναστολή
+  // συνδρομής, ΔΕΝ πέφτει σε ≤10s: οι προορισμοί διαβάζονται μία φορά, στην αρχή
+  // της εκπομπής (apps/stream/app.js#postPublish).
+  async updateDestination(clientId: number, pathId: number, id: number, dto: Partial<DestinationDto>) {
+    await this.destinationOf(clientId, pathId, id);
+    const data = cleanDestination(dto, true);
+    if (!Object.keys(data).length) throw new BadRequestException('τίποτα προς αλλαγή');
+    return this.prisma.destination.update({ where: { id }, data });
+  }
+
+  async removeDestination(clientId: number, pathId: number, id: number) {
+    await this.destinationOf(clientId, pathId, id);
+    await this.prisma.destination.delete({ where: { id } });
+  }
+
+  // Ο προορισμός **αυτού του path, αυτού του πελάτη**: το pathOf κάνει ήδη τον
+  // έλεγχο ιδιοκτησίας, εδώ μένει μόνο να μην τρυπώσει id προορισμού άλλου path.
+  private async destinationOf(clientId: number, pathId: number, id: number) {
+    const path = await this.pathOf(clientId, pathId);
+    const dest = path.destinations.find((d) => d.id === id);
+    if (!dest) throw new NotFoundException('destination not found');
+    return dest;
+  }
+
   // Ίδιος έλεγχος ιδιοκτησίας με το subscriptionOf, για τα paths: ένα pathId
   // άλλου πελάτη δεν πρέπει να σβήνεται ούτε να αλλάζει κλειδί από εδώ.
   private async pathOf(clientId: number, id: number) {
-    const path = await this.prisma.path.findUnique({ where: { id }, include: { subscription: true } });
+    const path = await this.prisma.path.findUnique({
+      where: { id },
+      // Το πλάνο δίνει το όριο προορισμών και οι υπάρχοντες το τρέχον πλήθος —
+      // και τα δύο τα θέλει η addDestination, που είναι ο μόνος καλών με όριο.
+      include: { subscription: { include: { plan: true } }, destinations: true },
+    });
     if (!path || path.subscription.clientId !== clientId) throw new NotFoundException('path not found');
     return path;
   }

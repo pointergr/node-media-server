@@ -61,6 +61,13 @@ model Plan {
   // κορυφή είναι πάντα η ίδια η πηγή σε copy, γιατί το re-encode της θα
   // διπλασίαζε το κόστος για μηδέν κέρδος. null = καθόλου transcoding.
   ladder        String?
+  // Πόσους εξωτερικούς προορισμούς (YouTube, Facebook, Twitch...) επιτρέπει το
+  // πλάνο **ανά stream**. Προσοχή: εδώ το 0 σημαίνει «καθόλου αναδιανομή» και
+  // ΟΧΙ «χωρίς όριο», αντίθετα από τα maxViewers/maxStreams παραπάνω. Ο λόγος
+  // είναι ότι κάθε προορισμός είναι ένα ακόμα αντίγραφο της εκπομπής προς τα
+  // έξω: «απεριόριστοι» δεν είναι κάτι που μπορεί να πουληθεί, ενώ «κανένας»
+  // είναι η σωστή προεπιλογή για κάθε πλάνο που υπάρχει ήδη.
+  maxRelays     Int            @default(0)
   server        Server         @relation(fields: [serverId], references: [id])
   subscriptions Subscription[]
 }
@@ -106,8 +113,39 @@ model Path {
   // μπορούν να διεκδικήσουν το ίδιο path.
   serverId       Int
   server         Server       @relation(fields: [serverId], references: [id])
+  destinations   Destination[]
 
   @@unique([serverId, path])
+}
+
+// Ένας εξωτερικός προορισμός αναδιανομής: πού αλλού πάει η ίδια εκπομπή. Κρέμεται
+// από το **path** και όχι από τη συνδρομή, γιατί κάθε κάμερα πάει σε άλλο κανάλι
+// — δύο streams της ίδιας εκκλησίας δεν μοιράζονται λογαριασμό YouTube.
+//
+// Ο stream server δεν ξέρει τίποτα από «πλατφόρμες»: το sync του δίνει έτοιμο
+// `rtmp://.../<key>` και εκείνος σηκώνει έναν ffmpeg (apps/stream/relay.js).
+// Γι' αυτό μια νέα πλατφόρμα δεν χρειάζεται καμία αλλαγή πουθενά — αρκεί να
+// δέχεται RTMP.
+model Destination {
+  id      Int     @id @default(autoincrement())
+  // «YouTube», «Facebook εκκλησίας». Ταξιδεύει ως το snapshot του stream server:
+  // όταν ένας προορισμός δεν συνδέεται, το όνομα είναι το μόνο που τον ξεχωρίζει.
+  name    String
+  // Το ingest URL της πλατφόρμας, ΧΩΡΙΣ το κλειδί (rtmp://a.rtmp.youtube.com/live2).
+  url     String
+  // Το stream key της πλατφόρμας. Χωριστό πεδίο και όχι κολλημένο στο url: αυτό
+  // είναι το μυστικό, άρα αυτό — και μόνο αυτό — κρύβει το panel. Βολεύει και
+  // τον πελάτη, γιατί έτσι ακριβώς τα δίνουν οι πλατφόρμες, σε δύο πεδία.
+  key     String
+  // Προσωρινό κλείσιμο χωρίς να χαθεί το κλειδί: η εγγραφή λείπει από το
+  // clients.json και ο stream server δεν σηκώνει relay γι' αυτήν. Σε αντίθεση με
+  // την αναστολή συνδρομής, ΔΕΝ πέφτει σε ≤10s: οι προορισμοί διαβάζονται μία
+  // φορά, στην αρχή της εκπομπής (δες apps/stream/app.js#postPublish), οπότε
+  // ισχύει από την επόμενη.
+  enabled Boolean @default(true)
+  pathId  Int
+  // Cascade: σβήνοντας το stream φεύγουν και οι προορισμοί του.
+  path    Path    @relation(fields: [pathId], references: [id], onDelete: Cascade)
 }
 
 // Κλειδί για εξωτερική υπηρεσία (provisioning): ό,τι κάνει ένας admin, χωρίς
