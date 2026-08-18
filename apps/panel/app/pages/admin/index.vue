@@ -58,15 +58,20 @@ const tiles = computed(() => [
   { label: `Μνήμη ${selected.value}`, value: current.value ? String(current.value.snapshot.server.rss_mb) : '—', unit: 'MB' },
 ])
 
-// Ο player ανοίγει σε popup και όχι μέσα στη σελίδα: με 2-3 ζωντανές εκπομπές τα
-// preview έπιαναν όλο το ύψος και το dashboard έπαυε να δείχνει νούμερα. Ένα
-// παράθυρο ανά stream (το όνομα είναι host+path): δεύτερο κλικ φέρνει μπροστά το
-// ίδιο, αντί για δεύτερο player πάνω στο ίδιο stream — κάθε player μετράει ως
-// κανονικός θεατής.
-function openPlayer(s: { host: string, stream: string }) {
-  const url = `/admin/streams/${encodeURIComponent(s.stream)}?host=${s.host}`
-  window.open(url, `player:${s.host}${s.stream}`, 'popup=yes,width=960,height=640')?.focus()
-}
+// Ο stream server σερβίρει το HLS από το ίδιο hostname με το οποίο δηλώνεται στο
+// panel (config.panel.host == το domain του Caddy του) — δες apps/stream/install.
+const hlsUrl = (host: string, stream: string) =>
+  `https://${host}/${stream.replace(/^\//, '')}/index.m3u8`
+
+// Ο player ζει σε modal και όχι μέσα στη σελίδα: ο διαχειριστής θέλει να δει ότι
+// παίζει και να το κλείσει. Με το κλείσιμο το PlayerStage φεύγει από το DOM και
+// το onBeforeUnmount του σταματάει τη λήψη — ένα ξεχασμένο ανοιχτό player μετράει
+// ως κανονικός θεατής στα ίδια νούμερα που δείχνει από πάνω.
+const playing = ref<{ host: string, stream: string } | null>(null)
+const playerOpen = computed({
+  get: () => !!playing.value,
+  set: (v: boolean) => { if (!v) playing.value = null },
+})
 
 async function loadLive() {
   try {
@@ -259,7 +264,7 @@ watch([selected, range], () => {
               <td>{{ s.video }} · {{ s.audio }}</td>
               <td>{{ s.protocol }} από {{ s.ip }}</td>
               <td>
-                <UButton size="xs" color="neutral" variant="subtle" icon="i-lucide-play" @click="openPlayer(s)">
+                <UButton size="xs" color="neutral" variant="subtle" icon="i-lucide-play" @click="playing = s">
                   player
                 </UButton>
               </td>
@@ -352,5 +357,15 @@ watch([selected, range], () => {
         περισσότερες συνδέσεις ({{ past.length - pastLimit }})
       </UButton>
     </UCard>
+
+    <!-- Ένα modal για όλες τις γραμμές, όχι ένα ανά stream: ένας player τη φορά
+         είναι ούτως ή άλλως το ζητούμενο, και το `v-if` εγγυάται ότι το κλείσιμο
+         πράγματι ξηλώνει το <video> (το x του modal δεν είναι Stop). Με `auto`:
+         εδώ ο διαχειριστής ήρθε αποκλειστικά για να δει αν παίζει. -->
+    <UModal v-model:open="playerOpen" :title="playing?.stream" :description="playing?.host" :ui="{ content: 'sm:max-w-4xl', body: 'p-0 sm:p-0' }">
+      <template #body>
+        <PlayerStage v-if="playing" :src="hlsUrl(playing.host, playing.stream)" auto />
+      </template>
+    </UModal>
   </div>
 </template>
