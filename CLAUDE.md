@@ -59,6 +59,14 @@ master playlist + variants: `split`/`scale` ανά σκαλοπάτι, `-var_str
 `clientOf`, `overLimit`, samples και panel. Πλαφόν encoded σκαλοπατιών ανά server
 (`config.hls.maxRenditions`), γιατί το πλάνο είναι εμπορική υπόσχεση και το πλαφόν είναι τι
 σηκώνει το μηχάνημα.
+Ο **encoder** είναι κι αυτός του server (`config.hls.encoder`, πίνακας `ENCODERS`): άγνωστη
+ή απούσα τιμή ⇒ `x264` και τα σημερινά args ακριβώς, οπότε ο στόλος χωρίς GPU δεν βλέπει
+τίποτα. Το `app.js#usableEncoder` τον δοκιμάζει **μία φορά στο boot** με ένα καρέ από
+`lavfi` (ο κατάλογος `-encoders` δείχνει τον nvenc και χωρίς driver) και πέφτει σε x264 με
+ένα log αν αποτύχει: αλλιώς λάθος τιμή σκοτώνει τον ffmpeg κάθε εκπομπής μέχρι το
+`RESPAWN_MAX`. Με x264 ο probe δεν τρέχει καν. Το scale μένει στη CPU και για τους δύο
+GPU encoders — δέχονται software frames, και το `scale_cuda`/`hwupload` θα ήθελε άλλο
+filter graph ανά encoder για το φθηνό κομμάτι της δουλειάς.
 Το «ποτέ upscale» θέλει το ύψος της πηγής, που **δεν υπάρχει ακόμα στο `postPublish`**: το
 `videoHeight` γράφεται όταν φτάσει το `@setDataFrame` (`broadcast_server.js:200`), ενώ το
 event εκπέμπεται με την εντολή publish (`:159`). Γι' αυτό το `app.js#spawnWhenReady`
@@ -233,5 +241,12 @@ Series/sessions/restart είναι πάντα **ανά server** (`GET /servers/:
 ## Deploy
 
 Ένα `apps/stream/install <hostname> [--docker]` για bare metal (caddy + volta + pm2) και Docker (compose με caddy container). Ένα `Caddyfile` και για τα δύο — το `STREAM_HOST` πέφτει σε `localhost` χωρίς Docker. Τα `header` directives θέλουν **`defer`**, αλλιώς προστίθεται από πάνω το `Cache-Control` του `express.static` και βγαίνουν δύο τιμές στην ίδια απόκριση.
+
+Ό,τι αφορά **μόνο ένα** μηχάνημα (GPU devices, `NVIDIA_DRIVER_CAPABILITIES`, ο iHD driver
+μέσω του build arg `EXTRA_PKGS` του Dockerfile) ζει σε `apps/stream/docker-compose.override.yml`,
+που είναι στο `.gitignore`: στο κοινό compose ένα `devices: /dev/dri` ή ένας nvidia driver
+θα έσκαγε κάθε `up` σε απλό VPS, και μια τοπική αλλαγή στο tracked Dockerfile θα ζητούσε
+merge σε κάθε `git pull` της ενημέρωσης. Το ffmpeg του image έχει ήδη χτισμένους τους
+nvenc/qsv/vaapi — λείπει πάντα μόνο ο runtime driver.
 
 `.m3u8` → ποτέ cache (αλλιώς σπάει η μέτρηση θεατών). `.ts` → immutable. Το `rtmp.<domain>` πρέπει να είναι DNS only στο Cloudflare — το proxy δεν περνάει το 1935.

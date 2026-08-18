@@ -12,6 +12,7 @@
   },
   "hls": {
     "ffmpeg": "/usr/bin/ffmpeg",
+    "encoder": "x264",
     "maxRenditions": 3,
     "r2": {
       "endpoint": "https://<account-id>.r2.cloudflarestorage.com",

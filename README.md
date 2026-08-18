@@ -337,8 +337,121 @@ ffmpeg αναλόγως ([`ladder.js`](apps/stream/ladder.js)).
 Η αλλαγή του ladder ενός πλάνου ισχύει **από την επόμενη εκπομπή** κάθε stream — δεν
 διακόπτει όσες τρέχουν. (Η *ανάκληση* πελάτη παραμένει άμεση, ≤10s: άλλο πράγμα.)
 
-Δες [PLAN-transcoding.md](PLAN-transcoding.md) για το σκεπτικό και για τον δρόμο προς
-transcoding με GPU.
+Δες [PLAN-transcoding.md](PLAN-transcoding.md) για το σκεπτικό.
+
+#### Επιτάχυνση με GPU
+
+Το `config.json` → `hls.encoder` λέει **με τι** κωδικοποιεί αυτό το μηχάνημα:
+
+| τιμή | codec | πότε |
+|---|---|---|
+| `x264` (προεπιλογή, ή απόν) | `libx264 -preset veryfast` | παντού· καμία απαίτηση |
+| `qsv` | `h264_qsv` | Intel iGPU/Arc, με `/dev/dri` περασμένο στο container |
+| `nvenc` | `h264_nvenc` | NVIDIA, με nvidia-container-toolkit και GPU στο compose |
+
+Το πλάνο δεν το ξέρει και δεν το αλλάζει: ο πελάτης αγοράζει *σκαλοπάτια*, ο server τα
+βγάζει με ό,τι έχει. Ένα μηχάνημα με GPU μπαίνει ως κανονικός server στο panel και τα
+πλάνα με ladder δείχνουν εκεί (`Plan.serverId`) — καμία νέα έννοια, μεγαλύτερο
+`hls.maxRenditions`.
+
+Επιταχύνονται **μόνο τα σκαλοπάτια που κωδικοποιούνται**. Η κορυφή είναι `copy` ούτως ή
+άλλως, και το scaling μένει στη CPU και στις τρεις περιπτώσεις (φθηνό· ακριβό είναι το
+encode).
+
+Το ffmpeg του image (Debian 5.1) έχει **ήδη χτισμένους** τους `h264_nvenc`, `h264_qsv`
+και `h264_vaapi` — δεν χρειάζεται δικό μας build. Λείπει μόνο ο runtime driver της κάρτας
+και το device μέσα στο container.
+
+Ο encoder **δοκιμάζεται στο boot** με ένα καρέ. Αν δεν δουλεύει (λάθος τιμή, GPU που δεν
+υπάρχει, driver ή codec που λείπει από το ffmpeg) γράφεται μια γραμμή στο log και ο server
+συνεχίζει με x264: πιο ακριβά, αλλά οι εκπομπές βγαίνουν. Σε server χωρίς τη ρύθμιση δεν
+τρέχει καν η δοκιμή — τίποτα δεν αλλάζει, ούτε ένα ffmpeg arg.
+
+```
+HLS encoder: h264_nvenc                                     # δουλεύει
+config.hls.encoder "nvenc": ο h264_nvenc δεν δουλεύει εδώ (exit 255) — συνεχίζω με x264
+```
+
+Το `hls.encoder` διαβάζεται **μόνο στο boot**: μετά την αλλαγή θέλει
+`docker compose restart stream` (ή `pm2 restart stream`).
+
+##### NVIDIA (nvenc)
+
+Στο host: ο driver της NVIDIA και το
+[nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+Στο μηχάνημα με την κάρτα — και **μόνο** εκεί — ένα `apps/stream/docker-compose.override.yml`
+(είναι στο `.gitignore` και το φορτώνει μόνο του το compose):
+
+```yaml
+services:
+  stream:
+    environment:
+      # Χωρίς αυτό ο toolkit περνάει μόνο compute/utility και ο nvenc σκάει σε
+      # μηχάνημα που κατά τα άλλα «βλέπει» την κάρτα.
+      NVIDIA_DRIVER_CAPABILITIES: video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video]
+```
+
+Στο κοινό `docker-compose.yml` δεν μπαίνει ποτέ: κάθε `docker compose up` σε απλό VPS θα
+έσκαγε στο `could not select device driver "nvidia"`.
+
+Οι **consumer** κάρτες (GeForce) έχουν όριο ταυτόχρονων NVENC sessions στον driver — το
+όριο μετράει *encoded renditions*, όχι εκπομπές, οπότε ένα ladder των δύο σκαλοπατιών το
+πιάνει στις μισές εκπομπές. Οι Quadro/datacenter δεν το έχουν.
+
+##### Intel (qsv)
+
+Στο override, το device του host και ο iHD driver ως build arg:
+
+```yaml
+services:
+  stream:
+    build:
+      args:
+        # Το node:24-slim έχει μόνο το `main` του Debian: το
+        # intel-media-va-driver-non-free δεν υπάρχει εκεί — αν το θέλεις
+        # (HEVC/VP9 encode), πρόσθεσε πρώτα το non-free component.
+        # Για Gen8-11 iGPU: libmfx1 αντί για libmfx-gen1.2.
+        EXTRA_PKGS: intel-media-va-driver libmfx-gen1.2
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+Το `EXTRA_PKGS` είναι build arg του [`Dockerfile`](apps/stream/Dockerfile) ώστε το
+μηχάνημα με το iGPU να μην κρατάει τοπική αλλαγή σε αρχείο του git — αλλιώς κάθε
+`git pull` της [ενημέρωσης](#ενημέρωση-υπάρχοντος-server) θα ζητούσε merge. Μετά την
+αλλαγή θέλει `docker compose up -d --build`.
+
+##### AMD και VA-API
+
+**Δεν υποστηρίζεται**, σκόπιμα. Ο VA-API είναι ο μόνος δρόμος για κάρτες AMD, αλλά σε
+αντίθεση με τους άλλους δύο *απαιτεί* τα frames να ανέβουν ρητά στην GPU
+(`-vaapi_device` + `format=nv12,hwupload` μέσα στο filter graph) — δηλαδή διαφορετικό
+`filter_complex` ανά encoder, εκεί που σήμερα αλλάζουν τρεις λέξεις. Επειδή ο VA-API
+δουλεύει και σε Intel, ένα μηχάνημα Intel το εξυπηρετεί το `qsv` χωρίς τίποτα από αυτά.
+
+Μπαίνει όταν υπάρξει μηχάνημα με AMD κάρτα και ζήτηση να το γεμίσει — τότε το `ENCODERS`
+του [`ladder.js`](apps/stream/ladder.js) αποκτά και προαιρετικό filter/global args ανά
+encoder. Μέχρι τότε: `vaapi` στο `config.json` είναι άγνωστη τιμή, δηλαδή x264.
+
+##### Έλεγχος
+
+```bash
+docker compose exec stream ffmpeg -hide_banner -encoders | grep -E "nvenc|qsv"   # χτισμένο στο ffmpeg;
+docker compose exec stream ffmpeg -hide_banner -f lavfi -i testsrc=d=0.1 \
+  -c:v h264_nvenc -b:v 1000k -f null -                                           # δουλεύει εδώ;
+docker compose logs stream | grep -i encoder                                     # τι διάλεξε στο boot
+```
+
+Το πρώτο δεν αρκεί μόνο του — **πάντα** περνάει: το ffmpeg του Debian δείχνει τον
+`h264_nvenc` και σε μηχάνημα χωρίς κάρτα, γιατί τη `libnvidia-encode` την ψάχνει στο
+runtime. Γι' αυτό ο server κάνει το δεύτερο, στο boot.
 
 ### Segments στο R2 (προαιρετικό, αλλά ο σωστός τρόπος)
 

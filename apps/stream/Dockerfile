@@ -3,8 +3,13 @@
 FROM node:24-slim
 
 # Το HLS βγαίνει από ffmpeg remux, δες config.json -> hls.ffmpeg
+# Το EXTRA_PKGS είναι για τα μηχανήματα με GPU: το ffmpeg του Debian έχει ήδη
+# χτισμένους τους h264_nvenc/h264_qsv, λείπει μόνο ο runtime driver — και αυτός
+# διαφέρει ανά κάρτα. Ως build arg, ώστε το μηχάνημα με το iGPU να μην κρατάει
+# τοπική αλλαγή σε αρχείο του git (δες docker-compose.override.yml στο README).
+ARG EXTRA_PKGS=""
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg \
+ && apt-get install -y --no-install-recommends ffmpeg ${EXTRA_PKGS} \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

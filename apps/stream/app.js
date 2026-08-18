@@ -1,5 +1,5 @@
 import NodeMediaServer from "node-media-server";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
 import { loadConfig, saveConfig, publishAllowed, ladderOf, closeSession } from "./config.js";
@@ -7,7 +7,7 @@ import { startPanelSync } from "./panel.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
 import { patchAvc1 } from "./ertmp.js";
-import { ffmpegArgs, renditions, waitForHeight } from "./ladder.js";
+import { ENCODERS, ffmpegArgs, renditions, waitForHeight } from "./ladder.js";
 
 patchAvc1();
 
@@ -32,6 +32,29 @@ const noSlash = (o) => {
   return clean;
 };
 const r2 = config.hls.r2?.accessKeyId ? noSlash(config.hls.r2) : null;
+
+// Ο encoder δοκιμάζεται μία φορά, στο boot, με ένα πραγματικό καρέ. Ο κατάλογος
+// `ffmpeg -encoders` δεν αρκεί: το ffmpeg του Debian δείχνει τον h264_nvenc και
+// σε μηχάνημα χωρίς driver — τη libnvidia-encode την ψάχνει στο runtime. Χωρίς
+// τη δοκιμή, ένα λάθος στο config.json θα σκότωνε τον ffmpeg στο πρώτο καρέ
+// *κάθε* εκπομπής, μέχρι να παραιτηθεί το RESPAWN_MAX: HLS νεκρό, και το μόνο
+// ίχνος ένα exit code. Αποτυχία εδώ = πέφτουμε στον x264 και συνεχίζουμε — πιο
+// ακριβά, αλλά ο server σηκώνεται πάντα και οι εκπομπές βγαίνουν πάντα.
+function usableEncoder(name) {
+  if (!name || !ENCODERS[name] || name === "x264") return "x264";
+  const { status, error } = spawnSync(config.hls.ffmpeg, [
+    "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", "testsrc=size=320x240:duration=0.1",
+    // Με bitrate, όπως στην πραγματική εκπομπή: ο qsv απορρίπτει το default
+    // rate control του και θα έβγαζε αποτυχία σε μηχάνημα που δουλεύει μια χαρά.
+    "-c:v", ENCODERS[name].codec, "-b:v", "1000k", "-f", "null", "-",
+  ], { stdio: ["ignore", "ignore", "inherit"], timeout: 30000 });
+  if (status === 0) return name;
+  console.error(`config.hls.encoder "${name}": ο ${ENCODERS[name].codec} δεν δουλεύει εδώ (${error?.message ?? `exit ${status}`}) — συνεχίζω με x264`);
+  return "x264";
+}
+const encoder = usableEncoder(config.hls.encoder);
+if (encoder !== "x264") console.log(`HLS encoder: ${ENCODERS[encoder].codec}`);
 
 // Το v4 παράγει jwt secret μόνο όταν τρέχει με το δικό του bin/app.js
 if (!config.auth.jwt.secret) {
@@ -87,6 +110,7 @@ function startFfmpeg(streamPath, job) {
       dir, streamPath, prefix,
       rtmpPort: config.rtmp.port,
       ladder: job.steps,
+      encoder,
       r2,
     }),
     { stdio: ["ignore", "ignore", "inherit"] }
