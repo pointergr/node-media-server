@@ -311,7 +311,7 @@ onMounted(load)
       <h1>Πελάτες</h1>
       <span class="grow" />
       <UInput
-        v-model="q" icon="i-lucide-search" placeholder="Αναζήτηση…"
+        v-model="q" icon="i-lucide-search" placeholder="Πελάτης, χρήστης, stream…"
         class="w-full sm:w-72" @keydown.esc="q = ''"
       />
     </div>
