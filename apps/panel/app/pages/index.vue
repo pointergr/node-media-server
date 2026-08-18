@@ -42,7 +42,22 @@ interface MyStream {
   host?: string
 }
 
+// Οι συνδρομές είναι ξεχωριστή κλήση από τα streams: το /me/streams γυρίζει
+// paths, οπότε ένα πακέτο που μόλις αγοράστηκε (κανένα stream ακόμα) δεν θα
+// φαινόταν πουθενά — και από εκεί ακριβώς ξεκινάει ο πελάτης.
+interface MySub {
+  id: number
+  plan: string
+  label: string | null
+  host: string
+  maxStreams: number
+  maxViewers: number
+  streams: number
+  suspended: boolean
+}
+
 const streams = ref<MyStream[]>([])
+const subs = ref<MySub[]>([])
 const series = ref<Series>({ bucket: 0, from: 0, streams: [], server: [] })
 // Το ιστορικό κρατιέται 30 μέρες στον stream server (stats.js#RETENTION_DAYS),
 // οπότε τα ίδια διαστήματα με το /admin — δεν υπάρχει λόγος ο πελάτης να βλέπει
@@ -66,30 +81,36 @@ interface Pack {
   plan: string
   host?: string
   limit: number
+  // Το όριο streams: μετράει paths, όχι ταυτόχρονες εκπομπές — το επιβάλλει το
+  // API (clients.service#addPath), εδώ μόνο φαίνεται και κλειδώνει το κουμπί.
+  maxStreams: number
   viewers: number
   suspended: boolean
   live: MyStream[]
   idle: MyStream[]
 }
 
+// Η λίστα βγαίνει από τις **συνδρομές** και όχι από τα streams: αλλιώς ένα άδειο
+// πακέτο δεν θα είχε κάρτα, άρα ούτε κουμπί «νέο stream».
 const packs = computed<Pack[]>(() => {
-  const m = new Map<number, Pack>()
+  const m = new Map<number, Pack>(subs.value.map(sub => [sub.id, {
+    id: sub.id,
+    title: '',
+    label: sub.label,
+    plan: sub.plan,
+    host: sub.host,
+    limit: sub.maxViewers,
+    maxStreams: sub.maxStreams,
+    viewers: 0,
+    suspended: sub.suspended,
+    live: [],
+    idle: [],
+  }]))
   for (const s of streams.value) {
-    const p = m.get(s.subscriptionId) ?? {
-      id: s.subscriptionId,
-      title: '',
-      label: s.subscriptionLabel,
-      plan: s.plan,
-      host: s.host,
-      limit: s.limit,
-      viewers: 0,
-      suspended: s.suspended,
-      live: [],
-      idle: [],
-    }
+    const p = m.get(s.subscriptionId)
+    if (!p) continue // stream χωρίς πακέτο δεν υπάρχει· αν συμβεί, το /me/subscriptions είναι η αλήθεια
     p.viewers += s.viewers
     ;(s.since ? p.live : p.idle).push(s)
-    m.set(s.subscriptionId, p)
   }
   // Σταθερή σειρά κατά id (σειρά αγοράς): η θέση είναι μέρος της ταυτότητας για
   // όσα πακέτα δεν έχουν όνομα ακόμα — «Πακέτο 2» δεν πρέπει να αλλάζει θέση σε
@@ -125,7 +146,13 @@ const rtmp = (s: MyStream) => `rtmp://rtmp.${s.host}/${s.path.split('/')[1]}`
 
 async function load() {
   try {
-    streams.value = await api<MyStream[]>('/me/streams')
+    // Παράλληλα: δύο σειριακά requests κάθε 10s χωρίς λόγο.
+    const [mine, packages] = await Promise.all([
+      api<MyStream[]>('/me/streams'),
+      api<MySub[]>('/me/subscriptions'),
+    ])
+    streams.value = mine
+    subs.value = packages
     now.value = Date.now()
     error.value = ''
   }
@@ -147,6 +174,25 @@ async function refreshKey(s: MyStream) {
   }
   catch (e) {
     error.value = (e as Error).message
+  }
+}
+
+// Νέο stream χωρίς να περιμένει τον διαχειριστή. Το όνομα του path το δίνει το
+// API· εδώ δεν ελέγχεται το όριο — το κουμπί κλειδώνει, αλλά το 409 του API
+// είναι η πραγματική επιβολή (δύο καρτέλες ανοιχτές, ίδιο πακέτο).
+const creating = ref<number | null>(null)
+
+async function createStream(p: Pack) {
+  creating.value = p.id
+  try {
+    await api('/me/streams', { method: 'POST', body: JSON.stringify({ subscriptionId: p.id }) })
+    await load()
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+  finally {
+    creating.value = null
   }
 }
 
@@ -265,6 +311,21 @@ onBeforeUnmount(() => {
           > (χωρίς όριο)</template>
         </UBadge>
         <span v-if="p.host" class="viewers">{{ p.host }}</span>
+        <!-- Τα streams του πακέτου τα φτιάχνει ο πελάτης, μέχρι το όριο του
+             πλάνου του: κλειδωμένο κουμπί αντί για κρυμμένο, ώστε να φαίνεται
+             ότι υπάρχει όριο και ποιο είναι. Σε αναστολή δεν προσθέτουμε: το
+             πακέτο δεν εκπέμπει ούτως ή άλλως. -->
+        <UButton
+          size="xs" color="neutral" variant="subtle" icon="i-lucide-plus"
+          :loading="creating === p.id"
+          :disabled="p.suspended || p.live.length + p.idle.length >= p.maxStreams"
+          :title="p.live.length + p.idle.length >= p.maxStreams
+            ? `Το πλάνο «${p.plan}» επιτρέπει ${p.maxStreams} streams`
+            : 'Νέο stream σε αυτό το πακέτο'"
+          @click="createStream(p)"
+        >
+          Νέο stream ({{ p.live.length + p.idle.length }}/{{ p.maxStreams }})
+        </UButton>
       </div>
 
       <div v-if="p.live.length" class="hero">
@@ -395,7 +456,7 @@ onBeforeUnmount(() => {
     <!-- Λογαριασμός χωρίς κανένα πακέτο: ούτε κεφαλίδα ούτε λίστα έχουν τι να
          δείξουν. Το σφάλμα το λέει ήδη το UAlert από πάνω. -->
     <UCard v-if="!packs.length && !error">
-      <div class="quiet">Δεν υπάρχει stream στον λογαριασμό σου.</div>
+      <div class="quiet">Δεν υπάρχει πακέτο στον λογαριασμό σου.</div>
     </UCard>
 
     <!-- Οι αναλυτικές οδηγίες ζουν στο /help — εδώ μένει μόνο η υπενθύμιση ότι το

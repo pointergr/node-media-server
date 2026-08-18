@@ -918,3 +918,69 @@ test('login-link: πελάτης χωρίς χρήστη -> 400', async () => {
   const res = await post(auth, '/auth/login-link', { clientId: client.id });
   assert.equal(res.status, 400);
 });
+
+// --- Ο πελάτης φτιάχνει μόνος του streams -----------------------------------
+// Το όριο δεν ξαναγράφεται εδώ: το endpoint του /me περνάει από την ίδια
+// addPath με τον admin, οπότε το τεστ ελέγχει ότι πράγματι περνάει από εκεί
+// (409 στο όριο) και ότι το clientId βγαίνει από το token (404 σε ξένη
+// συνδρομή), όχι από το σώμα του αιτήματος.
+test('/me/streams POST: ο πελάτης φτιάχνει streams μέχρι το όριο του πακέτου του', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'ftiaxno-monos', 10, 2, ids.serverA);
+  const created = await post(auth, '/clients', { name: 'ftiaxnei-monos', username: 'ftiaxnei', password: 'pass1234' });
+  assert.equal(created.status, 201);
+  const client = (await created.json()) as { id: number };
+  const sub = await mkSub(auth, client.id, plan.id);
+
+  const token = await login('ftiaxnei', 'pass1234');
+  const me: Auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const first = await post(me, '/me/streams', { subscriptionId: sub.id });
+  assert.equal(first.status, 201);
+  // Το όνομα το δίνει το API (nextPath) — ο πελάτης δεν διαλέγει path.
+  assert.equal(((await first.json()) as { path: string }).path, `/live/c${client.id}-s${sub.id}-1`);
+  assert.equal((await post(me, '/me/streams', { subscriptionId: sub.id })).status, 201);
+
+  const third = await post(me, '/me/streams', { subscriptionId: sub.id });
+  assert.equal(third.status, 409, 'το όριο του πακέτου κόβει το τρίτο');
+  assert.match(((await third.json()) as { message: string }).message, /2 streams/);
+
+  // Η συνδρομή του pelatis-a δεν είναι δική του: 404, όχι path μέσα σε ξένο πλάνο.
+  assert.equal((await post(me, '/me/streams', { subscriptionId: ids.subA })).status, 404);
+
+  const mine = (await (await fetch(`${base}/me/streams`, { headers: me })).json()) as { path: string }[];
+  assert.deepEqual(mine.map((s) => s.path), [`/live/c${client.id}-s${sub.id}-1`, `/live/c${client.id}-s${sub.id}-2`]);
+});
+
+// Το /me/streams δείχνει paths· μια συνδρομή χωρίς κανένα path δεν φαίνεται
+// πουθενά, οπότε ο πελάτης που μόλις αγόρασε δεν θα είχε από πού να πατήσει
+// «νέο stream». Γι' αυτό ξεχωριστό endpoint με τα πακέτα.
+test('/me/subscriptions: τα πακέτα του πελάτη με τα όριά τους, ακόμα και άδεια', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'adeio-paketo', 9, 4, ids.serverA);
+  const created = await post(auth, '/clients', { name: 'molis-agorase', username: 'molis', password: 'pass1234' });
+  const client = (await created.json()) as { id: number };
+  const sub = await mkSub(auth, client.id, plan.id);
+
+  const token = await login('molis', 'pass1234');
+  const me: Auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+
+  const subs = (await (await fetch(`${base}/me/subscriptions`, { headers: me })).json()) as {
+    id: number; plan: string; label: string | null; host: string;
+    maxStreams: number; maxViewers: number; streams: number; suspended: boolean;
+  }[];
+  assert.deepEqual(subs, [{
+    id: sub.id, plan: 'adeio-paketo', label: null, host: 'server-a',
+    maxStreams: 4, maxViewers: 9, streams: 0, suspended: false,
+  }], 'άδειο πακέτο, με το όριο και τα μηδέν streams του');
+
+  assert.equal((await post(me, '/me/streams', { subscriptionId: sub.id })).status, 201);
+  const after = (await (await fetch(`${base}/me/subscriptions`, { headers: me })).json()) as { streams: number }[];
+  assert.equal(after[0]!.streams, 1, 'το πλήθος ακολουθεί το νέο stream');
+
+  // Ξένα πακέτα δεν φαίνονται: το clientId βγαίνει από το token.
+  const other = (await (await fetch(`${base}/me/subscriptions`, {
+    headers: { authorization: `Bearer ${await login('usera', 'passa')}` },
+  })).json()) as { id: number }[];
+  assert.equal(other.some((s) => s.id === sub.id), false);
+});

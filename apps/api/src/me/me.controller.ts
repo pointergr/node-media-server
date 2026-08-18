@@ -108,6 +108,38 @@ export class MeController {
     });
   }
 
+  // Τα πακέτα του, ακόμα κι αυτά χωρίς κανένα stream: το /me/streams γυρίζει
+  // paths, οπότε μια συνδρομή που μόλις αγοράστηκε δεν φαίνεται πουθενά — και το
+  // «νέο stream» δεν θα είχε πού να σταθεί. Τα όρια έρχονται ζωντανά από το
+  // πλάνο, ίδια πηγή με το clients.json του stream server.
+  @Get('subscriptions')
+  async subscriptions(@Req() req: Request) {
+    const client = await this.mine(req.user.clientId);
+    if (!client) return [];
+    return client.subscriptions.map((sub) => ({
+      id: sub.id,
+      plan: sub.plan.name,
+      label: sub.label,
+      host: sub.server.host,
+      maxStreams: sub.plan.maxStreams,
+      maxViewers: sub.plan.maxViewers,
+      streams: sub.paths.length,
+      suspended: sub.disabled,
+    }));
+  }
+
+  // Νέο stream από τον ίδιο τον πελάτη, μέχρι το όριο του πακέτου του. Το όριο
+  // και ο έλεγχος ιδιοκτησίας ζουν στην addPath — ίδια συνάρτηση με το admin
+  // endpoint, γι' αυτό δεν ξαναγράφεται τίποτα από τα δύο εδώ. Το όνομα του path
+  // το βγάζει το API (nextPath): ο stream server το συγκρίνει
+  // χαρακτήρα-χαρακτήρα και δεν υπάρχει λόγος να το διαλέγει ο πελάτης.
+  @Post('streams')
+  create(@Req() req: Request, @Body() body: { subscriptionId?: number }) {
+    if (!req.user.clientId) throw new NotFoundException('subscription not found');
+    if (!body.subscriptionId) throw new BadRequestException('subscriptionId απαιτείται');
+    return this.clients.addPath(req.user.clientId, undefined, body.subscriptionId);
+  }
+
   // Ανανέωση του κλειδιού από τον ίδιο τον πελάτη: εκτεθειμένο κλειδί δεν περιμένει
   // τον διαχειριστή. Ίδια συνάρτηση με το admin endpoint — ο έλεγχος ιδιοκτησίας
   // ζει εκεί και εδώ το clientId βγαίνει από το token, ποτέ από τον caller.
