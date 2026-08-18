@@ -822,6 +822,78 @@ test('συνδρομές: suspend μόνο της μίας, οι υπόλοιπ�
   assert.deepEqual(Object.keys((await syncOf('server-a', 'tok-a'))[`me-anastoli#${expired.id}`]!.paths), ['/live/ligomeno']);
 });
 
+// Upgrade/downgrade: το πλάνο μιας συνδρομής αλλάζει επιτόπου. DELETE + POST θα
+// έσβηνε paths και κλειδιά, δηλαδή κάθε αναβάθμιση θα ζητούσε νέο στήσιμο OBS.
+// Το όριο streams ελέγχεται ΕΔΩ γιατί είναι το μόνο άλλο σημείο που το βλέπει: το
+// addPath κοιτάει μόνο τη στιγμή της προσθήκης, οπότε ένα downgrade χωρίς έλεγχο
+// θα άφηνε τη συνδρομή μόνιμα πάνω από το πλάνο της.
+test('συνδρομές: αλλαγή πλάνου, με έλεγχο των streams που υπάρχουν ήδη', async () => {
+  const auth = await adminAuth();
+  const small = await mkPlan(auth, 'anav-mikro', 5, 1, ids.serverA);
+  const big = await mkPlan(auth, 'anav-megalo', 50, 3, ids.serverA);
+  const otherHost = await mkPlan(auth, 'anav-allou', 9, 3, ids.serverB);
+  const created = await post(auth, '/clients', { name: 'anavathmisi', username: 'anavathmisi', password: 'passan' });
+  const client = (await created.json()) as { id: number };
+  const sub = await mkSub(auth, client.id, small.id);
+  const mkPath = async (path: string) =>
+    (await (await post(auth, `/clients/${client.id}/paths`, { path, subscriptionId: sub.id })).json()) as { id: number; key: string };
+  const first = await mkPath('/live/anav1');
+
+  const setPlan = (headers: Auth, url: string, planId: number) =>
+    fetch(`${base}${url}`, { method: 'PATCH', headers, body: JSON.stringify({ planId }) });
+  const admin = (planIdValue: number) => setPlan(auth, `/clients/${client.id}/subscriptions/${sub.id}`, planIdValue);
+  const entry = async (host = 'server-a', token = 'tok-a') => (await syncOf(host, token))[`anavathmisi#${sub.id}`];
+
+  // Upgrade: το όριο θεατών του νέου πλάνου φτάνει στον stream server με το
+  // επόμενο sync, και τα κλειδιά εκπομπής μένουν ως έχουν.
+  assert.equal((await admin(big.id)).status, 200);
+  assert.equal((await entry())!.limit, 50);
+  assert.deepEqual((await entry())!.paths, { '/live/anav1': first.key }, 'path και κλειδί ανέπαφα');
+
+  // Το μεγαλύτερο πλάνο δέχεται πλέον και δεύτερο stream.
+  const second = await mkPath('/live/anav2');
+
+  // Downgrade σε πλάνο ενός stream ενώ έχει δύο: 409, και τίποτα δεν άλλαξε.
+  assert.equal((await admin(small.id)).status, 409);
+  assert.equal((await entry())!.limit, 50, 'το απορριφθέν downgrade δεν άγγιξε τη συνδρομή');
+
+  // Άγνωστο πλάνο: 400 όπως και στην αγορά, όχι 500.
+  assert.equal((await admin(9999)).status, 400);
+
+  // Πλάνο που πουλάει σε άλλο μηχάνημα: η συνδρομή ΔΕΝ μετακομίζει — τα paths της
+  // ζουν στον server της αγοράς και μια διεύθυνση εκπομπής δεν αλλάζει μόνη της.
+  assert.equal((await admin(otherHost.id)).status, 200);
+  assert.ok(await entry(), 'η συνδρομή έμεινε στον server της αγοράς');
+  assert.equal(await entry('server-b', 'tok-b'), undefined);
+
+  // Downgrade που χωράει: φεύγει πρώτα το ένα stream.
+  await fetch(`${base}/clients/${client.id}/paths/${second.id}`, { method: 'DELETE', headers: auth });
+  assert.equal((await admin(small.id)).status, 200);
+  assert.equal((await entry())!.limit, 5);
+
+  // Ο πελάτης ονομάζει το πακέτο του, δεν το αλλάζει: η αναβάθμιση είναι εμπορική
+  // απόφαση, όπως και η αναστολή.
+  const token = await login('anavathmisi', 'passan');
+  const customer = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  assert.equal((await setPlan(customer, `/me/subscriptions/${sub.id}`, big.id)).status, 400);
+  assert.equal((await entry())!.limit, 5, 'το πλάνο δεν άλλαξε από το /me');
+
+  // Ξένη συνδρομή: το id έρχεται από τον caller, ο πελάτης από το URL.
+  assert.equal((await setPlan(auth, `/clients/${ids.clientB}/subscriptions/${sub.id}`, big.id)).status, 404);
+
+  // Και η άλλη πόρτα, με το ΔΙΚΟ του clientId στο URL: το `/clients` είναι
+  // admin-only ολόκληρο (@Roles), αλλιώς ο πελάτης θα αναβάθμιζε μόνος του το
+  // πακέτο που πληρώνει — 403 πριν καν δει το σώμα κανείς.
+  const own = await setPlan(customer, `/clients/${client.id}/subscriptions/${sub.id}`, big.id);
+  assert.equal(own.status, 403);
+  // Και χωρίς κανένα token: 401 από το JwtAuthGuard, όχι σιωπηλή αλλαγή.
+  const anon = await fetch(`${base}/clients/${client.id}/subscriptions/${sub.id}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ planId: big.id }),
+  });
+  assert.equal(anon.status, 401);
+  assert.equal((await entry())!.limit, 5, 'το πλάνο έμεινε αυτό που όρισε ο admin');
+});
+
 // Δύο συνδρομές του ίδιου πλάνου είναι δύο φορές «basic»: χωρίς φιλικό όνομα ο
 // πελάτης δεν έχει κανέναν τρόπο να δει ποιο stream μοιράζεται όριο θεατών με
 // ποιο. Το όνομα το γράφουν και οι δύο πλευρές — ο πελάτης ξέρει τι είναι το

@@ -56,6 +56,15 @@ const planItems = computed(() => catalog.value.map(p => ({
   label: `${p.name} — ${hostOf(p.serverId)} (${p.maxViewers} θεατές, ${p.maxStreams} streams)`,
   value: p.id,
 })))
+// Το πλάνο μιας ΥΠΑΡΧΟΥΣΑΣ συνδρομής: χωρίς τον server του πλάνου, που εδώ δεν
+// ισχύει — ο server της συνδρομής πάγωσε στην αγορά και δεν ακολουθεί. Πλάνο που
+// δεν χωράει τα streams της βγαίνει disabled, αλλιώς η επιλογή οδηγεί σε 409.
+const planItemsFor = (s: SubscriptionRow) => catalog.value.map(p => ({
+  label: `${p.name} (${p.maxViewers} θεατές, ${p.maxStreams} streams)`,
+  value: p.id,
+  disabled: s.paths.length > p.maxStreams,
+}))
+
 // Οι συνδρομές με χώρο για ακόμα ένα stream· γεμάτη συνδρομή δεν προσφέρεται,
 // αλλιώς η επιλογή οδηγεί σε σίγουρο 409.
 const subItems = (c: ClientRow) => c.subscriptions.map(s => ({
@@ -199,6 +208,24 @@ async function toggleSubscription(c: ClientRow, s: SubscriptionRow) {
   try {
     await api(`/clients/${c.id}/subscriptions/${s.id}`, {
       method: 'PATCH', body: JSON.stringify({ disabled: !s.disabled }),
+    })
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+  finally {
+    await load()
+  }
+}
+
+// Αναβάθμιση/υποβάθμιση: αλλάζει μόνο το πλάνο. Paths, κλειδιά και server μένουν
+// — γι' αυτό και δεν είναι «αφαίρεση + προσθήκη» με δύο κλικ. Το `load()` στο
+// finally ξαναφέρνει το παλιό πλάνο όταν το API πει 409 (το select έχει ήδη
+// γράψει πάνω στο s.plan.id).
+async function changePlan(c: ClientRow, s: SubscriptionRow) {
+  try {
+    await api(`/clients/${c.id}/subscriptions/${s.id}`, {
+      method: 'PATCH', body: JSON.stringify({ planId: s.plan.id }),
     })
   }
   catch (e) {
@@ -428,7 +455,14 @@ onMounted(load)
                     class="min-w-40" @change="renameSubscription(c, s)"
                   />
                 </td>
-                <td>{{ s.plan.name }}</td>
+                <!-- Αναβάθμιση/υποβάθμιση επιτόπου: τα streams και τα κλειδιά
+                     τους δεν πειράζονται, ο server μένει αυτός της αγοράς. -->
+                <td>
+                  <USelect
+                    v-model="s.plan.id" :items="planItemsFor(s)" size="xs" class="min-w-52"
+                    @update:model-value="changePlan(c, s)"
+                  />
+                </td>
                 <td class="host">{{ s.server.host }}</td>
                 <td>{{ s.plan.maxViewers }}</td>
                 <td>{{ s.paths.length }} / {{ s.plan.maxStreams }}</td>

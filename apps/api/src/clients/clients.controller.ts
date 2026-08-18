@@ -56,18 +56,22 @@ export class ClientsController {
   setSubscription(
     @Param('id', ParseIntPipe) id: number,
     @Param('subId', ParseIntPipe) subId: number,
-    @Body() body: { disabled?: boolean; label?: string | null },
+    @Body() body: { disabled?: boolean; label?: string | null; planId?: number },
   ) {
-    // Τα δύο πεδία είναι ανεξάρτητα (αναστολή χωρίς να πειραχτεί το όνομα και
+    // Τα τρία πεδία είναι ανεξάρτητα (αναστολή χωρίς να πειραχτεί το όνομα και
     // αντίστροφα), αλλά άδειο σώμα είναι λάθος του caller και όχι no-op: θα
     // επέστρεφε 200 χωρίς να έχει αλλάξει τίποτα.
-    const data: { disabled?: boolean; label?: string | null } = {};
+    const data: { disabled?: boolean; label?: string | null; planId?: number } = {};
     if ('disabled' in body) {
       if (typeof body.disabled !== 'boolean') throw new BadRequestException('disabled: boolean');
       data.disabled = body.disabled;
     }
     if ('label' in body) data.label = cleanLabel(body.label);
-    if (!Object.keys(data).length) throw new BadRequestException('disabled ή label απαιτείται');
+    if ('planId' in body) {
+      if (typeof body.planId !== 'number') throw new BadRequestException('planId: number');
+      data.planId = body.planId;
+    }
+    if (!Object.keys(data).length) throw new BadRequestException('disabled, label ή planId απαιτείται');
     return this.clients.updateSubscription(id, subId, data);
   }
 
