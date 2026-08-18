@@ -43,8 +43,14 @@ const withUser = { users: { select: { id: true, username: true } } } as const;
 export class ClientsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list() {
-    return this.prisma.client.findMany({ include: { ...withSubscriptions, ...withUser } });
+  // Το προαιρετικό `username` είναι αναζήτηση, όχι ταυτότητα: μερικό ταίριασμα
+  // (ο admin θυμάται την αρχή του ονόματος από το τηλέφωνο) και κενό = χωρίς
+  // φίλτρο, ώστε το panel να δείχνει τη λίστα και να ψάχνει από το ίδιο endpoint.
+  list(username?: string) {
+    return this.prisma.client.findMany({
+      where: username ? { users: { some: { username: { contains: username } } } } : undefined,
+      include: { ...withSubscriptions, ...withUser },
+    });
   }
 
   async get(id: number) {

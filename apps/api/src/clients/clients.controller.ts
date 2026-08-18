@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { cleanLabel, ClientsService, CreateClientDto, UpdateClientDto } from './clients.service';
 import { Roles } from '../auth/roles.decorator';
@@ -18,8 +19,8 @@ export class ClientsController {
   constructor(private readonly clients: ClientsService) {}
 
   @Get()
-  list() {
-    return this.clients.list();
+  list(@Query('username') username?: string) {
+    return this.clients.list(username);
   }
 
   @Post()

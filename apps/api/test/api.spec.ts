@@ -707,6 +707,29 @@ test('GET /clients: username ναι, hash κωδικού όχι', async () => {
   assert.equal(mine.users[0].password, undefined);
 });
 
+// Ο admin ξέρει το username από το τηλέφωνο («δεν μπαίνω»), όχι το id ή το
+// ελληνικό όνομα της εγγραφής: η αναζήτηση γίνεται με το ίδιο GET /clients,
+// φιλτραρισμένο — αλλιώς το panel θα κατέβαζε όλους τους πελάτες με τις
+// συνδρομές τους για να ψάξει σε ένα πεδίο.
+test('GET /clients?username=: φιλτράρει στον χρήστη του πελάτη', async () => {
+  const auth = await adminAuth();
+  const search = async (username: string) =>
+    (await (await fetch(`${base}/clients?username=${encodeURIComponent(username)}`, { headers: auth })).json()) as {
+      name: string; users: { username: string }[];
+    }[];
+
+  const exact = await search('neo');
+  assert.deepEqual(exact.map((c) => c.name), ['me-xristi']);
+
+  // Μερικό ταίριασμα: ο admin θυμάται την αρχή του username, όχι όλο.
+  assert.deepEqual((await search('ne')).map((c) => c.name), ['me-xristi']);
+
+  assert.deepEqual(await search('anyparktos'), [], 'άγνωστο username = κανένας πελάτης');
+
+  // Κενό = χωρίς φίλτρο, ώστε το panel να μη χρειάζεται δύο κλήσεις.
+  assert.ok((await search('')).length > 1);
+});
+
 test('PATCH /auth/me: ο καθένας αλλάζει μόνο τον δικό του λογαριασμό', async () => {
   const tokenB = await login('userb', 'passb');
   const headersB = { authorization: `Bearer ${tokenB}`, 'content-type': 'application/json' };
