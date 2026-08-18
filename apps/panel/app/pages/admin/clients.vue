@@ -122,6 +122,17 @@ async function createClient() {
 
 // Πάντα ξαναφορτώνει μετά, επιτυχία ή όχι — σε αποτυχία ξαναφέρνει τις σωστές
 // τιμές πάνω από ό,τι πληκτρολόγησε ο χρήστης στα inputs.
+// Το panel του πελάτη με τα μάτια του, χωρίς να αποσυνδεθεί ο admin — η
+// επιστροφή είναι η μπάρα του layout (useApi#impersonate).
+async function viewAs(c: ClientRow) {
+  try {
+    await impersonate(c.id)
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
 async function saveClient(c: ClientRow) {
   try {
     const body: Record<string, unknown> = { name: c.name }
@@ -357,6 +368,14 @@ onMounted(load)
             @click="toggleDisabled(c)"
           >
             {{ c.disabled ? 'Ενεργοποίηση' : 'Απενεργοποίηση' }}
+          </UButton>
+          <!-- Απενεργοποιημένο χωρίς χρήστη σύνδεσης: το login-link χρειάζεται
+               λογαριασμό, τα πεδία είναι λίγο πιο κάτω στην ίδια κάρτα. -->
+          <UButton
+            icon="i-lucide-eye" color="neutral" variant="subtle"
+            :disabled="!c.users.length" @click="viewAs(c)"
+          >
+            Είσοδος ως πελάτης
           </UButton>
           <UButton icon="i-lucide-trash-2" color="error" variant="ghost" @click="removeClient(c)">Διαγραφή</UButton>
         </div>

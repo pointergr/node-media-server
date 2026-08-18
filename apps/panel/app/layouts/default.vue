@@ -73,6 +73,20 @@ function logout() {
 
     <UMain>
       <UContainer class="py-6">
+        <!-- Χωρίς αυτή τη μπάρα ο admin δεν έχει δρόμο πίσω: η συνεδρία είναι
+             πελάτη, οπότε το μενού διαχείρισης έχει εξαφανιστεί. -->
+        <UAlert
+          v-if="impersonating()"
+          class="mb-6" color="warning" variant="subtle" icon="i-lucide-eye"
+          title="Βλέπεις το panel ως πελάτης"
+          description="Οι ενέργειες που κάνεις εδώ γίνονται στον λογαριασμό του."
+        >
+          <template #actions>
+            <UButton color="warning" size="sm" icon="i-lucide-corner-up-left" @click="stopImpersonating()">
+              Επιστροφή στη διαχείριση
+            </UButton>
+          </template>
+        </UAlert>
         <slot />
       </UContainer>
     </UMain>

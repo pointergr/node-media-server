@@ -10,7 +10,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "typecheck": "nuxt typecheck",
-    "test": "node test-dash.js"
+    "test": "node test-dash.js && node test-impersonate.js"
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.123",
