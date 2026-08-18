@@ -2,11 +2,12 @@ import NodeMediaServer from "node-media-server";
 import { spawn, spawnSync } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
-import { loadConfig, saveConfig, publishAllowed, ladderOf, closeSession } from "./config.js";
+import { loadConfig, saveConfig, publishAllowed, ladderOf, relaysOf, closeSession } from "./config.js";
 import { startPanelSync } from "./panel.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
 import { patchAvc1 } from "./ertmp.js";
+import { startRelays, killFfmpeg } from "./relay.js";
 import { ENCODERS, ffmpegArgs, renditions, waitForHeight } from "./ladder.js";
 
 patchAvc1();
@@ -55,6 +56,21 @@ function usableEncoder(name) {
 }
 const encoder = usableEncoder(config.hls.encoder);
 if (encoder !== "x264") console.log(`HLS encoder: ${ENCODERS[encoder].codec}`);
+
+// Το Facebook δέχεται **μόνο** rtmps, και ο ffmpeg το μιλάει μόνο αν είναι
+// χτισμένος με TLS (openssl/gnutls). Χωρίς αυτό κάθε τέτοιο relay πεθαίνει
+// ακαριαία με «Protocol not found» και ο βρόχος επανασύνδεσης το ξαναδοκιμάζει
+// στο κενό για πάντα: από το panel φαίνεται μόνο «επανασύνδεση», χωρίς κανένα
+// ίχνος του πραγματικού λόγου. Μία γραμμή στο boot είναι η διαφορά ανάμεσα σε
+// δέκα λεπτά και σε μια ολόκληρη μέρα ψαξίματος. Προειδοποίηση και όχι σφάλμα:
+// ο server σηκώνεται κανονικά και ό,τι είναι σκέτο rtmp δουλεύει μια χαρά.
+const protocols = spawnSync(config.hls.ffmpeg, ["-hide_banner", "-protocols"], {
+  encoding: "utf8",
+  timeout: 10_000,
+});
+if (protocols.stdout && !protocols.stdout.includes("rtmps")) {
+  console.error(`${config.hls.ffmpeg}: χωρίς rtmps — οι προορισμοί αναδιανομής σε rtmps:// (Facebook) δεν θα συνδέονται ποτέ`);
+}
 
 // Το v4 παράγει jwt secret μόνο όταν τρέχει με το δικό του bin/app.js
 if (!config.auth.jwt.secret) {
@@ -214,6 +230,18 @@ nms.on("postPublish", (session) => {
     // publisher, όχι όσο ένας ffmpeg: το respawn γράφει στον ίδιο φάκελο.
     stop: r2 && startR2Sync(dir, session.streamPath, r2, (name, bytes) =>
       stats.addR2Out(session.streamPath, name, bytes)),
+    // Οι προορισμοί αναδιανομής διαβάζονται εδώ, μία φορά, και μένουν σταθεροί
+    // όσο ζει η εκπομπή — όπως το ladder. Προορισμός που προστίθεται εν ώρα
+    // εκπομπής πιάνει στην επόμενη: το να πέφτει και να ξανασηκώνεται ο ffmpeg
+    // κάθε φορά που ο πελάτης πειράζει τη λίστα θα έκοβε τους υπόλοιπους
+    // προορισμούς για ένα πράγμα που κανείς δεν περιμένει να γίνει άμεσα.
+    // Ξεχωριστό από το HLS job: ο ffmpeg του relay πεθαίνει για δικούς του
+    // λόγους (η πλατφόρμα) και δεν έχει καμία σχέση με το respawn του HLS.
+    relays: startRelays(relaysOf(session.streamPath), {
+      streamPath: session.streamPath,
+      ffmpeg: config.hls.ffmpeg,
+      rtmpPort: config.rtmp.port,
+    }),
   };
   hlsJobs.set(session.streamPath, job);
   spawnWhenReady(session.streamPath, job, session);
@@ -223,8 +251,9 @@ nms.on("donePublish", (session) => {
   const job = hlsJobs.get(session.streamPath);
   if (!job) return;
   clearTimeout(job.timer);
-  job.ff?.kill("SIGKILL");
+  killFfmpeg(job.ff);
   job.stop?.();
+  job.relays?.stop();
   hlsJobs.delete(session.streamPath);
   // Χωρίς publisher το playlist λέει ψέματα: δείχνει ακόμα έξι segments χωρίς
   // ENDLIST, οπότε ο player ξαναπαίζει την ουρά σε βρόχο νομίζοντας ότι είναι
@@ -251,8 +280,9 @@ nms.on("donePublish", (session) => {
 function shutdown() {
   for (const job of hlsJobs.values()) {
     clearTimeout(job.timer);
-    job.ff?.kill("SIGKILL");
+    killFfmpeg(job.ff);
     job.stop?.();
+    job.relays?.stop();
   }
   process.exit(0);
 }
@@ -264,6 +294,10 @@ process.on("SIGTERM", shutdown);
 const stats = startStats(nms, config, {
   onRestart: shutdown,
   stepsOf: (streamPath) => hlsJobs.get(streamPath)?.steps ?? [],
+  // Ίδιος λόγος με το stepsOf: η κατάσταση του κάθε προορισμού ζει στα jobs, και
+  // είναι το μόνο σημείο απ' όπου φαίνεται ότι το YouTube δεν παίρνει σήμα —
+  // παντού αλλού η εκπομπή δείχνει μια χαρά.
+  relayStateOf: (streamPath) => hlsJobs.get(streamPath)?.relays?.state() ?? [],
 });
 startPanelSync(config, stats.snapshot);
 

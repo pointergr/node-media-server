@@ -238,7 +238,7 @@ watch([selected, range], () => {
               <th />
               <th>Stream</th><th>Server</th><th class="num">Διάρκεια</th><th class="num">Θεατές</th>
               <th class="num">Είσοδος</th><th class="num">Έξοδος</th>
-              <th>Ανάλυση</th><th>Κωδικοποίηση</th><th>IP</th><th />
+              <th>Ανάλυση</th><th>Αναδιανομή</th><th>Κωδικοποίηση</th><th>IP</th><th />
             </tr>
           </thead>
           <tbody>
@@ -265,6 +265,23 @@ watch([selected, range], () => {
                 <UBadge v-if="s.ladder?.length" color="primary" variant="subtle" size="sm" class="ml-1">
                   +{{ s.ladder.join('/') }}
                 </UBadge>
+              </td>
+              <!-- Η αναδιανομή είναι το μόνο κομμάτι της εκπομπής που μπορεί να
+                   είναι σπασμένο ενώ όλα τα υπόλοιπα δείχνουν μια χαρά: το RTMP
+                   παίζει, το HLS παίζει, και μόνο το YouTube δεν παίρνει σήμα.
+                   Γι' αυτό μπαίνει στον πίνακα και όχι μόνο στο panel του πελάτη. -->
+              <td>
+                <template v-if="s.relays?.length">
+                  <UBadge
+                    v-for="r in s.relays" :key="r.name"
+                    :color="r.state === 'live' ? 'success' : 'warning'"
+                    variant="subtle" size="sm" class="mr-1"
+                    :title="r.state === 'live' ? 'στέλνει' : 'προσπαθεί να συνδεθεί'"
+                  >
+                    {{ r.name }}
+                  </UBadge>
+                </template>
+                <span v-else class="host">—</span>
               </td>
               <td>{{ s.video }} · {{ s.audio }}</td>
               <td>{{ s.protocol }} από {{ s.ip }}</td>

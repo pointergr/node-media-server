@@ -40,6 +40,18 @@ interface MyStream {
   // διεύθυνση ούτε για το HLS ούτε για το RTMP — δείχνουμε οδηγία αντί για
   // μαντεψιά (δες σχόλιο στο template).
   host?: string
+  // Πού αλλού πάει η ίδια εκπομπή (YouTube κ.λπ.), με τη ζωντανή κατάσταση του
+  // κάθε προορισμού από το snapshot του stream server.
+  destinations: Destination[]
+}
+
+interface Destination {
+  id: number
+  name: string
+  url: string
+  key: string
+  enabled: boolean
+  state: string | null
 }
 
 // Οι συνδρομές είναι ξεχωριστή κλήση από τα streams: το /me/streams γυρίζει
@@ -52,6 +64,7 @@ interface MySub {
   host: string
   maxStreams: number
   maxViewers: number
+  maxRelays: number
   streams: number
   suspended: boolean
 }
@@ -84,6 +97,9 @@ interface Pack {
   // Το όριο streams: μετράει paths, όχι ταυτόχρονες εκπομπές — το επιβάλλει το
   // API (clients.service#addPath), εδώ μόνο φαίνεται και κλειδώνει το κουμπί.
   maxStreams: number
+  // Προορισμοί αναδιανομής **ανά stream** — 0 σημαίνει ότι το πλάνο δεν την
+  // πουλάει, όχι «χωρίς όριο» (δες apps/api/prisma/schema.prisma).
+  maxRelays: number
   viewers: number
   suspended: boolean
   live: MyStream[]
@@ -101,6 +117,7 @@ const packs = computed<Pack[]>(() => {
     host: sub.host,
     limit: sub.maxViewers,
     maxStreams: sub.maxStreams,
+    maxRelays: sub.maxRelays,
     viewers: 0,
     suspended: sub.suspended,
     live: [],
@@ -420,6 +437,18 @@ onBeforeUnmount(() => {
           </dl>
         </div>
 
+        <!-- Η αναδιανομή κάτω από τα στοιχεία του OBS και πάνω από τα γραφήματα:
+             είναι ρύθμιση του stream, όχι μέτρηση. Εδώ έχει και το μοναδικό
+             σημείο όπου φαίνεται ότι ένας προορισμός δεν παίρνει σήμα — από
+             παντού αλλού η εκπομπή δείχνει μια χαρά. -->
+        <div class="dest-wrap border-t border-default">
+          <StreamDestinations
+            :endpoint="`/me/streams/${s.id}/destinations`"
+            :destinations="s.destinations" :max="p.maxRelays" live
+            @changed="load"
+          />
+        </div>
+
         <!-- Ιστορικό μόνο αυτού του path (το /me/series φιλτράρει με το token),
              στο διάστημα που διάλεξε ο πελάτης. CPU/μνήμη του μηχανήματος δεν
              δείχνουμε: αφορούν και τους υπόλοιπους πελάτες του ίδιου server. -->
@@ -450,8 +479,9 @@ onBeforeUnmount(() => {
           <h2 class="mb-0">Δεν εκπέμπουν</h2>
         </div>
       </template>
-      <div class="space-y-2">
-        <div v-for="s in p.idle" :key="s.path" class="flex items-center gap-2 flex-wrap">
+      <div class="space-y-4">
+        <div v-for="s in p.idle" :key="s.path" class="space-y-2">
+        <div class="flex items-center gap-2 flex-wrap">
           <strong>{{ s.path }}</strong>
           <code v-if="s.host">{{ rtmp(s) }}</code>
           <SecretKey :text="s.streamKey" />
@@ -470,6 +500,16 @@ onBeforeUnmount(() => {
             <code>{{ hls(s) }}</code>
             <CopyButton :text="hls(s)" label="" />
           </template>
+        </div>
+        <!-- Οι προορισμοί ρυθμίζονται και εκτός εκπομπής — εδώ ακριβώς τους
+             στήνει ο πελάτης, πριν ανοίξει το OBS. Χωρίς publisher δεν υπάρχει
+             κατάσταση να δειχθεί: `live` false, ώστε να μη δείχνουν τα badge
+             «επανασύνδεση» για κάτι που απλώς δεν τρέχει. -->
+        <StreamDestinations
+          :endpoint="`/me/streams/${s.id}/destinations`"
+          :destinations="s.destinations" :max="p.maxRelays" :live="false"
+          @changed="load"
+        />
         </div>
       </div>
     </UCard>
@@ -518,6 +558,7 @@ onBeforeUnmount(() => {
 @container (max-width: 820px) {
   .body { grid-template-columns: minmax(0, 1fr); }
 }
+.dest-wrap { padding: 16px; }
 .obs { margin: 0; padding: 16px; align-content: center; }
 .obs dt { font-size: 12px; color: var(--muted); }
 .obs dd { display: flex; align-items: center; gap: 8px; margin: 4px 0 14px; flex-wrap: wrap; }
