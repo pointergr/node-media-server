@@ -64,30 +64,6 @@ header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-
    minmax(0,1fr) και όχι 1fr: το αυτόματο κάτω φράγμα του 1fr είναι το min-content
    του panel, δηλαδή και οι τέσσερις στήλες μαζί — έσπρωχνε το preview στα 276px. */
 .body { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 1fr); }
-.preview { position: relative; background: #000; aspect-ratio: 16 / 9; }
-.preview video { width: 100%; height: 100%; display: block; object-fit: contain; }
-.play {
-  position: absolute; inset: 0; width: 100%; padding: 0; border: 0;
-  background: transparent; color: #fff; font-size: 34px; opacity: .7; cursor: pointer;
-}
-.play:hover { opacity: 1; background: rgba(255, 255, 255, .07); }
-/* 2x2 δίπλα σε άλλη κάρτα, 4 σε σειρά όταν είναι μόνη της — και στις δύο
-   περιπτώσεις κεντραρισμένα στον χώρο δεξιά από το preview.
-   Ρητό πλήθος στηλών με φράγμα πλάτους, όχι auto-fit με 1fr: τα 1fr απλώνουν τα
-   νούμερα σε όλο το πλάτος της κάρτας, ενώ definite max μέσα σε auto-fit αλλάζει
-   και το πλήθος των tracks. Το κεντράρισμα θέλει justify-content — margin auto ή
-   justify-self κάνουν το κουτί shrink-to-fit και ξεχειλίζει στις στενές κάρτες. */
-.stat {
-  margin: 0; padding: 16px; align-content: center; justify-content: center;
-  display: grid; grid-template-columns: repeat(2, minmax(0, 120px)); gap: 14px;
-}
-/* Container και όχι media query: το πλάτος της κάρτας το ορίζει το πλήθος των
-   streams, όχι μόνο το viewport. Το κατώφλι είναι εκεί που χωράνε 4 στήλες. */
-@container (min-width: 1120px) {
-  .stat { grid-template-columns: repeat(4, minmax(0, 140px)); }
-}
-.stat dt { font-size: 12px; color: var(--muted); white-space: nowrap; }
-.stat dd { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .quiet { color: var(--muted); text-align: center; padding: 30px; }
 /* Container και όχι media query: με δύο κάρτες δίπλα-δίπλα η στήλη δεξιά από το
    preview είναι στενή ακόμα και σε μεγάλη οθόνη — εκεί τα πεδία του OBS έβγαζαν

@@ -58,10 +58,15 @@ const tiles = computed(() => [
   { label: `Μνήμη ${selected.value}`, value: current.value ? String(current.value.snapshot.server.rss_mb) : '—', unit: 'MB' },
 ])
 
-// Ο stream server σερβίρει το HLS από το ίδιο hostname με το οποίο δηλώνεται στο
-// panel (config.panel.host == το domain του Caddy του) — δες apps/stream/install.
-const hlsUrl = (host: string, stream: string) =>
-  `https://${host}/${stream.replace(/^\//, '')}/index.m3u8`
+// Ο player ανοίγει σε popup και όχι μέσα στη σελίδα: με 2-3 ζωντανές εκπομπές τα
+// preview έπιαναν όλο το ύψος και το dashboard έπαυε να δείχνει νούμερα. Ένα
+// παράθυρο ανά stream (το όνομα είναι host+path): δεύτερο κλικ φέρνει μπροστά το
+// ίδιο, αντί για δεύτερο player πάνω στο ίδιο stream — κάθε player μετράει ως
+// κανονικός θεατής.
+function openPlayer(s: { host: string, stream: string }) {
+  const url = `/admin/streams/${encodeURIComponent(s.stream)}?host=${s.host}`
+  window.open(url, `player:${s.host}${s.stream}`, 'popup=yes,width=960,height=640')?.focus()
+}
 
 async function loadLive() {
   try {
@@ -216,51 +221,53 @@ watch([selected, range], () => {
 
     <UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-triangle-alert" :description="error" />
 
-    <div class="hero">
-      <UCard
-        v-for="s in streams" :key="s.host + s.stream"
-        :ui="{ body: 'p-0 sm:p-0', header: 'px-4 py-3 sm:px-4', footer: 'px-4 py-2 sm:px-4' }"
-      >
-        <template #header>
-          <div class="head">
-            <UBadge v-if="s.online" color="error" variant="solid" class="tracking-wider">ON AIR</UBadge>
-            <UBadge v-else color="neutral" variant="subtle" title="ο server δεν έχει κάνει sync εδώ και >30s">
-              ΕΚΤΟΣ
-            </UBadge>
-            <NuxtLink :to="`/admin/streams/${encodeURIComponent(s.stream)}?host=${s.host}`">
-              {{ s.stream }}
-            </NuxtLink>
-            <span class="host">{{ s.host }}</span>
-            <span class="spacer" />
-            <span class="since">{{ dur((Date.now() - s.since) / 1000) }}</span>
-          </div>
-        </template>
-
-        <div class="body">
-          <Preview :src="hlsUrl(s.host, s.stream)" />
-          <dl class="stat">
-            <div><dt>Θεατές</dt><dd>{{ s.viewers }}</dd></div>
-            <!-- Με R2 ενεργό το out_bps είναι εκτίμηση (bytes segment × θεατές) — τα .ts
-                 σερβίρονται από το CDN και δεν αγγίζουν ποτέ αυτόν τον server. Δείχνε το,
-                 με αστερίσκο και όχι με λεζάντα: το «(εκτ.)» δεν χωράει στη στήλη. -->
-            <div>
-              <dt :title="s.r2Estimate ? 'Εκτίμηση: τα .ts segments σερβίρονται από το R2, όχι μέτρηση πραγματικής κίνησης' : ''">
-                {{ s.r2Estimate ? 'Έξοδος *' : 'Έξοδος' }}
-              </dt>
-              <dd>{{ bps(s.out_bps) }}</dd>
-            </div>
-            <div><dt>Είσοδος</dt><dd>{{ bps(s.in_bps) }}</dd></div>
-            <div><dt>Ανάλυση</dt><dd>{{ s.resolution }}</dd></div>
-          </dl>
-        </div>
-
-        <template #footer>
-          <span class="host">{{ s.video }} · {{ s.audio }} · {{ s.protocol }} από {{ s.ip }}</span>
-        </template>
-      </UCard>
-    </div>
-    <UCard v-if="!streams.length">
-      <div class="quiet">Καμία ενεργή εκπομπή</div>
+    <!-- Μία γραμμή ανά εκπομπή και όχι κάρτα με preview: τα βίντεο έπιαναν όλη
+         τη σελίδα με δύο-τρία streams, ενώ αυτό που κοιτάει ο διαχειριστής όλη
+         την ώρα είναι τα νούμερα. Ο player είναι ένα κλικ μακριά, σε popup. -->
+    <UCard>
+      <h2>Ενεργές εκπομπές</h2>
+      <div class="scroll">
+        <table v-if="streams.length">
+          <thead>
+            <tr>
+              <th />
+              <th>Stream</th><th>Server</th><th class="num">Διάρκεια</th><th class="num">Θεατές</th>
+              <th class="num">Είσοδος</th><th class="num">Έξοδος</th>
+              <th>Ανάλυση</th><th>Κωδικοποίηση</th><th>IP</th><th />
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in streams" :key="s.host + s.stream">
+              <td>
+                <UBadge v-if="s.online" color="error" variant="solid" class="tracking-wider">ON AIR</UBadge>
+                <UBadge v-else color="neutral" variant="subtle" title="ο server δεν έχει κάνει sync εδώ και >30s">
+                  ΕΚΤΟΣ
+                </UBadge>
+              </td>
+              <td>{{ s.stream }}</td>
+              <td>{{ s.host }}</td>
+              <td class="num">{{ dur((Date.now() - s.since) / 1000) }}</td>
+              <td class="num">{{ s.viewers }}</td>
+              <td class="num">{{ bps(s.in_bps) }}</td>
+              <!-- Με R2 ενεργό η έξοδος είναι εκτίμηση (bytes segment × θεατές) — τα .ts
+                   σερβίρονται από το CDN και δεν αγγίζουν ποτέ αυτόν τον server. -->
+              <td
+                class="num"
+                :title="s.r2Estimate ? 'Εκτίμηση: τα .ts segments σερβίρονται από το R2, όχι μέτρηση πραγματικής κίνησης' : ''"
+              >{{ bps(s.out_bps) }}{{ s.r2Estimate ? ' *' : '' }}</td>
+              <td>{{ s.resolution }}</td>
+              <td>{{ s.video }} · {{ s.audio }}</td>
+              <td>{{ s.protocol }} από {{ s.ip }}</td>
+              <td>
+                <UButton size="xs" color="neutral" variant="subtle" icon="i-lucide-play" @click="openPlayer(s)">
+                  player
+                </UButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-else class="empty">Καμία ενεργή εκπομπή</div>
+      </div>
     </UCard>
 
     <!-- Μόνο αθροίσματα εδώ — τα νούμερα ανά stream τα δείχνει η κάρτα. Το uptime
