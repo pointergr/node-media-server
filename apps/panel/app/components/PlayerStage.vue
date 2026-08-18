@@ -25,6 +25,10 @@ const muted = ref(true)
 const volume = ref(1)
 const live = ref<'off' | 'on' | 'behind'>('off')
 const fsOn = ref(false)
+// Οι διαθέσιμες ποιότητες του master playlist (κενό = εκπομπή χωρίς ladder) και
+// η επιλογή του χρήστη· -1 = αυτόματο, δηλαδή ό,τι κρίνει το ABR του hls.js.
+const levels = ref<{ i: number, label: string }[]>([])
+const level = ref(-1)
 
 let hls: Hls | null = null
 let retry: ReturnType<typeof setTimeout> | undefined
@@ -64,7 +68,7 @@ function say(msg: string, isBad = false) {
 // play.
 function syncControls() {
   clearTimeout(hideTimer)
-  if (stopped.value || userPaused || video.value?.paused !== false) {
+  if (holding || stopped.value || userPaused || video.value?.paused !== false) {
     shown.value = true
     return
   }
@@ -75,6 +79,15 @@ function syncControls() {
 function nudge() {
   shown.value = true
   syncControls()
+}
+
+// Όσο είναι ανοιχτό το μενού ποιότητας η μπάρα δεν κρύβεται: το native dropdown
+// δεν παράγει mousemove, οπότε το countdown θα έσβηνε τη μπάρα κάτω από το ίδιο
+// το μενού που μόλις άνοιξε ο χρήστης.
+let holding = false
+function holdControls(on: boolean) {
+  holding = on
+  nudge()
 }
 
 // --- live edge --------------------------------------------------------------
@@ -149,6 +162,8 @@ function stop() {
     el.load() // καθαρίζει src/buffer — αλλιώς συνεχίζει να μετράει ως θεατής
   }
   paused.value = true
+  levels.value = []
+  level.value = -1
   updateLive()
   syncControls()
   say('σταματημένο')
@@ -173,6 +188,10 @@ function load() {
   stopped.value = false
   userPaused = false
   pendingFatalError = false
+  // Νέο manifest, νέα levels: ό,τι είχε διαλέξει ο χρήστης δεν αντιστοιχεί
+  // απαραίτητα στους ίδιους δείκτες.
+  levels.value = []
+  level.value = -1
   say('σύνδεση…')
   updateLive()
   syncControls()
@@ -183,7 +202,12 @@ function load() {
   // error event, δηλαδή ούτε καν retry, μόνιμο «σύνδεση…».
   if (Hls.isSupported()) {
     hls = new Hls()
-    hls.on(Hls.Events.MANIFEST_PARSED, () => el.play().catch(() => say('πάτα play', true)))
+    hls.on(Hls.Events.MANIFEST_PARSED, (_, d) => {
+      // Ο hls.js κάνει ABR μόνος του αλλά δεν δίνει κανένα UI: χωρίς αυτό ο
+      // θεατής βλέπει τις αναλύσεις μόνο στο playlist, ποτέ στην οθόνη.
+      levels.value = qualityLevels(d.levels)
+      el.play().catch(() => say('πάτα play', true))
+    })
     hls.on(Hls.Events.ERROR, (_, d) => {
       if (!d.fatal || stopped.value) return
       // Ο πελάτης δεν διαβάζει «manifestLoadError»: 404 στο playlist σημαίνει ότι
@@ -221,6 +245,13 @@ function load() {
     later()
   }
   el.play().catch(() => say('πάτα play', true))
+}
+
+// Άμεση αλλαγή (currentLevel) και όχι στο επόμενο fragment (nextLevel): ο χρήστης
+// που μόλις διάλεξε ποιότητα περιμένει να τη δει τώρα, όχι σε δύο δευτερόλεπτα.
+function applyLevel() {
+  if (hls) hls.currentLevel = level.value
+  nudge()
 }
 
 // --- events του <video> -----------------------------------------------------
@@ -374,6 +405,13 @@ watch(() => props.src, () => {
           class="volume" type="range" min="0" max="1" step="0.05" title="Ένταση"
           :value="muted ? 0 : volume" @pointerdown="nudge" @input="setVolume"
         >
+        <select
+          v-if="levels.length" v-model="level" class="quality" title="Ποιότητα" aria-label="Ποιότητα"
+          @change="applyLevel" @focus="holdControls(true)" @blur="holdControls(false)"
+        >
+          <option :value="-1">αυτόματο</option>
+          <option v-for="l in levels" :key="l.i" :value="l.i">{{ l.label }}</option>
+        </select>
         <span class="spacer" />
         <button
           class="live" :class="live" :disabled="live !== 'behind'" title="Live edge"
@@ -428,6 +466,13 @@ video { width: 100%; aspect-ratio: 16 / 9; background: #000; display: block; }
   display: inline-flex; cursor: pointer;
 }
 .ctl:hover { color: #fff; background: rgba(255, 255, 255, .15); }
+.quality {
+  background: rgba(255, 255, 255, .15); border: none; color: #fff; font-size: 12px;
+  padding: 3px 4px; border-radius: 4px; cursor: pointer;
+}
+/* Το ίδιο το dropdown το ζωγραφίζει το λειτουργικό σε λευκό φόντο — χωρίς αυτό
+   οι επιλογές βγαίνουν λευκές πάνω σε λευκό. */
+.quality option { color: initial; background: #fff; }
 .volume { width: 70px; min-width: 0; padding: 0; background: none; border: none; accent-color: #fff; }
 .spacer { flex: 1; }
 .live {
