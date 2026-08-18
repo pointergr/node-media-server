@@ -134,9 +134,29 @@ export class ClientsService {
   async updateSubscription(
     clientId: number,
     subscriptionId: number,
-    data: { disabled?: boolean; label?: string | null },
+    data: { disabled?: boolean; label?: string | null; planId?: number },
   ) {
-    await this.subscriptionOf(clientId, subscriptionId);
+    const sub = await this.subscriptionOf(clientId, subscriptionId);
+    // Αναβάθμιση/υποβάθμιση επιτόπου, και όχι DELETE + POST: η συνδρομή κουβαλάει
+    // τα paths και τα κλειδιά εκπομπής, άρα κάθε αλλαγή πλάνου θα ζητούσε νέο
+    // στήσιμο OBS. Ό,τι είναι όριο (θεατές, streams, ladder) διαβάζεται ζωντανά
+    // από το πλάνο, οπότε δεν υπάρχει τίποτα να αντιγραφεί εδώ.
+    if (data.planId !== undefined && data.planId !== sub.planId) {
+      const plan = await this.prisma.plan.findUnique({ where: { id: data.planId } });
+      if (!plan) throw new BadRequestException('άγνωστο πλάνο');
+      // Το μόνο σημείο που ελέγχει το όριο streams μετά την προσθήκη: το addPath
+      // κοιτάει μόνο τη στιγμή του, οπότε ένα downgrade χωρίς αυτό θα άφηνε τη
+      // συνδρομή μόνιμα πάνω από το πλάνο της. Ποιο stream θα έφευγε δεν είναι
+      // δική μας απόφαση — το κλειδί του το ξέρει ήδη ένας encoder.
+      if (sub.paths.length > plan.maxStreams) {
+        throw new ConflictException(
+          `το πλάνο «${plan.name}» επιτρέπει ${plan.maxStreams} streams, η συνδρομή έχει ${sub.paths.length} — σβήσε πρώτα ${sub.paths.length - plan.maxStreams}`,
+        );
+      }
+      // Ο server **δεν** ακολουθεί το νέο πλάνο: παγώνει στην αγορά (δες
+      // addSubscription) και τα paths ζουν πάνω του — αλλιώς μια αναβάθμιση θα
+      // άλλαζε σιωπηλά τη διεύθυνση εκπομπής όλων των streams της συνδρομής.
+    }
     return this.prisma.subscription.update({ where: { id: subscriptionId }, data });
   }
 
