@@ -319,7 +319,7 @@ onBeforeUnmount(() => {
 
             <dt>Stream Key</dt>
             <dd>
-              <code>{{ s.streamKey }}</code>
+              <SecretKey :text="s.streamKey" />
               <CopyButton :text="s.streamKey" label="" />
               <!-- Αν εκτεθεί: νέο κλειδί, ίδιο path — η διεύθυνση προβολής και ό,τι
                    έχει ήδη ενσωματωθεί κάπου δεν αλλάζει. -->
@@ -375,7 +375,7 @@ onBeforeUnmount(() => {
         <div v-for="s in p.idle" :key="s.path" class="flex items-center gap-2 flex-wrap">
           <strong>{{ s.path }}</strong>
           <code v-if="s.host">{{ rtmp(s) }}</code>
-          <code>{{ s.streamKey }}</code>
+          <SecretKey :text="s.streamKey" />
           <CopyButton :text="s.streamKey" label="" />
           <UButton
             icon="i-lucide-refresh-cw" size="xs" color="neutral" variant="ghost"
