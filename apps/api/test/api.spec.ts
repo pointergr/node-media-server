@@ -984,3 +984,47 @@ test('/me/subscriptions: τα πακέτα του πελάτη με τα όρι�
   })).json()) as { id: number }[];
   assert.equal(other.some((s) => s.id === sub.id), false);
 });
+
+// Η διαγραφή από τον πελάτη κρίνεται στο τελευταίο snapshot: όσο υπάρχει
+// publisher, το stream δεν σβήνεται — αλλιώς η εκπομπή που τρέχει κόβεται με ένα
+// κλικ και το κλειδί χάνεται μαζί της.
+test('DELETE /me/streams/:id: όχι όσο εκπέμπει, ναι όταν σταματήσει, ξένο -> 404', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'svino-monos', 10, 2, ids.serverA);
+  const created = await post(auth, '/clients', { name: 'svinei-monos', username: 'svinei', password: 'pass1234' });
+  const client = (await created.json()) as { id: number };
+  const sub = await mkSub(auth, client.id, plan.id);
+
+  const token = await login('svinei', 'pass1234');
+  const me: Auth = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const mine = (await (await post(me, '/me/streams', { subscriptionId: sub.id })).json()) as { id: number; path: string };
+
+  const sync = (streams: unknown[]) =>
+    fetch(`${base}/servers/server-a/sync`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer tok-a', 'content-type': 'application/json' },
+      body: JSON.stringify({ streams }),
+    });
+  const del = (id: number) => fetch(`${base}/me/streams/${id}`, { method: 'DELETE', headers: me });
+
+  await sync([{ stream: mine.path, viewers: 0, since: Date.now() - 5_000 }]);
+  const live = await del(mine.id);
+  assert.equal(live.status, 409, 'με publisher πάνω του δεν σβήνεται');
+  assert.match(((await live.json()) as { message: string }).message, /εκπέμπει/);
+
+  // Χωρίς `since` δεν υπάρχει publisher — το ότι το stream λείπει εντελώς από το
+  // snapshot είναι το ίδιο πράγμα, δες το δεύτερο sync.
+  await sync([{ stream: mine.path, viewers: 0 }]);
+  assert.equal((await del(mine.id)).status, 200, 'χωρίς publisher σβήνεται');
+
+  const left = (await (await fetch(`${base}/me/streams`, { headers: me })).json()) as unknown[];
+  assert.equal(left.length, 0);
+  // ...και η θέση ελευθερώθηκε στο πακέτο.
+  assert.equal(((await (await fetch(`${base}/me/subscriptions`, { headers: me })).json()) as { streams: number }[])[0]!.streams, 0);
+
+  // Το path του pelatis-a δεν είναι δικό του: 404, όχι διαγραφή ξένου stream.
+  const foreign = (await (await fetch(`${base}/me/streams`, {
+    headers: { authorization: `Bearer ${await login('usera', 'passa')}` },
+  })).json()) as { id: number }[];
+  assert.equal((await del(foreign[0]!.id)).status, 404);
+});

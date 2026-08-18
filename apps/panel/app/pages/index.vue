@@ -196,7 +196,25 @@ async function createStream(p: Pack) {
   }
 }
 
-// Το όνομα του πακέτου το δίνει ο ίδιος ο πελάτης: εκείνος ξέρει ότι το ένα
+// Διαγραφή stream: μόνο από τη λίστα «δεν εκπέμπουν» — όσο υπάρχει publisher το
+// API απαντάει 409 και το κουμπί δεν έχει πού να σταθεί. Το κλειδί φεύγει μαζί,
+// γι' αυτό επιβεβαίωση.
+async function removeStream(s: MyStream) {
+  const ok = await ask({
+    title: `Διαγραφή του ${s.path};`,
+    description: 'Το stream και το κλειδί του χάνονται οριστικά. Η θέση ελευθερώνεται στο πακέτο.',
+  })
+  if (!ok) return
+  try {
+    await api(`/me/streams/${s.id}`, { method: 'DELETE' })
+    await load()
+  }
+  catch (e) {
+    error.value = (e as Error).message
+  }
+}
+
+// Το όνομα του πακέτου το δίνει ο ίδιος ο πελάτης// Το όνομα του πακέτου το δίνει ο ίδιος ο πελάτης: εκείνος ξέρει ότι το ένα
 // basic είναι η εκκλησία και το άλλο το δημαρχείο. Ένα πεδίο τη φορά — η
 // μετονομασία είναι σπάνια, φόρμα με «επεξεργασία όλων» θα ήταν βάρος για το
 // 99% των επισκέψεων.
@@ -441,6 +459,10 @@ onBeforeUnmount(() => {
           <UButton
             icon="i-lucide-refresh-cw" size="xs" color="neutral" variant="ghost"
             aria-label="Νέο κλειδί" title="Νέο κλειδί" @click="refreshKey(s)"
+          />
+          <UButton
+            icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
+            aria-label="Διαγραφή stream" title="Διαγραφή stream" @click="removeStream(s)"
           />
           <!-- Η διεύθυνση προβολής ισχύει και εκτός εκπομπής: από εδώ την παίρνει
                ο πελάτης για το embed, πριν ανοίξει το OBS. -->

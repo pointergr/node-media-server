@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Param,
@@ -138,6 +140,28 @@ export class MeController {
     if (!req.user.clientId) throw new NotFoundException('subscription not found');
     if (!body.subscriptionId) throw new BadRequestException('subscriptionId απαιτείται');
     return this.clients.addPath(req.user.clientId, undefined, body.subscriptionId);
+  }
+
+  // Διαγραφή stream από τον ίδιο τον πελάτη — **όχι** όσο εκπέμπει: το κλειδί
+  // φεύγει μαζί με το path, οπότε ένα κατά λάθος κλικ την ώρα της λειτουργίας θα
+  // έκοβε τη μετάδοση χωρίς δρόμο επιστροφής. Η κατάσταση βγαίνει από το
+  // τελευταίο snapshot (≤10s, ίδια πηγή με το `since` του /me/streams): αν ο
+  // publisher συνδεθεί μέσα σε αυτό το παράθυρο, τον κόβει το επόμενο sync —
+  // ρωτώντας ζωντανά τον stream server θα κρεμούσε το endpoint σε ένα μηχάνημα
+  // που μπορεί να είναι κάτω.
+  @Delete('streams/:id')
+  async remove(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
+    const client = await this.mine(req.user.clientId);
+    const sub = client?.subscriptions.find((s) => s.paths.some((p) => p.id === id));
+    const path = sub?.paths.find((p) => p.id === id);
+    if (!sub || !path) throw new NotFoundException('path not found');
+
+    const live = this.sync.latest(sub.server.host)?.snapshot as StreamSnapshot | undefined;
+    if (live?.streams?.find((s) => s.stream === path.path)?.since) {
+      throw new ConflictException('το stream εκπέμπει — σταμάτα το πρόγραμμα εκπομπής και ξαναδοκίμασε');
+    }
+    // Ο έλεγχος ιδιοκτησίας ξαναγίνεται εδώ μέσα (pathOf), με το clientId του token.
+    await this.clients.removePath(req.user.clientId!, id);
   }
 
   // Ανανέωση του κλειδιού από τον ίδιο τον πελάτη: εκτεθειμένο κλειδί δεν περιμένει
