@@ -78,17 +78,23 @@ copy variant σπάνε στα keyframes του OBS, ενώ τα encoded είν�
 
 ```
 -i rtmp://127.0.0.1:1935/live/x
--filter_complex "[0:v]split=2[a][b];[a]scale=-2:720[v720];[b]scale=-2:480[v480]"
+-filter_complex "[0:v]split=2[a][b];[a]scale=-2:'min(720,ih)'[v720];[b]scale=-2:'min(480,ih)'[v480]"
 -map 0:v -c:v:0 copy -bsf:v:0 h264_mp4toannexb,dump_extra
 -map "[v720]" -c:v:1 libx264 -preset veryfast -b:v:1 2800k -maxrate:v:1 3000k -bufsize:v:1 6000k
 -map "[v480]" -c:v:2 libx264 -preset veryfast -b:v:2 1200k -maxrate:v:2 1400k -bufsize:v:2 2800k
 -map 0:a -map 0:a -map 0:a -c:a copy
--g 50 -keyint_min 50 -sc_threshold 0 -force_key_frames "expr:gte(t,n_forced*2)"
+-sc_threshold 0 -force_key_frames "expr:gte(t,n_forced*2)"
 -f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments+temp_file
 -var_stream_map "v:0,a:0,name:src v:1,a:1,name:720 v:2,a:2,name:480"
 -master_pl_name index.m3u8
 -hls_segment_filename "<dir>/<prefix>-%v-%d.ts" "<dir>/v%v.m3u8"
 ```
+
+**Keyframes σε χρόνο, όχι σε καρέ.** Χωρίς `-g`: το fps της πηγής το ορίζει ο
+πελάτης, οπότε ένα `-g 50` δίπλα στο `force_key_frames` των 2s θα έβαζε δεύτερο
+IDR στο 1,67s κάθε πηγής των 30fps. Για τον ίδιο λόγο το scale γράφεται
+`min(h,ih)`: το `videoHeight` μπορεί να μην έχει φτάσει ακόμα στο `postPublish`,
+και η εγγύηση «ποτέ upscale» δεν επιτρέπεται να κρέμεται από τον συγχρονισμό.
 
 **`-bsf:v:0`, όχι `-bsf:v`.** Το σημερινό `h264_mp4toannexb,dump_extra` αφορά
 μόνο το copy stream — στα encoded ο encoder βγάζει ήδη annex-b με δικό του
