@@ -7,7 +7,7 @@ import os from "os";
 // πριν — γι' αυτό δυναμικό import.
 const file = `${fs.mkdtempSync(`${os.tmpdir()}/clients-test-`)}/clients.json`;
 process.env.CLIENTS_FILE = file;
-const { loadClients, clientOf, publishAllowed, clearClientsCache, CLIENTS } =
+const { loadClients, clientOf, ladderOf, publishAllowed, clearClientsCache, CLIENTS } =
   await import("./config.js");
 
 assert.equal(CLIENTS, file, "το path είναι override-able για τα tests");
@@ -45,6 +45,24 @@ assert.equal(publishAllowed("/live/k1", "λάθος"), false, "λάθος κλε
 assert.equal(publishAllowed("/live/k1", undefined), false, "χωρίς κλειδί δεν εκπέμπει");
 assert.equal(publishAllowed("/live/άγνωστο", "K1"), false, "άγνωστο path = μπλόκο");
 assert.equal(publishAllowed("/live/άγνωστο", undefined), false, "άγνωστο path χωρίς κλειδί = μπλόκο");
+
+// Το ladder είναι προαιρετικό πεδίο της εγγραφής, το γράφει το sync του panel.
+// Ο stream server το διαβάζει ανεκτικά: ό,τι δεν είναι λίστα αριθμών σημαίνει
+// «σημερινή συμπεριφορά», γιατί ένα τυπογραφικό στον κατάλογο των πλάνων δεν
+// επιτρέπεται να ρίξει εκπομπή.
+write({
+  a: { paths: { "/live/abr": "K", "/live/plain": "K" }, ladder: [720, 480] },
+  b: { paths: { "/live/palio": "K" } },
+  c: { paths: { "/live/skoupidia": "K" }, ladder: "720,480" },
+  d: { paths: { "/live/keno": "K" }, ladder: [] },
+});
+clearClientsCache();
+assert.deepEqual(ladderOf("/live/abr"), [720, 480], "το ladder της εγγραφής");
+assert.deepEqual(ladderOf("/live/palio"), [], "παλιό σχήμα χωρίς πεδίο = κενό ladder");
+assert.deepEqual(ladderOf("/live/skoupidia"), [], "ό,τι δεν είναι λίστα = κενό ladder");
+assert.deepEqual(ladderOf("/live/keno"), [], "κενή λίστα = κενό ladder");
+assert.deepEqual(ladderOf("/live/άγνωστο"), [], "path χωρίς πελάτη = κενό ladder");
+assert.deepEqual(ladderOf("/live/abr"), ladderOf("/live/plain"), "το ladder είναι της εγγραφής, ίδιο σε όλα της τα paths");
 
 // Ο διακόπτης είναι η ύπαρξη του αρχείου, όχι το πόσοι πελάτες υπάρχουν μέσα:
 // έγκυρο `{}` (server χωρίς πελάτες, ή με όλους απενεργοποιημένους) κλείνει —

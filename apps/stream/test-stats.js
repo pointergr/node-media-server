@@ -256,6 +256,69 @@ function freshStats(hls, opts) {
   s.server.close();
 }
 
+// --- ABR: θεατές ανά variant ------------------------------------------------
+// Με ladder ο ίδιος θεατής ζητάει master και μετά το variant του, και αλλάζει
+// σκαλοπάτι όποτε θέλει η γραμμή του. Είναι *ένας* θεατής (ίδιο cookie, ίδιος
+// φάκελος) — αλλιώς το όριο του πακέτου θα έκοβε στο ένα τρίτο. Ο εκτιμητής
+// εξόδου όμως πρέπει να ξέρει ποιοι παίζουν ποιο σκαλοπάτι: αλλιώς κάθε segment
+// μετριέται σαν να το κατέβασαν όλοι, ×N variants.
+{
+  const s = freshStats({ r2: { accessKeyId: "key" } });
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+
+  // Τρεις θεατές στο master...
+  for (const c of ["nmsv=a", "nmsv=b", "nmsv=c"]) {
+    hlsHit(s.nms, "/live/stream/index.m3u8", "9.9.9.9", { cookie: c });
+  }
+  // ...δύο στο 720 και ένας στο 480
+  hlsHit(s.nms, "/live/stream/v720.m3u8", "9.9.9.9", { cookie: "nmsv=a" });
+  hlsHit(s.nms, "/live/stream/v720.m3u8", "9.9.9.9", { cookie: "nmsv=b" });
+  hlsHit(s.nms, "/live/stream/v480.m3u8", "9.9.9.9", { cookie: "nmsv=c" });
+
+  assert.equal(s.snapshot().streams[0].viewers, 3, "ABR: τρεις θεατές, όχι εννιά");
+
+  const impliedBytes = async (name, bytes) => {
+    s.sample();
+    const t0 = Date.now();
+    s.addR2Out("/live/stream", name, bytes);
+    await tick();
+    const t1 = Date.now();
+    s.sample();
+    const row = s.db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1);
+    return (row.out_bps * (t1 - t0) / 1000) / 8;
+  };
+  const close = (got, want, what) =>
+    assert.ok(Math.abs(got - want) < want * 0.3, `${what}: αναμενόταν ~${want}, βγήκε ~${Math.round(got)}`);
+
+  // Το ίδιο το όνομα του segment λέει σε ποιο σκαλοπάτι ανήκει.
+  close(await impliedBytes("1700000000000-720-0.ts", 100_000), 100_000 * 2, "segment του 720 × οι θεατές του 720");
+  close(await impliedBytes("1700000000000-480-0.ts", 50_000), 50_000 * 1, "segment του 480 × οι θεατές του 480");
+  // Χωρίς ladder το όνομα δεν έχει variant και μετράνε όλοι οι θεατές του stream.
+  close(await impliedBytes("1700000000000-7.ts", 40_000), 40_000 * 3, "segment χωρίς variant: όλοι οι θεατές");
+  // Σκαλοπάτι που δεν το παίζει κανείς δεν κοστίζει κίνηση.
+  close(await impliedBytes("1700000000000-240-0.ts", 90_000) + 1, 1, "variant χωρίς θεατές: μηδέν bytes");
+
+  s.server.close();
+}
+
+// --- ABR: το snapshot λέει τι όντως παράγει ο ffmpeg -------------------------
+// Όχι το ladder του πακέτου: τα σκαλοπάτια ≥ της πηγής κόβονται και το πλαφόν
+// του server κόβει κι άλλα, οπότε ένα «720+480» σε πηγή 480p είναι στην πράξη
+// καθόλου ABR. Ο admin πρέπει να βλέπει το δεύτερο — αλλιώς η ένδειξη στο panel
+// λέει ψέματα ακριβώς όταν χρειάζεται να πει την αλήθεια.
+{
+  const s = freshStats(null, { stepsOf: (p) => (p === "/live/stream" ? [720, 480] : []) });
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+  assert.deepEqual(s.snapshot().streams[0].ladder, [720, 480], "τα ενεργά σκαλοπάτια στο snapshot");
+  s.server.close();
+}
+{
+  const s = freshStats(null);
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+  assert.deepEqual(s.snapshot().streams[0].ladder, [], "χωρίς ABR: άδειος πίνακας, όχι undefined");
+  s.server.close();
+}
+
 // --- restart button (POST /admin/api/restart) -------------------------------
 // Το πραγματικό onRestart (process.exit) θα σκότωνε το test· εδώ το injected
 // callback απλά σημειώνει ότι κλήθηκε — το app.js δίνει το δικό του shutdown

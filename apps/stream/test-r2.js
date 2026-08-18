@@ -10,7 +10,10 @@ assert.deepEqual(
   "μόνο τα segments, χωρίς τα directives, χωρίς το base url"
 );
 
+// Ο ffmpeg γράφει στο ff/ με τα τελικά ονόματα, το r2.js δημοσιεύει τα ίδια
+// ονόματα ένα επίπεδο πάνω, αφού ανέβουν τα segments που δείχνουν.
 const dir = fs.mkdtempSync(`${os.tmpdir()}/r2-test-`);
+fs.mkdirSync(`${dir}/ff`);
 const dst = `${dir}/index.m3u8`;
 const puts = [];
 let publishedTooEarly = false;
@@ -36,8 +39,8 @@ const playlist = (...segs) =>
   `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/s/${s}\n`).join("")}`;
 
 const write = (...segs) => {
-  for (const s of segs) fs.writeFileSync(`${dir}/${s}`, "x".repeat(100));
-  fs.writeFileSync(`${dir}/ff.m3u8`, playlist(...segs));
+  for (const s of segs) fs.writeFileSync(`${dir}/ff/${s}`, "x".repeat(100));
+  fs.writeFileSync(`${dir}/ff/index.m3u8`, playlist(...segs));
 };
 
 const until = async (fn, tries = 100) => {
@@ -79,14 +82,14 @@ assert.equal(
 // προηγούμενο γύρο, αλλιώς κάθε επόμενος γύρος έσκαγε σε ENOENT και το playlist
 // έμενε παγωμένο μέχρι να βγει το όνομα από το παράθυρο.
 failing = null;
-fs.rmSync(`${dir}/1-3.ts`);
-fs.writeFileSync(`${dir}/ff.m3u8`, playlist("1-2.ts", "1-3.ts"));
+fs.rmSync(`${dir}/ff/1-3.ts`);
+fs.writeFileSync(`${dir}/ff/index.m3u8`, playlist("1-2.ts", "1-3.ts"));
 assert.ok(
   await until(() => fs.readFileSync(dst, "utf8") === playlist("1-2.ts", "1-3.ts")),
   "ο επόμενος γύρος ανεβάζει το segment που είχε αποτύχει, χωρίς το αρχείο"
 );
 
-// Ο περιοδικός γύρος, χωρίς κανένα νέο event από το fs.watch: το ff.m3u8 δεν το
+// Ο περιοδικός γύρος, χωρίς κανένα νέο event από το fs.watch: το playlist δεν το
 // αγγίζει κανείς μετά την αποτυχία, οπότε μόνο το interval μπορεί να ξεπαγώσει
 // το index.m3u8. Χωρίς αυτό, ένα inotify watch που πεθαίνει σιωπηλά αφήνει το
 // playlist στην τελευταία επιτυχημένη έκδοση για όλη την εκπομπή.
@@ -120,4 +123,53 @@ await new Promise((r) => setTimeout(r, 50));
 assert.equal(fs.readFileSync(dst, "utf8"), published, "μετά το stop() δεν δημοσιεύεται playlist");
 
 fs.rmSync(dir, { recursive: true, force: true });
+
+// --- ABR: πολλά variants + master ------------------------------------------
+// Ένας κανόνας για όλα: ό,τι *.m3u8 βρεθεί στο ff/ δημοσιεύεται με το ίδιο όνομα
+// στον φάκελο του stream. Το master ξεχωρίζει από το #EXT-X-STREAM-INF και
+// αντιγράφεται αυτούσιο — δείχνει σε σχετικά ονόματα variants, που μένουν στο
+// origin γιατί εκεί μετράμε τους θεατές.
+{
+  const abr = fs.mkdtempSync(`${os.tmpdir()}/r2-abr-`);
+  fs.mkdirSync(`${abr}/ff`);
+  const before = puts.length;
+  const master =
+    "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nvsrc.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2800000\nv720.m3u8\n";
+  const variant = (...segs) =>
+    `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/abr/${s}\n`).join("")}`;
+
+  // Τα PUT μένουν ανοιχτά: όσο δεν έχει δημοσιευτεί variant, το master υπόσχεται
+  // αρχεία που δεν υπάρχουν και οι πρώτοι 2-4s της εκπομπής βγάζουν 404.
+  let release2;
+  hold = new Promise((r) => (release2 = r));
+
+  const stop2 = startR2Sync(abr, "/live/abr", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+
+  for (const s of ["2-src-0.ts", "2-720-0.ts"]) fs.writeFileSync(`${abr}/ff/${s}`, "x".repeat(50));
+  fs.writeFileSync(`${abr}/ff/vsrc.m3u8`, variant("2-src-0.ts"));
+  fs.writeFileSync(`${abr}/ff/v720.m3u8`, variant("2-720-0.ts"));
+  fs.writeFileSync(`${abr}/ff/index.m3u8`, master);
+
+  await new Promise((r) => setTimeout(r, 100));
+  assert.ok(!fs.existsSync(`${abr}/index.m3u8`), "το master δεν δημοσιεύεται πριν από το πρώτο variant");
+  release2();
+  hold = null;
+
+  assert.ok(await until(() => fs.existsSync(`${abr}/index.m3u8`)), "το master δημοσιεύτηκε");
+  assert.equal(fs.readFileSync(`${abr}/index.m3u8`, "utf8"), master, "το master αντιγράφεται αυτούσιο");
+  assert.equal(fs.readFileSync(`${abr}/vsrc.m3u8`, "utf8"), variant("2-src-0.ts"), "το variant της πηγής");
+  assert.equal(fs.readFileSync(`${abr}/v720.m3u8`, "utf8"), variant("2-720-0.ts"), "και του σκαλοπατιού");
+  assert.deepEqual(
+    puts.slice(before).sort(),
+    ["2-720-0.ts", "2-src-0.ts"],
+    "ανέβηκαν τα segments και των δύο variants — και μόνο αυτά, ποτέ playlist"
+  );
+
+  stop2();
+  fs.rmSync(abr, { recursive: true, force: true });
+}
+
 console.log("r2.js OK");

@@ -36,7 +36,11 @@ function isLocal(session) {
 // onRestart: injectable ώστε το test να μην τερματίζει τον εαυτό του — σε
 // production είναι το graceful shutdown του app.js (σκοτώνει τα ffmpeg jobs
 // πριν το exit), εδώ απλά process.exit(0) γιατί δεν υπάρχουν jobs να ξέρει.
-export function startStats(nms, config, { onRestart = () => process.exit(0) } = {}) {
+// stepsOf: τα σκαλοπάτια που όντως κωδικοποιεί ο ffmpeg αυτού του stream. Το
+// ξέρει μόνο το app.js (εκεί ζουν τα jobs), και το snapshot πρέπει να δείχνει
+// αυτό — όχι το ladder του πακέτου, που μπορεί να έχει κοπεί ολόκληρο από την
+// ανάλυση της πηγής ή από το πλαφόν του server.
+export function startStats(nms, config, { onRestart = () => process.exit(0), stepsOf = () => [] } = {}) {
   // Τα env overrides υπάρχουν για το docker-compose: αλλιώς κάθε deployment θα
   // έπρεπε να πειράξει με το χέρι το mounted config.json.
   const dbPath = process.env.ADMIN_DB ?? config.admin.db;
@@ -74,6 +78,12 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
   const prevBytes = new Map(); //    streamPath -> {in, out, ts} στο προηγούμενο δείγμα
   const lastBps = new Map(); //      streamPath -> {in_bps, out_bps}
   const hlsSeen = new Map(); //      streamPath -> Map(ip -> τελευταίο request σε ms)
+  // streamPath -> Map(variant -> Map(θεατής -> ms)). Δεύτερος χάρτης δίπλα στον
+  // hlsSeen και όχι αντ' αυτού: ο θεατής που αλλάζει σκαλοπάτι είναι ένας θεατής
+  // (ίδιο cookie, ίδιος φάκελος) για το όριο του πακέτου και για τα στατιστικά,
+  // αλλά ο εκτιμητής εξόδου του R2 πρέπει να ξέρει ποιοι παίζουν τι — αλλιώς
+  // κάθε segment μετριέται σαν να το κατέβασαν όλοι, ×N variants.
+  const variantSeen = new Map();
   let prevCpu = process.cpuUsage();
   let prevTs = Date.now();
 
@@ -100,14 +110,15 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
   };
 
   // Ο express.static του nms σερβίρει το HLS χωρίς session, οπότε οι θεατές του
-  // μετριούνται από τα requests στο playlist, με ένα cookie ανά player.
-  function hlsViewersOf(stream) {
-    const seen = hlsSeen.get(stream);
+  // μετριούνται από τα requests στο playlist, με ένα cookie ανά player. Η
+  // εκκαθάριση γίνεται στο διάβασμα: δεν υπάρχει timer να ξεχάσει κανείς.
+  function alive(seen) {
     if (!seen) return 0;
     const cutoff = Date.now() - HLS_TTL_MS;
     for (const [key, ts] of seen) if (ts < cutoff) seen.delete(key);
     return seen.size;
   }
+  const hlsViewersOf = (stream) => alive(hlsSeen.get(stream));
 
   const viewersOf = (stream) =>
     [...liveSessions.values()].filter((s) => !s.isPublisher && s.streamPath === stream).length +
@@ -146,7 +157,13 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     r2Counted.set(stream, counted);
     if (counted.has(name)) return; // retry/επαναϋποβολή του ίδιου segment
     counted.add(name);
-    addOut(stream, bytes * hlsViewersOf(stream));
+    // <prefix>-720-3.ts: το ίδιο το όνομα λέει σε ποιο σκαλοπάτι ανήκει (το %v
+    // του ffmpeg γίνεται το name του var_stream_map). Χωρίς ladder το όνομα
+    // είναι <prefix>-3.ts και μετράνε όλοι οι θεατές του stream, όπως πάντα.
+    const variant = name.match(/^\d+-(.+)-\d+\.ts$/)?.[1];
+    addOut(stream, bytes * (variant === undefined
+      ? hlsViewersOf(stream)
+      : alive(variantSeen.get(stream)?.get(variant))));
   }
 
   function trackHls(req, res) {
@@ -161,6 +178,19 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     const token = req.headers.cookie?.match(/(?:^|;\s*)nmsv=([^;]+)/)?.[1];
     const seen = hlsSeen.get(stream) ?? new Map();
     hlsSeen.set(stream, seen);
+
+    // v720.m3u8 -> "720". Το master (index.m3u8) δεν είναι σκαλοπάτι: ο θεατής
+    // μετριέται κανονικά στο stream, αλλά δεν παίζει ακόμα κανένα variant — γι'
+    // αυτό χάρτης μιας χρήσης που τον πετάει ο GC, αντί για δεύτερο κλάδο σε
+    // κάθε set παρακάτω.
+    const variant = p.slice(p.lastIndexOf("/") + 1).match(/^v(.+)\.m3u8$/)?.[1];
+    let vSeen = new Map();
+    if (variant !== undefined) {
+      const byVariant = variantSeen.get(stream) ?? new Map();
+      variantSeen.set(stream, byVariant);
+      vSeen = byVariant.get(variant) ?? new Map();
+      byVariant.set(variant, vSeen);
+    }
 
     // Χωρίς cookie: είτε πρώτο request, είτε client που δεν κρατάει cookies (wrk,
     // curl, cross-origin player χωρίς credentials — το hls.js σε ξένο origin δεν
@@ -185,9 +215,12 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     if (token) {
       seen.delete(key); // το πρώτο request αυτού του player είχε μετρηθεί με IP+UA
       seen.set(token, Date.now());
+      vSeen.delete(key);
+      vSeen.set(token, Date.now());
       return;
     }
     seen.set(key, Date.now());
+    vSeen.set(key, Date.now());
     res.setHeader(
       "Set-Cookie",
       `nmsv=${crypto.randomUUID()}; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax`
@@ -201,6 +234,7 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
     liveSessions.delete(session.id);
     if (publishers.get(session.streamPath) === session) {
       publishers.delete(session.streamPath);
+      variantSeen.delete(session.streamPath);
       // Νέο publish σε αυτό το streamPath θα ξεκινήσει με νέο prefix (Date.now()
       // στο app.js), άρα νέα ονόματα segments — τίποτα να ξαναχρησιμοποιηθεί εδώ.
       r2Counted.delete(session.streamPath);
@@ -308,6 +342,7 @@ export function startStats(nms, config, { onRestart = () => process.exit(0) } = 
         video: VIDEO_CODECS[pub.videoCodec] ?? String(pub.videoCodec || "-"),
         resolution: pub.videoWidth ? `${pub.videoWidth}x${pub.videoHeight}` : "-",
         audio: AUDIO_CODECS[pub.audioCodec] ?? String(pub.audioCodec || "-"),
+        ladder: stepsOf(stream),
         viewers: viewersOf(stream),
         ...(lastBps.get(stream) ?? { in_bps: 0, out_bps: 0 }),
       })),

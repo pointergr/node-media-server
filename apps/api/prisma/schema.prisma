@@ -54,6 +54,13 @@ model Plan {
   // δικό της server. Έτσι γεμίζει ένα μηχάνημα και ο επόμενος πελάτης πάει στο
   // επόμενο, χωρίς να πειραχτεί ο προηγούμενος.
   serverId      Int
+  // Οι αναλύσεις που πουλάει το πλάνο (csv από ύψη, φθίνουσα: "720,480").
+  // Ζει εδώ και όχι στον server επειδή το ABR είναι κάτι που ΠΟΥΛΙΕΤΑΙ, όπως το
+  // όριο θεατών — ο server λέει μόνο με τι το βγάζει (config.hls.encoder). Δες
+  // PLAN-transcoding.md. Περιγράφει **μόνο τα σκαλοπάτια κάτω από την πηγή**: η
+  // κορυφή είναι πάντα η ίδια η πηγή σε copy, γιατί το re-encode της θα
+  // διπλασίαζε το κόστος για μηδέν κέρδος. null = καθόλου transcoding.
+  ladder        String?
   server        Server         @relation(fields: [serverId], references: [id])
   subscriptions Subscription[]
 }

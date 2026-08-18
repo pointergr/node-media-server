@@ -21,12 +21,17 @@ export type UpdateClientDto = Partial<Pick<CreateClientDto, 'name' | 'username' 
   disabled?: boolean;
 };
 
+// Ο server μόνο ως «πού»: όποιος διαβάζει συνδρομή ή πλάνο θέλει το host, όχι το
+// bearer του sync και τον κωδικό του admin dashboard — και με API key ρόλου admin
+// θα έφευγαν σε κάθε provisioning κλήση. Μόνο το /servers τα δείχνει.
+export const serverBrief = { select: { id: true, host: true } } as const;
+
 // Οι συνδρομές του πελάτη με ό,τι χρειάζεται όποιος τις διαβάζει: το πλάνο δίνει
 // τα όρια (δεν αντιγράφονται στη συνδρομή), ο server το πού, τα paths το τι.
 // Μία φορά, ώστε να μη διαφύγει το nested include σε κάποιον καλούντα — χωρίς το
 // `plan` δεν υπάρχει όριο να επιβληθεί.
 export const withSubscriptions = {
-  subscriptions: { include: { plan: true, server: true, paths: true } },
+  subscriptions: { include: { plan: true, server: serverBrief, paths: true } },
 } as const;
 
 // Ρητό `select` και όχι `include`: το User κρατάει το hash του κωδικού, που δεν
@@ -112,7 +117,7 @@ export class ClientsService {
     // πλάνο δείξει αλλού, αυτή η συνδρομή μένει εδώ.
     return this.prisma.subscription.create({
       data: { clientId, planId, serverId: plan.serverId },
-      include: { plan: true, server: true, paths: true },
+      include: { plan: true, server: serverBrief, paths: true },
     });
   }
 

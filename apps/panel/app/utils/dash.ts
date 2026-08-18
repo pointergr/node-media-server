@@ -10,6 +10,10 @@ export interface StreamRow {
   since: number
   video: string
   resolution: string
+  // Τα σκαλοπάτια που κωδικοποιεί όντως ο ffmpeg αυτή τη στιγμή — άδειο σε κάθε
+  // εκπομπή χωρίς ABR, και σε πηγή που είναι ήδη πιο χαμηλή από το ladder του
+  // πακέτου (stats.js#snapshot). Παλιός stream server: απόν.
+  ladder?: number[]
   audio: string
   viewers: number
   in_bps: number
@@ -229,4 +233,35 @@ export function curve(pts: number[][]) {
 export function niceMax(v: number) {
   const p = Math.pow(10, Math.floor(Math.log10(v)))
   return Math.ceil(v / p * 2) / 2 * p
+}
+
+// --- επιλογές ποιότητας του player -----------------------------------------
+
+// Ό,τι χρειαζόμαστε από ένα level του hls.js. Όλα προαιρετικά: το RESOLUTION
+// λείπει από το EXT-X-STREAM-INF όταν ο encoder δεν το γράψει, και το url είναι
+// πίνακας (ένα ανά redundant stream).
+export interface HlsLevel { height?: number, bitrate?: number, url?: string[] }
+
+// Η αρχική ποιότητα γράφεται πάντα σε `vsrc.m3u8` — δικό μας συμβόλαιο, το
+// ορίζει το `name:src` του var_stream_map (apps/stream/ladder.js). Χωρίς αυτή
+// την ένδειξη το μενού δείχνει «720p / 480p» και ο admin που πούλησε ladder
+// «480» νομίζει ότι κάτι δεν πέρασε: το 720p είναι η ίδια η εκπομπή του πελάτη.
+const isSource = (l: HlsLevel) => Boolean(l.url?.some(u => u.split('?')[0]!.endsWith('/vsrc.m3u8')))
+
+// Οι επιλογές του μενού ποιότητας, από την υψηλότερη προς τη χαμηλότερη. Το `i`
+// είναι ο δείκτης μέσα στο `hls.levels` και ταξιδεύει αυτούσιος στο
+// `currentLevel` — γι' αυτό ταξινομούμε αντίγραφα με το i μέσα τους, αντί να
+// βασιστούμε στη σειρά που δίνει το hls.js (δεν είναι συμβόλαιο).
+// Ένα μόνο level = εκπομπή χωρίς ladder: κανένα μενού, όχι μενού με μία γραμμή.
+export function qualityLevels(levels: HlsLevel[]) {
+  if (levels.length < 2) return []
+  return levels
+    .map((l, i) => ({
+      i,
+      rank: l.height ?? (l.bitrate ?? 0),
+      label: (l.height ? `${l.height}p` : `${Math.round((l.bitrate ?? 0) / 1000)}k`)
+        + (isSource(l) ? ' (αρχική)' : ''),
+    }))
+    .sort((a, b) => b.rank - a.rank)
+    .map(({ i, label }) => ({ i, label }))
 }

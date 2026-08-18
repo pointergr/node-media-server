@@ -260,7 +260,12 @@ watch([selected, range], () => {
                 class="num"
                 :title="s.r2Estimate ? 'Εκτίμηση: τα .ts segments σερβίρονται από το R2, όχι μέτρηση πραγματικής κίνησης' : ''"
               >{{ bps(s.out_bps) }}{{ s.r2Estimate ? ' *' : '' }}</td>
-              <td>{{ s.resolution }}</td>
+              <td>
+                {{ s.resolution }}
+                <UBadge v-if="s.ladder?.length" color="primary" variant="subtle" size="sm" class="ml-1">
+                  +{{ s.ladder.join('/') }}
+                </UBadge>
+              </td>
               <td>{{ s.video }} · {{ s.audio }}</td>
               <td>{{ s.protocol }} από {{ s.ip }}</td>
               <td>

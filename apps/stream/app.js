@@ -2,11 +2,12 @@ import NodeMediaServer from "node-media-server";
 import { spawn } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
-import { loadConfig, saveConfig, publishAllowed, closeSession } from "./config.js";
+import { loadConfig, saveConfig, publishAllowed, ladderOf, closeSession } from "./config.js";
 import { startPanelSync } from "./panel.js";
 import { startStats } from "./stats.js";
 import { startR2Sync } from "./r2.js";
 import { patchAvc1 } from "./ertmp.js";
+import { ffmpegArgs, renditions, waitForHeight } from "./ladder.js";
 
 patchAvc1();
 
@@ -42,7 +43,7 @@ const nms = new NodeMediaServer(config);
 
 // Το v4 δεν κάνει HLS, οπότε το βγάζουμε με ffmpeg remux ανά stream.
 // Κλειδί το streamPath, όχι το session.id: το job ανήκει στον φάκελο του stream,
-// και δύο jobs στον ίδιο φάκελο γράφουν πάνω στο ίδιο ff.m3u8.
+// και δύο jobs στον ίδιο φάκελο γράφουν πάνω στα ίδια playlists.
 const hlsJobs = new Map();
 
 // Το nms 4.2.8 δεν έχει κανένα socket timeout, keepalive ή ping — grep για
@@ -63,6 +64,9 @@ const RESPAWN_MS = 2000;
 const RESPAWN_MIN_LIFE_MS = 5000;
 const RESPAWN_MAX = 5;
 
+// Κάθε πόσο κοιτάμε αν ήρθαν τα metadata της πηγής — δες spawnWhenReady.
+const HEIGHT_TICK_MS = 100;
+
 // Ο φάκελος έχει ήδη ετοιμαστεί από το postPublish — εδώ μόνο ο ffmpeg, ώστε το
 // respawn να μη σβήνει τα segments που παίζουν αυτή τη στιγμή οι θεατές.
 function startFfmpeg(streamPath, job) {
@@ -73,39 +77,18 @@ function startFfmpeg(streamPath, job) {
   // Είναι και η ώρα γέννησης αυτού του ffmpeg — δες το exit παρακάτω.
   const prefix = Date.now();
 
+  // Το ladder διαβάστηκε μία φορά στο postPublish και μένει σταθερό όσο ζει η
+  // εκπομπή: αλλαγή πλάνου εν ώρα εκπομπής δεν αξίζει 2-3s μαύρη οθόνη σε κάθε
+  // θεατή. Δεν συγχέεται με την ανάκληση, που παραμένει άμεση — εκείνη είναι
+  // ασφάλεια, αυτό ποιότητα.
   const ff = spawn(
     config.hls.ffmpeg,
-    [
-      "-i", `rtmp://127.0.0.1:${config.rtmp.port}${streamPath}`,
-      // Το OBS βάζει SPS/PPS in-band μόνο στο *πρώτο* keyframe — στα υπόλοιπα τα
-      // έχει μόνο το avcC. Το h264_mp4toannexb, που βάζει το ίδιο το mpegts muxer,
-      // τα βλέπει εκεί, σηκώνει τα idr_sps_seen/idr_pps_seen και δεν τα ξαναβάζει
-      // ποτέ: μόνο το segment 0 βγαίνει με παραμέτρους. Όποιος μπαίνει στο live
-      // edge δεν παίρνει ούτε ανάλυση ούτε profile και βλέπει μαύρο — ενώ όποιος
-      // ήταν συνδεδεμένος από την αρχή παίζει κανονικά και δεν το καταλαβαίνει.
-      // Το ρητό mp4toannexb γυρίζει το extradata σε annex-b, και το dump_extra
-      // (freq=keyframe by default) το ξαναγράφει πριν από κάθε keyframe. Σκέτο
-      // dump_extra δεν κάνει: χώνει AVCC bytes σε annex-b stream και σκάει.
-      "-bsf:v", "h264_mp4toannexb,dump_extra",
-      "-c", "copy",
-      "-f", "hls",
-      "-hls_time", "2",
-      // 6 segments = 12s παράθυρο. Δεν αλλάζει το latency (ο player μπαίνει τρία
-      // segments πριν το live edge ούτως ή άλλως) — αλλάζει το περιθώριο: το .ts
-      // μένει στον δίσκο 12s αντί για 6s, οπότε ένα PUT που απέτυχε προλαβαίνει
-      // να ξαναδοκιμαστεί, κι ένας θεατής που έχασε ένα αίτημα προλαβαίνει να
-      // ξαναζητήσει αντί να πέσει έξω από το παράθυρο.
-      "-hls_list_size", "6",
-      // temp_file: ο ffmpeg γράφει .tmp και κάνει rename, οπότε ποτέ κανείς —
-      // ούτε ο player, ούτε το R2 sync — δεν διαβάζει μισογραμμένο αρχείο
-      "-hls_flags", "delete_segments+temp_file",
-      "-hls_segment_filename", `${dir}/${prefix}-%d.ts`,
-      // Με R2 το playlist το γράφει το r2.js: ο ffmpeg βγάζει το δικό του σε
-      // ff.m3u8 με απόλυτα URLs, και δημοσιεύεται ως index.m3u8 μόλις ανέβουν
-      // τα segments που δείχνει.
-      ...(r2 ? ["-hls_base_url", `${r2.publicUrl}${streamPath}/`] : []),
-      `${dir}/${r2 ? "ff" : "index"}.m3u8`,
-    ],
+    ffmpegArgs({
+      dir, streamPath, prefix,
+      rtmpPort: config.rtmp.port,
+      ladder: job.steps,
+      r2,
+    }),
     { stdio: ["ignore", "ignore", "inherit"] }
   );
   ff.on("error", (err) => console.error(`HLS ffmpeg failed: ${err.message}`));
@@ -125,6 +108,31 @@ function startFfmpeg(streamPath, job) {
     console.error(`HLS ffmpeg ${streamPath}: exit ${code}, respawn σε ${RESPAWN_MS}ms`);
     job.timer = setTimeout(() => startFfmpeg(streamPath, job), RESPAWN_MS);
   });
+}
+
+// Το ύψος της πηγής φτάνει με τα metadata, λίγο *μετά* το postPublish — δες
+// waitForHeight στο ladder.js. Μόνο τα streams με ladder περιμένουν· τα υπόλοιπα
+// σηκώνουν ffmpeg ακαριαία, όπως πάντα. Ίδιο job.timer με το respawn, ώστε το
+// donePublish/shutdown να ακυρώνει την αναμονή από το ίδιο σημείο — και έλεγχος
+// ταυτότητας του job, γιατί ο publisher μπορεί να έχει φύγει στο μεταξύ.
+function spawnWhenReady(streamPath, job, session, waited = 0) {
+  if (hlsJobs.get(streamPath) !== job) return;
+  if (waitForHeight({ ladder: job.ladder, srcHeight: session.videoHeight, waited })) {
+    job.timer = setTimeout(
+      () => spawnWhenReady(streamPath, job, session, waited + HEIGHT_TICK_MS),
+      HEIGHT_TICK_MS
+    );
+    return;
+  }
+  // Υπολογίζεται μία φορά, εδώ: το respawn ξαναχρησιμοποιεί τα ίδια σκαλοπάτια,
+  // ώστε ένας ffmpeg που πέθανε να μη γυρίσει με άλλο σύνολο variants πάνω στα
+  // ίδια ονόματα αρχείων.
+  job.steps = renditions({
+    ladder: job.ladder,
+    srcHeight: session.videoHeight,
+    maxRenditions: config.hls.maxRenditions,
+  });
+  startFfmpeg(streamPath, job);
 }
 
 nms.on("postPublish", (session) => {
@@ -157,19 +165,26 @@ nms.on("postPublish", (session) => {
   // isPublisher του δεν γίνεται ποτέ true, οπότε στο close καλείται donePlay και
   // donePublish δεν βγαίνει ποτέ γι' αυτόν. Χωρίς αυτόν τον έλεγχο, κάθε
   // reconnect του OBS πάνω σε session που δεν έχει κλείσει ακόμα αφήνει ένα
-  // ζόμπι ffmpeg να γράφει για πάντα στο ίδιο ff.m3u8 — το index.m3u8 παίζει
+  // ζόμπι ffmpeg να γράφει για πάντα στα ίδια playlists — το index.m3u8 παίζει
   // πινγκ-πονγκ ανάμεσα σε δύο άσχετες σειρές segments και κανένας player δεν
   // προλαβαίνει να χτίσει buffer.
   if (hlsJobs.has(session.streamPath)) return;
 
   const dir = `${config.static.root}${session.streamPath}`;
   fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
+  // Με R2 ο ffmpeg γράφει στο ff/ και το r2.js δημοσιεύει ένα επίπεδο πάνω. Ο
+  // φάκελος πρέπει να υπάρχει πριν από το fs.watch του startR2Sync, αλλιώς το
+  // watch σκάει με ENOENT και το sync μένει μόνο στον περιοδικό γύρο.
+  fs.mkdirSync(r2 ? `${dir}/ff` : dir, { recursive: true });
 
   const job = {
     ff: null,
     timer: null,
     fails: 0,
+    // Το ladder του πακέτου διαβάζεται εδώ και μόνο εδώ — τα σκαλοπάτια που θα
+    // βγουν στ' αλήθεια τα κρίνει το spawnWhenReady, όταν μάθει το ύψος.
+    ladder: ladderOf(session.streamPath),
+    steps: [],
     // Το bytes×θεατές τρέχει μέσα στο stats.js (αυτό ξέρει τους HLS θεατές) — το
     // r2.js μόνο αναφέρει τι ανέβηκε, δεν κάνει require το stats.js. Ζει όσο ο
     // publisher, όχι όσο ένας ffmpeg: το respawn γράφει στον ίδιο φάκελο.
@@ -177,7 +192,7 @@ nms.on("postPublish", (session) => {
       stats.addR2Out(session.streamPath, name, bytes)),
   };
   hlsJobs.set(session.streamPath, job);
-  startFfmpeg(session.streamPath, job);
+  spawnWhenReady(session.streamPath, job, session);
 });
 
 nms.on("donePublish", (session) => {
@@ -192,7 +207,14 @@ nms.on("donePublish", (session) => {
   // live. Το 404 είναι το ίδιο σήμα με το «δεν εκπέμπει ακόμα» — ο player μπαίνει
   // στον υπάρχοντα δρόμο επανασύνδεσης και πιάνει την επόμενη εκπομπή μόλις
   // εμφανιστεί. Τα .ts μένουν, τα καθαρίζει το rmSync του επόμενου postPublish.
-  fs.rmSync(`${config.static.root}${session.streamPath}/index.m3u8`, { force: true });
+  // Και τα variants μαζί: ο player που ήδη παίζει δεν ξαναζητάει ποτέ το master,
+  // οπότε σκέτο σβήσιμο του index.m3u8 τον αφήνει σε βρόχο πάνω στο v720.m3u8.
+  // Το readdir δεν είναι σαν το rmSync -f: σε φάκελο που έχει χαθεί (καθάρισμα
+  // δίσκου, χειροκίνητο rm) πετάει ENOENT μέσα σε event handler του nms, δηλαδή
+  // ρίχνει τον server και μαζί όλες τις άλλες εκπομπές.
+  const dir = `${config.static.root}${session.streamPath}`;
+  const playlists = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".m3u8")) : [];
+  for (const f of playlists) fs.rmSync(`${dir}/${f}`, { force: true });
 });
 
 // Ο server δεν ξαναξεκινάει τον εαυτό του — τερματίζει καθαρά και τον ξανασηκώνει
@@ -213,7 +235,12 @@ function shutdown() {
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
-const stats = startStats(nms, config, { onRestart: shutdown });
+// stepsOf: μόνο το app.js ξέρει τι κωδικοποιεί στ' αλήθεια ο κάθε ffmpeg — το
+// snapshot πρέπει να δείχνει αυτό και όχι το ladder του πακέτου.
+const stats = startStats(nms, config, {
+  onRestart: shutdown,
+  stepsOf: (streamPath) => hlsJobs.get(streamPath)?.steps ?? [],
+});
 startPanelSync(config, stats.snapshot);
 
 nms.run();
