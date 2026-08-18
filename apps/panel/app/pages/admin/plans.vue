@@ -27,6 +27,7 @@ const toList = (csv: string | null) => (csv ? csv.split(',').map(Number) : [])
 
 const api = useApi()
 const ask = useConfirm()
+const toast = useToast()
 const plans = ref<Row[]>([])
 const servers = ref<{ id: number, host: string }[]>([])
 const error = ref('')
@@ -76,6 +77,9 @@ async function createPlan() {
 
 // Πάντα ξαναφορτώνει μετά, επιτυχία ή όχι — σε αποτυχία ξαναφέρνει τις σωστές
 // τιμές πάνω από ό,τι πληκτρολόγησε ο χρήστης.
+// Ειδοποίηση και όχι μήνυμα στη σελίδα: οι κάρτες είναι πολλές και ένα «έγινε»
+// στην κορυφή δεν θα έλεγε ποιο πλάνο αποθηκεύτηκε. Το επιτυχημένο save αλλιώς
+// δεν φαίνεται πουθενά — το load() ξαναγράφει τις ίδιες τιμές που βλέπει ήδη.
 async function savePlan(p: EditRow) {
   try {
     await api(`/plans/${p.id}`, {
@@ -84,6 +88,11 @@ async function savePlan(p: EditRow) {
         name: p.name, maxViewers: p.maxViewers, maxStreams: p.maxStreams,
         ladder: toCsv(p.heights), serverId: p.serverId,
       }),
+    })
+    toast.add({
+      title: `Το πλάνο «${p.name}» αποθηκεύτηκε`,
+      color: 'success',
+      icon: 'i-lucide-circle-check',
     })
   }
   catch (e) {
