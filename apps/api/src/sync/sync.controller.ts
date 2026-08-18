@@ -6,8 +6,11 @@ import { ServerTokenGuard } from './server-token.guard';
 import { Public } from '../auth/public.decorator';
 
 // Μορφή που περιμένει ο loader του stream server (clients.json) —
-// PLAN-multitenant.md, Φάση 1.
-type ClientsJson = Record<string, { limit: number; paths: Record<string, string> }>;
+// PLAN-multitenant.md, Φάση 1. Το `ladder` (PLAN-transcoding.md) είναι array από
+// ύψη και **λείπει εντελώς** όταν το πλάνο δεν πουλάει ABR: έτσι το αρχείο των
+// σημερινών πελατών μένει byte-για-byte ίδιο και το `config.js#ladderOf` του
+// stream server δεν χρειάζεται να ξεχωρίσει «χωρίς πεδίο» από «κενό πεδίο».
+type ClientsJson = Record<string, { limit: number; ladder?: number[]; paths: Record<string, string> }>;
 
 @Controller('servers')
 export class SyncController {
@@ -46,6 +49,9 @@ export class SyncController {
         // Ο stream server δεν ξέρει τι είναι πλάνο: παίρνει έτοιμο νούμερο, όπως
         // πάντα. Το σχήμα του clients.json δεν άλλαξε ποτέ γι' αυτόν.
         limit: sub.plan.maxViewers,
+        // Το ladder ζει στο πλάνο, άρα μια αλλαγή στον κατάλογο το αλλάζει και
+        // για τις υπάρχουσες συνδρομές — όπως το `limit`, δεν αντιγράφεται.
+        ...(sub.plan.ladder ? { ladder: sub.plan.ladder.split(',').map(Number) } : {}),
         paths: Object.fromEntries(sub.paths.map((p) => [p.path, p.key])),
       };
     }

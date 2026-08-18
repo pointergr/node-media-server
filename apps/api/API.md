@@ -110,7 +110,7 @@ curl "${auth[@]}" $API/plans
 ```
 
 ```json
-[{ "id": 1, "name": "basic", "maxViewers": 50, "maxStreams": 1, "serverId": 1,
+[{ "id": 1, "name": "basic", "maxViewers": 50, "maxStreams": 1, "serverId": 1, "ladder": null,
    "server": { "id": 1, "host": "stream.example.com", "...": "" },
    "_count": { "subscriptions": 12 } }]
 ```
@@ -245,7 +245,7 @@ curl -X POST "${auth[@]}" -d '{"clientId":7}' $API/auth/login-link
 | Endpoint | Σώμα | Απάντηση / σφάλματα |
 |---|---|---|
 | `GET /plans` | — | ο κατάλογος με `server` και `_count.subscriptions`, ταξινομημένος κατά `maxViewers` |
-| `POST /plans` | `{name, maxViewers, maxStreams, serverId}` | τα δύο όρια ακέραιοι **≥1** (`400`), άγνωστος server → `400` |
+| `POST /plans` | `{name, maxViewers, maxStreams, serverId, ladder?}` | τα δύο όρια ακέραιοι **≥1** (`400`), άγνωστος server → `400`. Το `ladder` (επιπλέον αναλύσεις, ABR) είναι csv από ύψη σε φθίνουσα σειρά, χωρίς διπλά, από τα `1080,720,480,360,240` — αλλιώς `400`· κενό = `null` |
 | `PATCH /plans/:id` | ίδια πεδία, όλα προαιρετικά | αλλαγή ορίων ισχύει **και για τις υπάρχουσες** συνδρομές· αλλαγή `serverId` μόνο για τις επόμενες |
 | `DELETE /plans/:id` | — | `409` αν το έχουν συνδρομές |
 

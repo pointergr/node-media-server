@@ -21,6 +21,8 @@ interface PlanDto {
   // Πού πέφτουν οι νέες συνδρομές. Αλλάζοντάς το δεν μετακομίζει καμία παλιά —
   // η συνδρομή κρατάει τον δικό της (schema.prisma#Subscription).
   serverId: number;
+  // csv από ύψη ("720,480"), κενό/παραλειπόμενο = καθόλου transcoding.
+  ladder?: string | null;
 }
 
 // Χωρίς service: πέντε pass-through κλήσεις στο Prisma δεν χρειάζονται τρίτο
@@ -41,10 +43,10 @@ export class PlansController {
 
   @Post()
   create(@Body() body: Partial<PlanDto>) {
-    const { name, maxViewers, maxStreams, serverId } = valid(body, true);
+    const { name, maxViewers, maxStreams, serverId, ladder } = valid(body, true);
     return knownServer(
       this.prisma.plan.create({
-        data: { name: name!, maxViewers: maxViewers!, maxStreams: maxStreams!, serverId: serverId! },
+        data: { name: name!, maxViewers: maxViewers!, maxStreams: maxStreams!, serverId: serverId!, ladder: ladder ?? null },
       }),
     );
   }
@@ -52,8 +54,9 @@ export class PlansController {
   @Patch(':id')
   async update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<PlanDto>) {
     await this.byId(id);
-    // Τα όρια αλλάζουν και για τις υπάρχουσες συνδρομές — τα διαβάζουν από εδώ,
-    // δεν τα αντιγράφουν. Ο `serverId` όχι: αφορά μόνο τις επόμενες.
+    // Τα όρια —και το ladder— αλλάζουν και για τις υπάρχουσες συνδρομές: τα
+    // διαβάζουν από εδώ, δεν τα αντιγράφουν. Ο `serverId` όχι: αφορά μόνο τις
+    // επόμενες.
     return knownServer(this.prisma.plan.update({ where: { id }, data: valid(body, false) }));
   }
 
@@ -102,5 +105,23 @@ function valid(body: Partial<PlanDto>, required: boolean) {
     }
     if (!Number.isInteger(v) || v < 1) throw new BadRequestException(`${field}: ακέραιος ≥ 1`);
   }
+  if (body.ladder !== undefined) body.ladder = normalizedLadder(body.ladder);
   return body;
+}
+
+// Τα μόνα ύψη που ξέρει ο stream server: έχει σταθερό bitrate ανά ύψος
+// (PLAN-transcoding.md), οπότε ύψος εκτός πίνακα δεν έχει με τι να κωδικοποιηθεί
+// και θα έσκαγε εκεί — την ώρα της εκπομπής — αντί για εδώ.
+const HEIGHTS = [1080, 720, 480, 360, 240];
+
+// Φθίνουσα σειρά και χωρίς διπλά, γιατί το `-var_stream_map` βγαίνει με τη σειρά
+// του ladder: άτακτο ladder = άτακτο master playlist. Κενό ⇒ `null`, μία μόνο
+// αναπαράσταση του «τίποτα» — αλλιώς ο stream server θα έλεγχε δύο πράγματα.
+function normalizedLadder(v: unknown): string | null {
+  if (typeof v !== 'string' && v !== null) throw new BadRequestException('ladder: csv από ύψη, π.χ. "720,480"');
+  if (!v?.trim()) return null;
+  const heights = v.split(',').map((h) => Number(h.trim()));
+  const ok = heights.every((h, i) => HEIGHTS.includes(h) && (i === 0 || h < heights[i - 1]!));
+  if (!ok) throw new BadRequestException(`ladder: ύψη από ${HEIGHTS.join(', ')}, σε φθίνουσα σειρά, χωρίς διπλά`);
+  return heights.join(',');
 }

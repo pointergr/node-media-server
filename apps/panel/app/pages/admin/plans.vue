@@ -7,10 +7,23 @@ interface Row {
   name: string
   maxViewers: number
   maxStreams: number
+  // csv από ύψη, φθίνουσα — δες LADDER παρακάτω. null = καθόλου transcoding.
+  ladder: string | null
   serverId: number
   server: { host: string }
   _count: { subscriptions: number }
 }
+
+// Ο stream server έχει σταθερό bitrate ανά ύψος, οπότε τα ύψη είναι κλειστός
+// κατάλογος και όχι ελεύθερο κείμενο: ένα «800» θα περνούσε το πληκτρολόγιο,
+// θα κοβόταν στο API και ο admin θα μάθαινε γιατί μόνο από το μήνυμα λάθους.
+const LADDER = [1080, 720, 480, 360, 240]
+
+// Το UI δουλεύει με πίνακα, το API με csv. Φθίνουσα σειρά στην έξοδο: το
+// var_stream_map βγαίνει με τη σειρά που το δίνεις, και το API απορρίπτει
+// ό,τι δεν είναι φθίνον — ο admin δεν χρειάζεται να το ξέρει αυτό.
+const toCsv = (heights: number[]) => [...heights].sort((a, b) => b - a).join(',')
+const toList = (csv: string | null) => (csv ? csv.split(',').map(Number) : [])
 
 const api = useApi()
 const ask = useConfirm()
@@ -20,16 +33,24 @@ const error = ref('')
 const busy = ref(false)
 
 const serverItems = computed(() => servers.value.map(s => ({ label: s.host, value: s.id })))
-const form = reactive<{ name: string, maxViewers: number, maxStreams: number, serverId: number | undefined }>({
-  name: '', maxViewers: 50, maxStreams: 1, serverId: undefined,
+const ladderItems = LADDER.map(h => ({ label: `${h}p`, value: h }))
+const form = reactive<{ name: string, maxViewers: number, maxStreams: number, ladder: number[], serverId: number | undefined }>({
+  name: '', maxViewers: 50, maxStreams: 1, ladder: [], serverId: undefined,
 })
+
+// heights: μόνο για το UI, δεν ταξιδεύει ποτέ προς το API — το `ladder` του
+// server είναι csv, το USelectMenu θέλει πίνακα.
+type EditRow = Row & { heights: number[] }
+const rows = computed(() => plans.value as EditRow[])
 
 async function load() {
   try {
-    [plans.value, servers.value] = await Promise.all([
+    const [list, srv] = await Promise.all([
       api<Row[]>('/plans'),
       api<{ id: number, host: string }[]>('/servers'),
     ])
+    plans.value = list.map(p => ({ ...p, heights: toList(p.ladder) }))
+    servers.value = srv
     error.value = ''
   }
   catch (e) {
@@ -41,8 +62,8 @@ async function createPlan() {
   if (!form.name || !form.serverId) return
   busy.value = true
   try {
-    await api('/plans', { method: 'POST', body: JSON.stringify(form) })
-    Object.assign(form, { name: '', maxViewers: 50, maxStreams: 1, serverId: undefined })
+    await api('/plans', { method: 'POST', body: JSON.stringify({ ...form, ladder: toCsv(form.ladder) }) })
+    Object.assign(form, { name: '', maxViewers: 50, maxStreams: 1, ladder: [], serverId: undefined })
     await load()
   }
   catch (e) {
@@ -55,12 +76,13 @@ async function createPlan() {
 
 // Πάντα ξαναφορτώνει μετά, επιτυχία ή όχι — σε αποτυχία ξαναφέρνει τις σωστές
 // τιμές πάνω από ό,τι πληκτρολόγησε ο χρήστης.
-async function savePlan(p: Row) {
+async function savePlan(p: EditRow) {
   try {
     await api(`/plans/${p.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        name: p.name, maxViewers: p.maxViewers, maxStreams: p.maxStreams, serverId: p.serverId,
+        name: p.name, maxViewers: p.maxViewers, maxStreams: p.maxStreams,
+        ladder: toCsv(p.heights), serverId: p.serverId,
       }),
     })
   }
@@ -109,7 +131,7 @@ onMounted(load)
       </template>
 
       <form class="space-y-4" @submit.prevent="createPlan">
-        <div class="grid gap-4 sm:grid-cols-4">
+        <div class="grid gap-4 sm:grid-cols-5">
           <UFormField label="Όνομα">
             <UInput v-model="form.name" placeholder="basic" required class="w-full" />
           </UFormField>
@@ -118,6 +140,9 @@ onMounted(load)
           </UFormField>
           <UFormField label="Μέγιστα streams">
             <UInputNumber v-model="form.maxStreams" :min="1" class="w-full" />
+          </UFormField>
+          <UFormField label="Αναλύσεις" help="κενό = καμία μετατροπή">
+            <USelectMenu v-model="form.ladder" multiple value-key="value" :items="ladderItems" placeholder="— καμία —" class="w-full" />
           </UFormField>
           <UFormField label="Server">
             <USelect v-model="form.serverId" :items="serverItems" placeholder="— επιλογή —" class="w-full" />
@@ -130,13 +155,21 @@ onMounted(load)
           paths χωράει το πλάνο, όχι πόσα εκπέμπει ταυτόχρονα.
         </p>
 
+        <p class="note">
+          Οι <b>αναλύσεις</b> είναι τα σκαλοπάτια <em>κάτω</em> από την εκπομπή: η αρχική
+          ποιότητα προσφέρεται πάντα, αυτούσια και δωρεάν. Κάθε σκαλοπάτι όμως είναι
+          πραγματική μετατροπή στον server — ένα «720+480» κοστίζει περίπου 1,5 πυρήνα ανά
+          εκπομπή, οπότε βάλ' το σε πλάνα που πουλιούνται αναλόγως και σε server που το
+          αντέχει.
+        </p>
+
         <UButton type="submit" icon="i-lucide-plus" :loading="busy">Δημιουργία πλάνου</UButton>
       </form>
     </UCard>
 
-    <UCard v-for="p in plans" :key="p.id">
+    <UCard v-for="p in rows" :key="p.id">
       <div class="space-y-4">
-        <div class="grid gap-4 sm:grid-cols-4">
+        <div class="grid gap-4 sm:grid-cols-5">
           <UFormField label="Όνομα">
             <UInput v-model="p.name" class="w-full" />
           </UFormField>
@@ -145,6 +178,9 @@ onMounted(load)
           </UFormField>
           <UFormField label="Μέγιστα streams">
             <UInputNumber v-model="p.maxStreams" :min="1" class="w-full" />
+          </UFormField>
+          <UFormField label="Αναλύσεις" help="ισχύει από την επόμενη εκπομπή">
+            <USelectMenu v-model="p.heights" multiple value-key="value" :items="ladderItems" placeholder="— καμία —" class="w-full" />
           </UFormField>
           <UFormField label="Server" help="μόνο για τις επόμενες αγορές">
             <USelect v-model="p.serverId" :items="serverItems" class="w-full" />

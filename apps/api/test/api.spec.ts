@@ -351,7 +351,7 @@ const syncOf = async (host: string, token: string) => {
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ streams: [] }),
   });
-  return (await res.json()) as Record<string, { limit: number; paths: Record<string, string> }>;
+  return (await res.json()) as Record<string, { limit: number; ladder?: number[]; paths: Record<string, string> }>;
 };
 
 // Ο πυρήνας του μοντέλου: δύο συνδρομές του ΙΔΙΟΥ πλάνου δεν φτιάχνουν έναν
@@ -525,6 +525,67 @@ test('πλάνα: όρια < 1 -> 400, άγνωστο πλάνο -> 400 (όχι 
 
   const client = await mkClient(auth, 'me-agnosto');
   assert.equal((await post(auth, `/clients/${client.id}/subscriptions`, { planId: 9999 })).status, 400);
+});
+
+// --- Ladder (ABR) ----------------------------------------------------------
+// Το ladder ζει στο πλάνο γιατί είναι κάτι που πουλιέται (PLAN-transcoding.md),
+// και κανονικοποιείται πριν την αποθήκευση: αλλιώς το «720, 480» και το
+// «720,480» θα ήταν δύο διαφορετικές γραφές της ίδιας σκάλας.
+test('πλάνα: ladder έγκυρο — κανονικοποίηση στη δημιουργία και στην ενημέρωση', async () => {
+  const auth = await adminAuth();
+  const res = await post(auth, '/plans', {
+    name: 'abr', maxViewers: 10, maxStreams: 1, serverId: ids.serverA, ladder: '720, 480',
+  });
+  assert.equal(res.status, 201);
+  assert.equal(((await res.json()) as { ladder: string }).ladder, '720,480');
+
+  const id = await planId(auth, 'abr');
+  const patched = await fetch(`${base}/plans/${id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ ladder: '1080,720,480' }),
+  });
+  assert.equal(patched.status, 200);
+  assert.equal(((await patched.json()) as { ladder: string }).ladder, '1080,720,480');
+
+  // Κενό = «καθόλου transcoding», και μπαίνει ως null: μία αναπαράσταση του
+  // τίποτα, όχι δύο, ώστε ο stream server να μην ελέγχει και τα δύο.
+  const cleared = await fetch(`${base}/plans/${id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ ladder: '' }),
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal(((await cleared.json()) as { ladder: string | null }).ladder, null);
+});
+
+// Ο stream server έχει σταθερό bitrate ανά ύψος και το -var_stream_map βγαίνει
+// με τη σειρά του ladder: άγνωστο ύψος ή άτακτη σειρά θα έσκαγαν εκεί — δηλαδή
+// την ώρα της εκπομπής — αντί για εδώ.
+test('πλάνα: ladder άκυρο — άγνωστο ύψος, αύξουσα σειρά, διπλότυπο -> 400', async () => {
+  const auth = await adminAuth();
+  const mk = (name: string, ladder: string) =>
+    post(auth, '/plans', { name, maxViewers: 10, maxStreams: 1, serverId: ids.serverA, ladder });
+
+  assert.equal((await mk('akyro-1', '720,500')).status, 400, 'το 500 δεν έχει bitrate στον πίνακα');
+  assert.equal((await mk('akyro-2', '480,720')).status, 400, 'αύξουσα σειρά = άτακτο master playlist');
+  assert.equal((await mk('akyro-3', '720,720')).status, 400, 'δύο φορές το ίδιο encode');
+  assert.equal((await mk('akyro-4', '720,abc')).status, 400);
+});
+
+test('sync: το ladder του πλάνου φτάνει ως array· χωρίς ladder ούτε το κλειδί', async () => {
+  const auth = await adminAuth();
+  const created = await post(auth, '/plans', {
+    name: 'abr-sync', maxViewers: 10, maxStreams: 1, serverId: ids.serverA, ladder: '720,480',
+  });
+  assert.equal(created.status, 201);
+  const abr = (await created.json()) as { id: number };
+  const aplo = await mkPlan(auth, 'aplo-sync', 10, 1, ids.serverA);
+  const client = await mkClient(auth, 'me-abr');
+  const subAbr = await mkSub(auth, client.id, abr.id);
+  const subAplo = await mkSub(auth, client.id, aplo.id);
+
+  const body = await syncOf('server-a', 'tok-a');
+  assert.deepEqual(body[`me-abr#${subAbr.id}`]!.ladder, [720, 480], 'array από αριθμούς, όχι csv');
+  // Παράλειψη και όχι null/κενό array: το clients.json των σημερινών πελατών
+  // μένει byte-για-byte ίδιο (σύμβαση με το `config.js#ladderOf`).
+  assert.ok(!('ladder' in body[`me-abr#${subAplo.id}`]!), 'χωρίς ladder, ούτε το κλειδί');
 });
 
 // Ο server ΔΕΝ κάνει cascade: καθαρό 409 αντί για 500, ώστε το panel να πει
