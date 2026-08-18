@@ -13,6 +13,22 @@ export const BITRATES = {
   240: { v: "400k", max: "450k", buf: "900k" },
 };
 
+// Ο encoder είναι ρύθμιση του **server**, το ladder του πλάνου: το πλάνο λέει τι
+// πούλησες, ο server με τι το βγάζει. Απούσα ή άγνωστη τιμή πέφτει στον x264 —
+// ένας server χωρίς GPU δεν έχει καν το πεδίο στο config.json, και ένα
+// τυπογραφικό δεν επιτρέπεται να ρίξει εκπομπές (τον έλεγχο ότι ο codec όντως
+// δουλεύει σε αυτό το μηχάνημα τον κάνει ο probe του app.js, στο boot).
+// Το scale μένει στη CPU και για τους δύο: ο h264_nvenc και ο h264_qsv δέχονται
+// software frames και ανεβάζουν μόνοι τους στην GPU. Το scale_cuda/hwupload θα
+// ήθελε διαφορετικό filter graph ανά encoder για να γλιτώσει το φθηνό κομμάτι —
+// ακριβό είναι το encode. Ο VA-API λείπει σκόπιμα: *απαιτεί* hwupload, δηλαδή
+// ειδική περίπτωση στο graph· μπαίνει όταν υπάρξει μηχάνημα χωρίς QSV δρόμο.
+export const ENCODERS = {
+  x264: { codec: "libx264", args: ["-preset", "veryfast"] },
+  nvenc: { codec: "h264_nvenc", args: ["-preset", "p4", "-rc", "cbr"] },
+  qsv: { codec: "h264_qsv", args: ["-preset", "veryfast"] },
+};
+
 // Το πλαφόν είναι ρύθμιση του server, όχι του πλάνου: το πλάνο είναι εμπορική
 // υπόσχεση, αυτό εδώ είναι το τι σηκώνει το μηχάνημα πριν λιώσει. Μετράει μόνο
 // τα encoded σκαλοπάτια — η κορυφή είναι copy και δεν κοστίζει CPU.
@@ -58,12 +74,13 @@ export const renditions = ({ ladder, srcHeight, maxRenditions = MAX_RENDITIONS }
     .filter((h) => BITRATES[h] && (!srcHeight || h < srcHeight))
     .slice(0, maxRenditions);
 
-export function ffmpegArgs({ dir, streamPath, prefix, rtmpPort, ladder, srcHeight, r2, maxRenditions = MAX_RENDITIONS }) {
+export function ffmpegArgs({ dir, streamPath, prefix, rtmpPort, ladder, srcHeight, r2, encoder, maxRenditions = MAX_RENDITIONS }) {
   // Με R2 ο ffmpeg γράφει σε υποφάκελο με τα *τελικά* ονόματα και το r2.js
   // δημοσιεύει τα ίδια ονόματα ένα επίπεδο πάνω, αφού ανέβουν τα segments.
   // Χωρίς R2 τα σερβίρει ο static server κατευθείαν από τον φάκελο του stream.
   const out = r2 ? `${dir}/ff` : dir;
   const steps = renditions({ ladder, srcHeight, maxRenditions });
+  const enc = ENCODERS[encoder] ?? ENCODERS.x264;
 
   const src = ["-i", `rtmp://127.0.0.1:${rtmpPort}${streamPath}`];
   const baseUrl = r2 ? ["-hls_base_url", `${r2.publicUrl}${streamPath}/`] : [];
@@ -91,14 +108,14 @@ export function ffmpegArgs({ dir, streamPath, prefix, rtmpPort, ladder, srcHeigh
   return [
     ...src,
     "-filter_complex", filter,
-    // Το bsf ανήκει μόνο στο copy stream: στα encoded ο x264 βγάζει ήδη annex-b
+    // Το bsf ανήκει μόνο στο copy stream: στα encoded ο encoder βγάζει ήδη annex-b
     // με δικό του extradata και το φίλτρο εκεί είναι στην καλύτερη περίπτωση περιττό.
     "-map", "0:v", "-c:v:0", "copy", "-bsf:v:0", BSF,
     ...steps.flatMap((h, i) => {
       const b = BITRATES[h];
       const n = i + 1;
       return [
-        "-map", `[v${h}]`, `-c:v:${n}`, "libx264", "-preset", "veryfast",
+        "-map", `[v${h}]`, `-c:v:${n}`, enc.codec, ...enc.args,
         `-b:v:${n}`, b.v, `-maxrate:v:${n}`, b.max, `-bufsize:v:${n}`, b.buf,
       ];
     }),

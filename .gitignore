@@ -2,6 +2,8 @@
 # είναι κατάσταση του κάθε deployment, όχι πηγαίος κώδικας. Πρότυπο: config.example.json
 # Unanchored (χωρίς αρχικό /) γιατί τώρα ζουν μέσα στο apps/stream, όχι στη ρίζα.
 config.json
+# Ρυθμίσεις του συγκεκριμένου μηχανήματος (GPU devices κλπ), όχι πηγαίος κώδικας
+docker-compose.override.yml
 media
 node_modules
 .aider*
