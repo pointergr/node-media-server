@@ -176,7 +176,14 @@ export function startStats(
   function trackHls(req, res) {
     const p = req.url.split("?")[0];
     if (!p.endsWith(".m3u8") && !p.endsWith(".ts")) return;
-    const stream = p.slice(0, p.lastIndexOf("/"));
+    // Με R2 σε αναδίπλωση το segment έρχεται από το ff/ του stream — ίδιο stream,
+    // ένα επίπεδο πιο κάτω. Το streamPath του nms είναι πάντα /app/name, δύο
+    // κομμάτια: ένα *τρίτο* κομμάτι «ff» είναι ο φάκελος του ffmpeg, ενώ το
+    // /live/ff είναι stream πελάτη που τυχαίνει να λέγεται έτσι.
+    const folder = p.slice(0, p.lastIndexOf("/"));
+    const stream = folder.endsWith("/ff") && folder.split("/").length > 3
+      ? folder.slice(0, -3)
+      : folder;
     res.on("finish", () => addOut(stream, Number(res.getHeader("content-length")) || 0));
     if (!p.endsWith(".m3u8")) return;
 

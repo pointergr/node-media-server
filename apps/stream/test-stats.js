@@ -124,6 +124,20 @@ await tick();
 sample();
 assert.ok(db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1).out_bps > 0, "τα bytes του HLS μπαίνουν στο out_bps");
 
+// Με το R2 σε αναδίπλωση το segment το σερβίρει ο δικός μας server από το ff/ του
+// stream: ίδιο stream, ένα επίπεδο πιο κάτω. Χωρίς αυτό τα bytes χρεώνονταν στο
+// «/live/stream/ff» — path χωρίς publisher, δηλαδή πουθενά — και το out_bps του
+// πραγματικού stream έδειχνε μηδέν ακριβώς την ώρα που ο server πλήρωνε τη ζημιά.
+await tick();
+sample();
+hlsHit(nms, "/live/stream/ff/1-9.ts", "5.5.5.5", { bytes: 300_000 });
+await tick();
+sample();
+assert.ok(
+  db.prepare("SELECT * FROM samples WHERE stream = '/live/stream' ORDER BY ts").all().at(-1).out_bps > 0,
+  "τα bytes του origin fallback χρεώνονται στο stream, όχι στο ff/"
+);
+
 const logged = db.prepare("SELECT * FROM sessions").all();
 assert.equal(logged.length, 1, "μία γραμμή στο session log");
 assert.equal(logged[0].out_bytes, 500_000);
@@ -428,6 +442,27 @@ clearClientsCache();
   s.sample();
   assert.equal(closed, 1, "αλλαγμένο κλειδί κόβει τον publisher μέσα σε ένα tick");
   assert.equal(destroyed, 1, "και το socket πέφτει, αλλιώς ο publisher συνεχίζει να εκπέμπει");
+  s.server.close();
+}
+
+// ...και ένα stream που απλώς λέγεται «ff» δεν είναι σκαλωσιά. Το streamPath του
+// nms είναι πάντα /app/name — δύο κομμάτια — οπότε ένα *τρίτο* κομμάτι «ff» είναι
+// ο φάκελος του ffmpeg, ενώ το /live/ff είναι το stream ενός πελάτη. Χωρίς τη
+// διάκριση, θεατές και bytes του /live/ff χρεώνονταν στο «/live»: σε κανέναν.
+{
+  fs.rmSync(clientsFile, { force: true });
+  clearClientsCache();
+  const s = freshStats(null);
+  s.nms.emit("postPublish", session({ isPublisher: true, streamPath: "/live/ff" }));
+  await tick();
+  s.sample();
+  hlsHit(s.nms, "/live/ff/1-0.ts", "5.5.5.5", { bytes: 250_000 });
+  await tick();
+  s.sample();
+  assert.ok(
+    s.db.prepare("SELECT * FROM samples WHERE stream = '/live/ff' ORDER BY ts").all().at(-1).out_bps > 0,
+    "stream που λέγεται ff μετράει στον εαυτό του, όχι στο /live"
+  );
   s.server.close();
 }
 
