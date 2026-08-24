@@ -300,6 +300,119 @@ fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(many, { recursive: true, force: true });
 }
 
+// --- Οι μεταβάσεις με κυλιόμενο παράθυρο -------------------------------------
+// Το κλάδεμα του παραθύρου δεν επιτρέπεται να μπερδεύει τα logs των μεταβάσεων:
+// το «πόσα έπεσαν» πρέπει να μετριέται στα segments του γύρου, όχι στο μέγεθος
+// του fromOrigin — αλλιώς όταν στον ίδιο γύρο κλαδεύεται ένα παλιό όνομα και
+// πέφτει ένα νέο, η διαφορά βγαίνει μηδέν και ο server γράφει «ξαναπρολαβαίνει»
+// εν μέσω επεισοδίου (και «δεν προλαβαίνει» σε γύρο που όλα ανέβηκαν).
+{
+  const roll = fs.mkdtempSync(`${os.tmpdir()}/r2-roll-`);
+  fs.mkdirSync(`${roll}/ff`);
+  const only = (seg) => {
+    fs.writeFileSync(`${roll}/ff/${seg}`, "x".repeat(100));
+    fs.writeFileSync(`${roll}/ff/index.m3u8`, `#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/r/${seg}\n`);
+  };
+  const shown = () => (fs.existsSync(`${roll}/index.m3u8`) ? fs.readFileSync(`${roll}/index.m3u8`, "utf8") : "");
+
+  const logs = [];
+  const realWarn = console.warn;
+  const realError = console.error;
+  console.warn = (m) => logs.push(m);
+  console.error = (m) => logs.push(m);
+
+  failing = ["9-0.ts", "9-1.ts", "9-2.ts"];
+  const stopRoll = startR2Sync(roll, "/live/r", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+
+  // Παράθυρο ενός segment: κάθε πτώση συνοδεύεται από κλάδεμα της προηγούμενης.
+  for (const seg of failing) {
+    only(seg);
+    await until(() => shown().includes(`ff/${seg}`));
+  }
+  assert.equal(
+    logs.filter((l) => l.includes("ξαναπρολαβαίνει")).length, 0,
+    "όσο πέφτουν segments δεν γράφεται ποτέ επαναφορά"
+  );
+
+  failing = null;
+  only("9-3.ts");
+  await until(() => shown().includes("https://cdn/live/r/9-3.ts"));
+  only("9-4.ts");
+  await until(() => shown().includes("https://cdn/live/r/9-4.ts"));
+  assert.equal(
+    logs.filter((l) => l.includes("origin")).length, 1,
+    "η αρχή του επεισοδίου γράφτηκε μία φορά — και καμία ψεύτικη μετά την επαναφορά"
+  );
+  assert.equal(
+    logs.filter((l) => l.includes("ξαναπρολαβαίνει")).length, 1,
+    "και η επαναφορά μία φορά"
+  );
+
+  console.warn = realWarn;
+  console.error = realError;
+  stopRoll();
+  fs.rmSync(roll, { recursive: true, force: true });
+}
+
+// --- Το παράθυρο είναι και η μνήμη ------------------------------------------
+// Τα ονόματα των segments είναι μοναδικά (prefix από Date.now()), οπότε όνομα
+// που βγήκε από το παράθυρο δεν θα ξαναζητηθεί ποτέ: χωρίς κλάδεμα, τα
+// uploaded/fromOrigin μιας 24/7 εκπομπής μεγαλώνουν για πάντα — δεκάδες MB τον
+// μήνα για ονόματα που δεν αφορούν πια κανέναν. Η μόνη ορατή συνέπεια του
+// κλαδέματος, και άρα το μόνο πράγμα που μπορεί να ελέγξει ένα test: όνομα που
+// *ξαναφανεί* αφού ξεχάστηκε αντιμετωπίζεται σαν καινούργιο — ο γύρος διαβάζει
+// την κατάσταση από τον δίσκο, και ο δίσκος είναι το playlist.
+{
+  const win = fs.mkdtempSync(`${os.tmpdir()}/r2-window-`);
+  fs.mkdirSync(`${win}/ff`);
+  const show = (...segs) => {
+    for (const s of segs) fs.writeFileSync(`${win}/ff/${s}`, "x".repeat(100));
+    fs.writeFileSync(
+      `${win}/ff/index.m3u8`,
+      `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/w/${s}\n`).join("")}`
+    );
+  };
+
+  const stopWin = startR2Sync(win, "/live/w", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+
+  show("7-0.ts", "7-1.ts");
+  await until(() => puts.includes("7-1.ts"));
+
+  // Το 7-0 βγαίνει από το παράθυρο: ο γύρος που δεν το βλέπει πια το ξεχνάει.
+  show("7-1.ts", "7-2.ts");
+  await until(() => puts.includes("7-2.ts"));
+
+  const seen = puts.filter((n) => n === "7-0.ts").length;
+  show("7-2.ts", "7-0.ts");
+  assert.ok(
+    await until(() => puts.filter((n) => n === "7-0.ts").length === seen + 1),
+    "όνομα που βγήκε από το παράθυρο ξεχνιέται — αν ξαναφανεί, ξανανεβαίνει"
+  );
+
+  // Το ίδιο και για όσα έφυγαν στο origin: εκτός παραθύρου, το όνομα ξεχνιέται
+  // και μια επανεμφάνισή του ξαναδοκιμάζει το R2.
+  failing = "7-3.ts";
+  show("7-0.ts", "7-3.ts");
+  await until(() => fs.readFileSync(`${win}/index.m3u8`, "utf8").includes("ff/7-3.ts"));
+  failing = null;
+  show("7-4.ts", "7-5.ts");
+  await until(() => puts.includes("7-5.ts"));
+  show("7-5.ts", "7-3.ts");
+  assert.ok(
+    await until(() => puts.includes("7-3.ts")),
+    "και το fromOrigin κλαδεύεται: το ξεχασμένο όνομα ξαναδοκιμάζεται"
+  );
+
+  stopWin();
+  fs.rmSync(win, { recursive: true, force: true });
+}
+
 // --- Τι γράφεται στα logs ---------------------------------------------------
 // Όταν το R2 δεν προλαβαίνει, αποτυγχάνει *κάθε* segment: μια γραμμή ανά segment
 // είναι δύο γραμμές το δευτερόλεπτο ανά εκπομπή — logs που δεν διαβάζει κανείς,

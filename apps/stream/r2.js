@@ -128,17 +128,27 @@ export function startR2Sync(dir, streamPath, r2, onUpload, onFallback) {
     // όπου να χαθεί αρχείο που μόλις είδαμε στο playlist. Μόνο για όσα θα
     // δοκιμαστούν — ό,τι έφυγε στο origin δεν ξαναδιαβάζεται καν.
     const bytes = new Map();
-    const before = fromOrigin.size;
     for (const l of media) {
       l.segments = playlistSegments(l.body);
       l.pending = l.segments.filter((name) => !uploaded.has(name) && !fromOrigin.has(name));
       for (const name of l.pending) bytes.set(name, fs.readFileSync(`${src}/${name}`));
     }
+    // Ό,τι βγήκε από το παράθυρο ξεχνιέται: τα ονόματα είναι μοναδικά (prefix
+    // από Date.now()), οπότε χωρίς κλάδεμα τα δύο sets μιας 24/7 εκπομπής
+    // μεγαλώνουν για πάντα. Ακίνδυνο για τον γύρο: ό,τι κλαδεύεται δεν υπάρχει
+    // σε κανένα playlist, άρα ούτε στο pending ούτε στο localize.
+    const live = new Set(media.flatMap((l) => l.segments));
+    for (const name of uploaded) if (!live.has(name)) uploaded.delete(name);
+    for (const name of fromOrigin) if (!live.has(name)) fromOrigin.delete(name);
 
     // Ανά variant, όχι όλα μαζί: ένα σκαλοπάτι που δεν ανεβαίνει (PUT 5xx) δεν
     // επιτρέπεται να παγώσει τα υπόλοιπα — ο θεατής θα έπρεπε να πέσει σε αυτό
     // ακριβώς που δουλεύει. Παράλληλα μέσα σε κάθε variant: ο γύρος που
     // προλαβαίνει στοιχίζει ένα RTT, όχι τρία.
+    // Πόσα segments έπεσαν στο origin *σε αυτόν τον γύρο* — μετρητής και όχι
+    // διαφορά μεγέθους του fromOrigin: το κλάδεμα του παραθύρου αλλάζει το set
+    // ταυτόχρονα, και μια πτώση συν ένα κλάδεμα θα έβγαζαν «μηδέν».
+    let fell = 0;
     const rounds = await Promise.allSettled(media.map(async (l) => {
       const tries = await Promise.allSettled(l.pending.map((name) => put(name, bytes.get(name))));
       // Δημοσίευση πρώτα, παράπονα μετά: ο γύρος δεν χάνεται ποτέ ολόκληρος για
@@ -148,6 +158,7 @@ export function startR2Sync(dir, streamPath, r2, onUpload, onFallback) {
       // stats.js μετράει επεισόδιο, όχι γύρους που ξαναείδαν το ίδιο όνομα.
       for (const name of l.pending) if (!uploaded.has(name)) {
         fromOrigin.add(name);
+        fell++;
         onFallback?.(name);
       }
       return tries.find((t) => t.status === "rejected")?.reason;
@@ -160,7 +171,6 @@ export function startR2Sync(dir, streamPath, r2, onUpload, onFallback) {
     // όχι απλώς γύρο χωρίς αποτυχία: ο γύρος που δεν είχε τίποτα να ανεβάσει δεν
     // αποδεικνύει τίποτα.
     const attempted = media.reduce((n, l) => n + l.pending.length, 0);
-    const fell = fromOrigin.size - before;
     const reason = rounds.map((r) => r.value ?? r.reason).find(Boolean);
     if (fell && !degraded) {
       degraded = true;
