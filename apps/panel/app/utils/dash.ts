@@ -21,6 +21,10 @@ export interface StreamRow {
   viewers: number
   in_bps: number
   out_bps: number
+  // Υποβάθμιση R2 (stats.js#addR2Fallback): πόσα segments σέρβιρε το origin
+  // επειδή το R2 δεν πρόλαβε, και αν αυτό συμβαίνει *τώρα*. Μόνο σε server με
+  // R2 ενεργό· παλιός stream server: απόν.
+  r2?: { fallen: number, degraded: boolean }
 }
 
 export interface SessionRow {

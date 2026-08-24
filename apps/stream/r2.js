@@ -24,9 +24,12 @@ export const playlistSegments = (playlist) =>
 
 // onUpload(name, bytes): κλήση μετά από κάθε *επιτυχημένο* PUT, για να τρέφει τον
 // εκτιμητή bitrate εξόδου του stats.js (τα segments δεν περνάνε ποτέ από το δικό
-// μας HTTP server όταν σερβίρονται από το R2). Το r2.js δεν κάνει require το
-// stats.js — δεν ξέρει καν ότι υπάρχει — το app.js περνάει το callback.
-export function startR2Sync(dir, streamPath, r2, onUpload) {
+// μας HTTP server όταν σερβίρονται από το R2). onFallback(name): κλήση μία φορά
+// για κάθε segment που δεν πρόλαβε και δημοσιεύτηκε από το origin — έτσι η
+// υποβάθμιση φαίνεται στο snapshot (και στο panel) όσο συμβαίνει. Το r2.js δεν
+// κάνει require το stats.js — δεν ξέρει καν ότι υπάρχει — το app.js περνάει τα
+// callbacks.
+export function startR2Sync(dir, streamPath, r2, onUpload, onFallback) {
   const aws = new AwsClient({
     accessKeyId: r2.accessKeyId,
     secretAccessKey: r2.secretAccessKey,
@@ -141,7 +144,12 @@ export function startR2Sync(dir, streamPath, r2, onUpload) {
       // Δημοσίευση πρώτα, παράπονα μετά: ο γύρος δεν χάνεται ποτέ ολόκληρος για
       // ένα segment που δεν πρόλαβε — βγαίνει με την τοπική του διαδρομή.
       publish(l.name, localize(l.body));
-      for (const name of l.pending) if (!uploaded.has(name)) fromOrigin.add(name);
+      // onFallback(name): μία φορά ανά segment, όσο και οι προσπάθειες — το
+      // stats.js μετράει επεισόδιο, όχι γύρους που ξαναείδαν το ίδιο όνομα.
+      for (const name of l.pending) if (!uploaded.has(name)) {
+        fromOrigin.add(name);
+        onFallback?.(name);
+      }
       return tries.find((t) => t.status === "rejected")?.reason;
     }));
 

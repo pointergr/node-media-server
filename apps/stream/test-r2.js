@@ -59,13 +59,16 @@ const until = async (fn, tries = 100) => {
   return fn();
 };
 
+// Κάθε segment που φεύγει στο origin αναφέρεται μία φορά — έτσι το stats.js (και
+// από εκεί το panel) βλέπει την υποβάθμιση όσο συμβαίνει, όχι στον λογαριασμό.
+const fallen = [];
 const stop = startR2Sync(dir, "/live/s", {
   endpoint: "https://r2.test",
   bucket: "b",
   accessKeyId: "k",
   secretAccessKey: "s",
   publicUrl: "https://cdn",
-});
+}, null, (name) => fallen.push(name));
 
 write("1-0.ts", "1-1.ts");
 assert.ok(await until(() => fs.existsSync(dst)), "το playlist δημοσιεύτηκε");
@@ -107,6 +110,9 @@ assert.equal(
   lines(r2url("1-2.ts"), origin("1-3.ts")),
   "και μένει στο origin όσο είναι στο παράθυρο"
 );
+// Και αναφέρθηκε ακριβώς μία φορά, στον γύρο που δεν πρόλαβε — όχι ξανά σε κάθε
+// γύρο που το ξαναβλέπει στο παράθυρο.
+assert.deepEqual(fallen, ["1-3.ts"], "το segment που έφυγε στο origin αναφέρεται μία φορά");
 
 // Το επόμενο segment συνεχίζει κανονικά στο R2: η αναδίπλωση είναι του segment
 // που δεν πρόλαβε, όχι της εκπομπής. Αλλιώς μια στιγμιαία αναλαμπή του R2 θα

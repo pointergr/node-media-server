@@ -208,6 +208,9 @@ function freshStats(hls, opts) {
     s.db.prepare("SELECT * FROM samples ORDER BY ts").all().at(-1).out_bps, 0,
     "εκτιμητής off όταν το R2 είναι off — καμία διπλομέτρηση"
   );
+  // Χωρίς R2 δεν υπάρχει αναδίπλωση να δείξεις: το πεδίο λείπει εντελώς, όπως
+  // κάθε προαιρετικό χαρακτηριστικό του σχήματος.
+  assert.equal(s.snapshot().streams[0].r2, undefined, "R2 off: κανένα πεδίο r2 στο snapshot");
   s.server.close();
 }
 
@@ -267,6 +270,46 @@ function freshStats(hls, opts) {
     `retry ίδιου segment μετράει μία φορά: αναμενόταν ~${200_000 * 2}, βγήκε ~${Math.round(impliedBytes)}`
   );
 
+  s.server.close();
+}
+
+// --- Ορατότητα υποβάθμισης R2 (addR2Fallback) --------------------------------
+// Όταν το R2 δεν προλαβαίνει, τα segments σερβίρονται από το origin: η εκπομπή
+// παίζει, αλλά το uplink πληρώνει τη διαφορά αθόρυβα — δύο γραμμές σε ένα log
+// που δεν κοιτάει κανείς live. Το snapshot πάει στο panel ανά 10s, οπότε το
+// σήμα ανήκει εκεί: πόσα segments έφυγαν από εμάς και αν συμβαίνει *τώρα*.
+{
+  const s = freshStats({ r2: { accessKeyId: "key" } });
+  const pub = session({ isPublisher: true });
+  s.nms.emit("postPublish", pub);
+  assert.deepEqual(
+    s.snapshot().streams[0].r2, { fallen: 0, degraded: false },
+    "με R2 ενεργό το snapshot έχει το πεδίο r2 από την αρχή"
+  );
+
+  s.addR2Fallback("/live/stream");
+  s.addR2Fallback("/live/stream");
+  assert.deepEqual(
+    s.snapshot().streams[0].r2, { fallen: 2, degraded: true },
+    "κάθε segment που έφυγε στο origin μετράει, και το degraded ανάβει"
+  );
+
+  // Η επαναφορά είναι segment που όντως ανέβηκε — ίδιο κριτήριο με το log του
+  // r2.js. Το fallen μένει: είναι το ιστορικό του επεισοδίου, όχι η κατάστασή του.
+  s.addR2Out("/live/stream", "seg-up.ts", 1_000);
+  assert.deepEqual(
+    s.snapshot().streams[0].r2, { fallen: 2, degraded: false },
+    "segment που ανέβηκε στο R2 σβήνει το degraded, το fallen μένει"
+  );
+
+  // Νέο publish στο ίδιο path = νέα εκπομπή: το επεισόδιο της προηγούμενης δεν
+  // την ακολουθεί (ίδιο σκεπτικό με το r2Counted στο finish).
+  s.nms.emit("donePublish", pub);
+  s.nms.emit("postPublish", session({ isPublisher: true }));
+  assert.deepEqual(
+    s.snapshot().streams[0].r2, { fallen: 0, degraded: false },
+    "το donePublish καθαρίζει το r2 state του stream"
+  );
   s.server.close();
 }
 

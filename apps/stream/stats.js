@@ -150,6 +150,27 @@ export function startStats(
   // ένα segment να μετρηθεί δύο φορές στο out_bps.
   const r2Counted = new Map();
 
+  // streamPath -> { fallen, degraded }: πόσα segments σέρβιρε το origin επειδή
+  // το R2 δεν πρόλαβε, και αν αυτό συμβαίνει *τώρα*. Η εκπομπή παίζει και τότε
+  // (δες r2.js), αλλά το uplink πληρώνει τη διαφορά — και το μόνο ίχνος είναι
+  // δύο γραμμές log. Το snapshot πάει στο panel ανά 10s: εκεί θα το δει κάποιος
+  // όσο ακόμα συμβαίνει, όχι στον λογαριασμό κίνησης.
+  const r2State = new Map();
+  const r2StateOf = (stream) => {
+    let st = r2State.get(stream);
+    if (!st) r2State.set(stream, (st = { fallen: 0, degraded: false }));
+    return st;
+  };
+
+  // Ένα segment δεν πρόλαβε το R2 και δημοσιεύτηκε με τοπική διαδρομή (το
+  // r2.js το φωνάζει μία φορά ανά segment — δεν ξαναδοκιμάζει ποτέ όνομα).
+  function addR2Fallback(stream) {
+    if (!r2Active) return;
+    const st = r2StateOf(stream);
+    st.fallen += 1;
+    st.degraded = true;
+  }
+
   // Με R2 ενεργό το ffmpeg κάνει PUT τα segments κατευθείαν στο CDN — δεν
   // περνάνε ποτέ από τον δικό μας HTTP server, οπότε το trackHls() δεν τα βλέπει
   // ποτέ. Εκτίμηση αντί για μέτρηση: bytes του segment × ενεργοί HLS θεατές του
@@ -160,6 +181,9 @@ export function startStats(
   // 30s (μετράει ακόμα σαν θεατής παρόλο που έφυγε).
   function addR2Out(stream, name, bytes) {
     if (!r2Active) return;
+    // Απόδειξη ότι το R2 ξαναπρολαβαίνει — πριν από το dedupe: και το retry
+    // ενός ήδη μετρημένου ονόματος είναι PUT που πέτυχε.
+    r2StateOf(stream).degraded = false;
     const counted = r2Counted.get(stream) ?? new Set();
     r2Counted.set(stream, counted);
     if (counted.has(name)) return; // retry/επαναϋποβολή του ίδιου segment
@@ -252,6 +276,7 @@ export function startStats(
       // Νέο publish σε αυτό το streamPath θα ξεκινήσει με νέο prefix (Date.now()
       // στο app.js), άρα νέα ονόματα segments — τίποτα να ξαναχρησιμοποιηθεί εδώ.
       r2Counted.delete(session.streamPath);
+      r2State.delete(session.streamPath);
     }
 
     // Τα bytes των κλειστών sessions συσσωρεύονται, αλλιώς το άθροισμα των live
@@ -358,6 +383,7 @@ export function startStats(
         audio: AUDIO_CODECS[pub.audioCodec] ?? String(pub.audioCodec || "-"),
         ladder: stepsOf(stream),
         relays: relayStateOf(stream),
+        ...(r2Active && { r2: { ...r2StateOf(stream) } }),
         viewers: viewersOf(stream),
         ...(lastBps.get(stream) ?? { in_bps: 0, out_bps: 0 }),
       })),
@@ -462,5 +488,5 @@ export function startStats(
     console.log(`Admin listening on ${host}:${config.admin.port}`);
   });
 
-  return { sample, snapshot, series, db, server, addR2Out };
+  return { sample, snapshot, series, db, server, addR2Out, addR2Fallback };
 }
