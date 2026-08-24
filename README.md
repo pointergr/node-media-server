@@ -550,7 +550,10 @@ R2 /live/stream: δεν προλαβαίνει — τα segments φεύγουν 
 R2 /live/stream: ξαναπρολαβαίνει, τα segments ξαναπάνε στο R2
 ```
 
-Ανάμεσα στις δύο γραμμές το bandwidth το πληρώνει ο server. Έλεγχος: `node test-r2.js`.
+Ανάμεσα στις δύο γραμμές το bandwidth το πληρώνει ο server. Το ίδιο επεισόδιο φαίνεται
+και στο `/admin` του κεντρικού panel χωρίς να σκύψεις σε logs: badge **ΕΚΤΟΣ R2** δίπλα
+στην έξοδο του stream όσο τρέχει, και το πόσα segments κόστισε αφού κλείσει. Έλεγχος:
+`node test-r2.js`.
 
 ### Cloudflare cache rules
 
