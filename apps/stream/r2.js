@@ -131,7 +131,13 @@ export function startR2Sync(dir, streamPath, r2, onUpload, onFallback) {
     for (const l of media) {
       l.segments = playlistSegments(l.body);
       l.pending = l.segments.filter((name) => !uploaded.has(name) && !fromOrigin.has(name));
-      for (const name of l.pending) bytes.set(name, fs.readFileSync(`${src}/${name}`));
+      for (const name of l.pending) {
+        // Το αρχείο μπορεί να έχει χαθεί από κάτω μας (rmSync του respawn):
+        // ένας γύρος που σκάει εδώ δεν δημοσιεύει *κανένα* playlist. Χωρίς
+        // bytes δεν γίνεται PUT, οπότε το όνομα φεύγει στο origin παρακάτω —
+        // σαν κάθε segment που δεν πρόλαβε.
+        try { bytes.set(name, fs.readFileSync(`${src}/${name}`)); } catch (err) { l.readError ??= err; }
+      }
     }
     // Ό,τι βγήκε από το παράθυρο ξεχνιέται: τα ονόματα είναι μοναδικά (prefix
     // από Date.now()), οπότε χωρίς κλάδεμα τα δύο sets μιας 24/7 εκπομπής
@@ -150,7 +156,9 @@ export function startR2Sync(dir, streamPath, r2, onUpload, onFallback) {
     // ταυτόχρονα, και μια πτώση συν ένα κλάδεμα θα έβγαζαν «μηδέν».
     let fell = 0;
     const rounds = await Promise.allSettled(media.map(async (l) => {
-      const tries = await Promise.allSettled(l.pending.map((name) => put(name, bytes.get(name))));
+      const tries = await Promise.allSettled(
+        l.pending.filter((name) => bytes.has(name)).map((name) => put(name, bytes.get(name)))
+      );
       // Δημοσίευση πρώτα, παράπονα μετά: ο γύρος δεν χάνεται ποτέ ολόκληρος για
       // ένα segment που δεν πρόλαβε — βγαίνει με την τοπική του διαδρομή.
       publish(l.name, localize(l.body));
@@ -171,7 +179,8 @@ export function startR2Sync(dir, streamPath, r2, onUpload, onFallback) {
     // όχι απλώς γύρο χωρίς αποτυχία: ο γύρος που δεν είχε τίποτα να ανεβάσει δεν
     // αποδεικνύει τίποτα.
     const attempted = media.reduce((n, l) => n + l.pending.length, 0);
-    const reason = rounds.map((r) => r.value ?? r.reason).find(Boolean);
+    const reason = rounds.map((r) => r.value ?? r.reason).find(Boolean)
+      ?? media.find((l) => l.readError)?.readError;
     if (fell && !degraded) {
       degraded = true;
       console.warn(`R2 ${streamPath}: δεν προλαβαίνει — τα segments φεύγουν από το origin (${reason?.message ?? reason})`);

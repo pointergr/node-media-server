@@ -413,6 +413,50 @@ fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(win, { recursive: true, force: true });
 }
 
+// --- Segment που χάθηκε κάτω από τα πόδια του γύρου --------------------------
+// Ανάμεσα στο διάβασμα του playlist και στο διάβασμα του segment μεσολαβεί το
+// rmSync του respawn: το αρχείο μπορεί να λείπει. Ένας γύρος που σκάει εκεί δεν
+// δημοσιεύει *κανένα* playlist — μία χαμένη ανάγνωση σταματούσε και τα variants
+// που δεν έφταιγαν σε τίποτα. Αντιμετωπίζεται σαν PUT που δεν πρόλαβε: το
+// segment φεύγει στο origin (μία φορά, όπως όλα) και ο γύρος προχωράει.
+{
+  const gone = fs.mkdtempSync(`${os.tmpdir()}/r2-gone-`);
+  fs.mkdirSync(`${gone}/ff`);
+  const goneLogs = [];
+  const goneWarn = console.warn;
+  console.warn = (m) => goneLogs.push(m);
+  const stopGone = startR2Sync(gone, "/live/g", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+
+  // Το 8-0 υπάρχει στο playlist αλλά όχι στον δίσκο· το 8-1 κανονικά.
+  fs.writeFileSync(`${gone}/ff/8-1.ts`, "x".repeat(100));
+  fs.writeFileSync(
+    `${gone}/ff/index.m3u8`,
+    "#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/g/8-0.ts\n#EXTINF:2.0,\nhttps://cdn/live/g/8-1.ts\n"
+  );
+
+  assert.ok(await until(() => fs.existsSync(`${gone}/index.m3u8`)), "το playlist δημοσιεύτηκε παρά το χαμένο αρχείο");
+  assert.equal(
+    fs.readFileSync(`${gone}/index.m3u8`, "utf8"),
+    "#EXTM3U\n#EXTINF:2.0,\nff/8-0.ts\n#EXTINF:2.0,\nhttps://cdn/live/g/8-1.ts\n",
+    "το χαμένο segment δείχνει στο origin, το υπαρκτό ανέβηκε κανονικά"
+  );
+  assert.ok(puts.includes("8-1.ts"), "το υπαρκτό segment ανέβηκε");
+  assert.ok(!puts.includes("8-0.ts"), "για το χαμένο δεν έγινε ποτέ PUT");
+  // Το log του επεισοδίου πρέπει να λέει την αιτία — «(undefined)» δεν βοηθάει
+  // κανέναν, ακριβώς την ώρα που τα logs πρέπει να διαβαστούν.
+  assert.ok(
+    goneLogs.find((l) => l.includes("origin"))?.includes("ENOENT"),
+    "η γραμμή της μετάβασης λέει γιατί: το αρχείο έλειπε"
+  );
+
+  console.warn = goneWarn;
+  stopGone();
+  fs.rmSync(gone, { recursive: true, force: true });
+}
+
 // --- Τι γράφεται στα logs ---------------------------------------------------
 // Όταν το R2 δεν προλαβαίνει, αποτυγχάνει *κάθε* segment: μια γραμμή ανά segment
 // είναι δύο γραμμές το δευτερόλεπτο ανά εκπομπή — logs που δεν διαβάζει κανείς,
