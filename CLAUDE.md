@@ -314,7 +314,7 @@ Series/sessions/restart είναι πάντα **ανά server** (`GET /servers/:
 
 ## Deploy
 
-Ένα `apps/stream/install <hostname> [--docker]` για bare metal (caddy + volta + pm2) και Docker (compose με caddy container). Ένα `Caddyfile` και για τα δύο — το `STREAM_HOST` πέφτει σε `localhost` χωρίς Docker. Τα `header` directives θέλουν **`defer`**, αλλιώς προστίθεται από πάνω το `Cache-Control` του `express.static` και βγαίνουν δύο τιμές στην ίδια απόκριση.
+Ένα `apps/stream/install <hostname> [--docker]` για bare metal (caddy + volta + pm2) και Docker (compose με caddy container). Με `--panel <url> --key <pk_…>` δηλώνει και μόνο του τον server στο κεντρικό panel (`POST /servers` με το provisioning API key) και γράφει το `panel: {...}` block με το token της απάντησης — τα δύο flags είναι προαιρετικά, χωρίς αυτά το install τελειώνει όπως πάντα. Ένα `Caddyfile` και για τα δύο — το `STREAM_HOST` πέφτει σε `localhost` χωρίς Docker. Τα `header` directives θέλουν **`defer`**, αλλιώς προστίθεται από πάνω το `Cache-Control` του `express.static` και βγαίνουν δύο τιμές στην ίδια απόκριση.
 
 Ό,τι αφορά **μόνο ένα** μηχάνημα (GPU devices, `NVIDIA_DRIVER_CAPABILITIES`, ο iHD driver
 μέσω του build arg `EXTRA_PKGS` του Dockerfile) ζει σε `apps/stream/docker-compose.override.yml`,

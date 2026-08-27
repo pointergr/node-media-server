@@ -11,6 +11,10 @@ cd node-media-server
 git checkout master
 cd apps/stream
 ./install server.example.com            # ή: ./install server.example.com --docker
+
+# ...ή όλα μαζί, μαζί με τη δήλωση στο κεντρικό panel:
+./install server.example.com --docker \
+  --panel https://panel.example.com/api --key pk_<provisioning key>
 ```
 
 Χωρίς `--docker` στήνεται στο μηχάνημα (caddy + volta/node 24 + pm2). Με `--docker`
@@ -732,6 +736,10 @@ docker compose up -d --build api caddy
 
 Πλήρες συμβόλαιο των endpoints στο [`apps/api/README.md`](apps/api/README.md). Εδώ μόνο
 τα βήματα άκρη σε άκρη:
+
+Με `--panel <url> --key <pk_...>` τα βήματα 2-3 τα κάνει το ίδιο το `./install`: δηλώνει
+τον server με το provisioning API key (`POST /servers`) και γράφει το `panel: {...}` με το
+token της απάντησης, πριν σηκωθεί ο server. Χειροκίνητα:
 
 1. Το κεντρικό panel είναι ήδη πάνω (δες «Το κεντρικό panel» παραπάνω) και έχεις συνδεθεί
    ως admin.
