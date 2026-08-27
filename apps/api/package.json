@@ -1,6 +1,6 @@
 {
   "name": "@pointer/api",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "description": "NestJS API: κεντρική διαχείριση πολλών stream servers",
   "private": true,
   "scripts": {
