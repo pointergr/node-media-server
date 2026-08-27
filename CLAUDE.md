@@ -156,6 +156,13 @@ stream server μπορεί να δώσει (ξέρει τη θύρα του): π
   του `config.static.root` (`statfs`, `null` όταν ο φάκελος δεν υπάρχει ακόμα — το snapshot
   δεν σκάει για μια μέτρηση) και τον `encoder` που όντως πέρασε το probe του boot, που
   μπορεί να **μην** είναι αυτός του `config.json`.
+- Οι τελευταίες 300 γραμμές της κονσόλας μένουν σε ring buffer και βγαίνουν από το
+  `/admin/api/logs` (→ `GET /servers/:host/logs` → καρτέλα στο `/admin/servers/[id]`) — για
+  τον ίδιο λόγο με το `server` block: χωρίς αυτό το «γιατί πέθανε ο ffmpeg» ζητάει ssh. Ο
+  patch γίνεται στο **ίδιο το `console`** και όχι σε δικό μας logger που θα έπρεπε να τον
+  καλούν όλα τα αρχεία: αλλιώς όποια γραμμή ξεχαστεί λείπει από το panel χωρίς να το ξέρει
+  κανείς. Στη μνήμη και μόνο (restart = άδειο log): το *πού* γράφεται το log έχει άλλη
+  απάντηση σε pm2 και άλλη σε docker, ενώ η κονσόλα είναι η ίδια και στα δύο.
 - Επιστρέφει `{ sample, snapshot, series, db, server }` για να το οδηγούν τα tests.
 
 **`config.js`** — `config.json` (κατάσταση deployment, εκτός git), `data/passwords.json` (στο data volume, με migration από την παλιά ρίζα) και ο loader του `data/clients.json`. Το `app.js` γράφει το jwt secret στο `config.json` στο πρώτο boot· γι' αυτό το compose το κάνει bind mount.
@@ -312,7 +319,8 @@ stream, μέσα στην καρτέλα του — ίδιο modal με το `/a
 stream» απαντιέται μόνο του.
 
 Η καρτέλα του κάθε server (`/admin/servers/[id]`) δείχνει και τη ζωντανή του κατάσταση από
-το `GET /live` (φόρτος, δίσκος, encoder, uptime), με refresh στα 10s — τον ρυθμό του sync,
+το `GET /live` (φόρτος, δίσκος, encoder, uptime) **και το log του** (`GET /servers/:host/logs`,
+νεότερη γραμμή πρώτη — η γραμμή που ψάχνεις είναι πάντα η τελευταία), με refresh στα 10s — τον ρυθμό του sync,
 γιατί πιο συχνά δεν υπάρχει τι να δει κανείς. Τα ιστορικά και το restart μένουν στο `/admin`
 (κουμπί «Στατιστικά»), ένα αντίγραφο του διαλόγου restart δεν αξίζει.
 

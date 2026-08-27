@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
+import { format } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { clientOf, publishAllowed, closeSession } from "./config.js";
 
@@ -15,6 +16,28 @@ const RETENTION_DAYS = 30;
 // Ο player ξαναζητά το playlist κάθε ~2s (hls_time). 30s αντέχει και ένα stall.
 const HLS_TTL_MS = 30_000;
 const CLEANUP_MS = 24 * 60 * 60 * 1000;
+// Οι τελευταίες γραμμές της κονσόλας, για να τις δει το panel χωρίς ssh. Στη
+// μνήμη και μόνο: το πού γράφεται το log έχει άλλη απάντηση σε pm2 και άλλη σε
+// docker, ενώ η κονσόλα είναι η ίδια και στα δύο. 300 γραμμές πιάνουν και το
+// respawn του ffmpeg και την υποβάθμιση του R2· χωρίς πλαφόν μια 24/7 εκπομπή
+// είναι διαρροή μνήμης, όπως τα uploaded/fromOrigin του r2.js.
+const LOG_MAX = 300;
+const logLines = [];
+
+// Patch στο ίδιο το console και όχι wrapper που θα έπρεπε να τον καλέσουν όλα τα
+// αρχεία: το log που θέλει ο διαχειριστής είναι ακριβώς αυτό που γράφεται ήδη
+// (app.js, r2.js, relay.js, config.js) — μια δεύτερη συνάρτηση θα σήμαινε ότι
+// όποια γραμμή ξεχάστηκε λείπει από το panel χωρίς να το ξέρει κανείς.
+for (const level of ["log", "warn", "error"]) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    // util.format = ακριβώς ό,τι κάνει το console από κάτω, οπότε ένα Error ή
+    // ένα %s στο panel φαίνεται όπως στο τερματικό.
+    logLines.push({ ts: Date.now(), level, text: format(...args) });
+    if (logLines.length > LOG_MAX) logLines.shift();
+    original(...args);
+  };
+}
 
 // range -> [πόσο πίσω σε δευτερόλεπτα, μέγεθος bucket σε δευτερόλεπτα]
 const RANGES = {
@@ -473,6 +496,7 @@ export function startStats(
       return;
     }
     if (p === "/admin/api/live") return json(res, 200, snapshot());
+    if (p === "/admin/api/logs") return json(res, 200, logLines);
     if (p === "/admin/api/series") return json(res, 200, series(url.searchParams.get("range")));
     if (p === "/admin/api/sessions") {
       return json(res, 200, db.prepare("SELECT * FROM sessions ORDER BY end_ts DESC LIMIT 100").all());

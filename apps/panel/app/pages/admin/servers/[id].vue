@@ -6,7 +6,7 @@
 // Το «τι κάνει το μηχάνημα» έρχεται ολόκληρο από το snapshot του sync (GET
 // /live): φόρτος, δίσκος, encoder. Δεν υπάρχει δεύτερος δρόμος προς τον server
 // και δεν θέλουμε — ένα ssh από το panel θα ήταν shell πίσω από JWT.
-import { dur, type LiveEntry } from '~/utils/dash'
+import { dur, type LiveEntry, type LogLine } from '~/utils/dash'
 
 interface ServerRow {
   id: number
@@ -24,6 +24,7 @@ const toast = useToast()
 
 const s = ref<ServerRow | null>(null)
 const entry = ref<LiveEntry | null>(null)
+const logs = ref<LogLine[]>([])
 const error = ref('')
 // Νέος κωδικός, άδειο = μένει ο ίδιος (δεν ξαναδείχνουμε τον παλιό).
 const pass = ref('')
@@ -45,7 +46,17 @@ async function load() {
 async function loadLive() {
   const all = await api<LiveEntry[]>('/live').catch(() => [])
   entry.value = all.find(e => e.host === s.value?.host) ?? null
+  // Τα logs έρχονται από τον ίδιο τον server (proxy), όχι από το snapshot: με
+  // τον server κάτω το request σκάει και μένουν οι παλιές γραμμές — που είναι
+  // ακριβώς αυτές που θέλει να διαβάσει κανείς όταν πέσει.
+  if (!s.value) return
+  const lines = await api<LogLine[]>(`/servers/${s.value.host}/logs`).catch(() => null)
+  if (lines) logs.value = lines
 }
+
+// Ώρα με δευτερόλεπτα, γι' αυτό όχι το clock() του dash.ts: σε log που γράφει
+// respawn και υποβάθμιση R2, το λεπτό δεν ξεχωρίζει τη σειρά των γεγονότων.
+const at = (ts: number) => new Date(ts).toLocaleTimeString('el-GR')
 
 // Πάντα ξαναφορτώνει μετά, επιτυχία ή όχι — σε αποτυχία ξαναφέρνει τις σωστές
 // τιμές πάνω από ό,τι πληκτρολόγησε ο χρήστης.
@@ -162,6 +173,22 @@ onMounted(async () => {
       </dl>
     </UCard>
 
+    <UCard v-if="logs.length">
+      <template #header>
+        <div class="flex items-center gap-2 flex-wrap">
+          <h2 class="grow">Log</h2>
+          <span class="note">οι τελευταίες {{ logs.length }} γραμμές, νεότερη πρώτη</span>
+        </div>
+      </template>
+      <!-- Ανάποδη σειρά και όχι αυto-scroll: η γραμμή που ψάχνεις είναι η
+           τελευταία, και έτσι είναι ήδη μπροστά σου χωρίς κώδικα. -->
+      <div class="log">
+        <div v-for="(l, i) in [...logs].reverse()" :key="logs.length - i" :class="l.level">
+          <span class="ts">{{ at(l.ts) }}</span> {{ l.text }}
+        </div>
+      </div>
+    </UCard>
+
     <UCard v-if="s">
       <div class="space-y-4">
         <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -200,5 +227,9 @@ onMounted(async () => {
 .facts dt { font-size: 12px; color: var(--ui-text-muted); }
 .facts dd { font-size: 15px; font-weight: 600; }
 .hot { color: var(--ui-error); }
+.log { max-height: 22rem; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.6; }
+.log .ts { color: var(--ui-text-dimmed); margin-right: 6px; }
+.log .warn { color: var(--ui-warning); }
+.log .error { color: var(--ui-error); }
 code { font-size: 12px; background: var(--plane); padding: 2px 6px; border-radius: 4px; }
 </style>

@@ -510,6 +510,38 @@ clearClientsCache();
   s.server.close();
 }
 
+// --- logs (GET /admin/api/logs) ---------------------------------------------
+// Ο διαχειριστής δεν έχει ssh από το panel: ό,τι γράφει ο server στην κονσόλα
+// μένει και σε ring buffer, αλλιώς το «γιατί πέθανε ο ffmpeg» ζει μόνο πάνω στο
+// μηχάνημα — και το πού ζει έχει άλλη απάντηση σε pm2 και άλλη σε docker.
+{
+  const s = freshStats(null);
+  await tick();
+  const logsUrl = `http://127.0.0.1:${s.server.address().port}/admin/api/logs`;
+  assert.equal((await fetch(logsUrl)).status, 401, "τα logs θέλουν τα ίδια credentials");
+
+  console.error("δοκιμή: ο ffmpeg πέθανε");
+  const lines = await (await fetch(logsUrl, { headers: creds("admin", "x") })).json();
+  assert.deepEqual(
+    { level: lines.at(-1).level, text: lines.at(-1).text },
+    { level: "error", text: "δοκιμή: ο ffmpeg πέθανε" },
+    "τελευταία γραμμή = η τελευταία που γράφτηκε, με το επίπεδό της"
+  );
+  assert.ok(lines.at(-1).ts > 0, "με ώρα — αλλιώς δεν ξέρεις αν είναι σημερινή");
+
+  // Χωρίς πλαφόν μια 24/7 εκπομπή είναι διαρροή μνήμης. Ο σωρός γράφεται
+  // σιωπηλά, αλλιώς είναι 400 γραμμές θόρυβος μέσα στο test.
+  const out = process.stdout.write.bind(process.stdout);
+  process.stdout.write = () => true;
+  for (let i = 0; i < 400; i++) console.log(`γραμμή ${i}`);
+  process.stdout.write = out;
+
+  const full = await (await fetch(logsUrl, { headers: creds("admin", "x") })).json();
+  assert.equal(full.length, 300, "κρατάει τις τελευταίες 300 γραμμές");
+  assert.equal(full.at(-1).text, "γραμμή 399", "η νεότερη μένει, η παλιότερη φεύγει");
+  s.server.close();
+}
+
 // Το snapshot είναι ο ΜΟΝΟΣ δρόμος του panel προς το μηχάνημα — δεν υπάρχει ssh
 // από το /admin, οπότε ό,τι λείπει από εδώ δεν φαίνεται πουθενά. Τα δύο που δεν
 // τα ξέρει κανείς αλλού: ο δίσκος (τον γεμίζουν τα segments) και ο encoder που

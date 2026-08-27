@@ -56,6 +56,16 @@ export interface Snapshot {
   r2Estimate: boolean
 }
 
+// GET /servers/:host/logs — οι τελευταίες γραμμές της κονσόλας του stream server
+// (ring buffer στη μνήμη του, apps/stream/stats.js). Το ts είναι σε ms, όχι σε
+// δευτερόλεπτα όπως τα ts των χρονοσειρών: είναι σκέτο Date.now() της στιγμής
+// που γράφτηκε η γραμμή.
+export interface LogLine {
+  ts: number
+  level: 'log' | 'warn' | 'error'
+  text: string
+}
+
 // GET /live — ένα entry ανά server· `online: false` όταν το τελευταίο sync είναι
 // παλιότερο από 30s (το API δεν σβήνει το snapshot, το μαρκάρει).
 export interface LiveEntry {
