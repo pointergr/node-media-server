@@ -259,7 +259,20 @@ watch([selected, range], () => {
               <td
                 class="num"
                 :title="s.r2Estimate ? 'Εκτίμηση: τα .ts segments σερβίρονται από το R2, όχι μέτρηση πραγματικής κίνησης' : ''"
-              >{{ bps(s.out_bps) }}{{ s.r2Estimate ? ' *' : '' }}</td>
+              >
+                {{ bps(s.out_bps) }}{{ s.r2Estimate ? ' *' : '' }}
+                <!-- Η υποβάθμιση του R2 είναι αόρατη από παντού αλλού: η εκπομπή
+                     παίζει κανονικά (τα segments πέφτουν στο origin — r2.js) και
+                     το uplink του server πληρώνει τη διαφορά αθόρυβα. -->
+                <UBadge
+                  v-if="s.r2?.degraded" color="warning" variant="subtle" size="sm" class="ml-1"
+                  :title="`Το R2 δεν προλαβαίνει: τα segments σερβίρονται από το uplink του server (${s.r2.fallen} ως τώρα)`"
+                >ΕΚΤΟΣ R2</UBadge>
+                <UBadge
+                  v-else-if="s.r2?.fallen" color="neutral" variant="subtle" size="sm" class="ml-1"
+                  :title="`${s.r2.fallen} segments σερβιρίστηκαν από το origin σε αυτή την εκπομπή — τώρα το R2 προλαβαίνει`"
+                >R2: {{ s.r2.fallen }}</UBadge>
+              </td>
               <td>
                 {{ s.resolution }}
                 <UBadge v-if="s.ladder?.length" color="primary" variant="subtle" size="sm" class="ml-1">

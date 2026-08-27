@@ -228,8 +228,9 @@ nms.on("postPublish", (session) => {
     // Το bytes×θεατές τρέχει μέσα στο stats.js (αυτό ξέρει τους HLS θεατές) — το
     // r2.js μόνο αναφέρει τι ανέβηκε, δεν κάνει require το stats.js. Ζει όσο ο
     // publisher, όχι όσο ένας ffmpeg: το respawn γράφει στον ίδιο φάκελο.
-    stop: r2 && startR2Sync(dir, session.streamPath, r2, (name, bytes) =>
-      stats.addR2Out(session.streamPath, name, bytes)),
+    stop: r2 && startR2Sync(dir, session.streamPath, r2,
+      (name, bytes) => stats.addR2Out(session.streamPath, name, bytes),
+      () => stats.addR2Fallback(session.streamPath)),
     // Οι προορισμοί αναδιανομής διαβάζονται εδώ, μία φορά, και μένουν σταθεροί
     // όσο ζει η εκπομπή — όπως το ladder. Προορισμός που προστίθεται εν ώρα
     // εκπομπής πιάνει στην επόμενη: το να πέφτει και να ξανασηκώνεται ο ffmpeg
