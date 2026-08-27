@@ -2,6 +2,9 @@
 
 ## Αυτόματη εγκατάσταση
 
+**Πρώτα τα δύο A records** ([πίνακας παρακάτω](#χειροκίνητη-εγκατάσταση)): ο Caddy ζητάει
+certificate στο πρώτο boot και χωρίς DNS το ACME challenge αποτυγχάνει.
+
 Αντικατάστησε το `server.example.com` με το hostname του server σου:
 ```bash
 apt update
@@ -17,12 +20,39 @@ cd apps/stream
   --panel https://panel.example.com/api --key pk_<provisioning key>
 ```
 
+| Παράμετρος | Τι κάνει |
+|---|---|
+| `<hostname>` | υποχρεωτικό, πρώτο όρισμα — το δημόσιο hostname (χωρίς το `rtmp.`) |
+| `--docker` | Docker + compose αντί για caddy/volta/pm2 στο μηχάνημα |
+| `--panel <url>` | το **API** του κεντρικού panel, δηλαδή `https://panel.example.com/api` |
+| `--key pk_…` | provisioning API key του panel (`apikey.js`) — μόνο μαζί με το `--panel` |
+
+Με τη σειρά, το script: ζώνη ώρας Europe/Athens και `apt upgrade` → `ufw` (22, 80, 443,
+1935) → clone, αν δεν τρέχει ήδη μέσα στο repo, και `config.json` από το example →
+Docker ή caddy + volta/node 24 + pm2 → `generate-passwords` → [δήλωση στο panel](#σύνδεση-με-το-κεντρικό-panel),
+αν δόθηκαν τα δύο flags → σηκώνει τον server.
+
 Χωρίς `--docker` στήνεται στο μηχάνημα (caddy + volta/node 24 + pm2). Με `--docker`
 εγκαθιστά τον Docker και σηκώνει το compose· τα κοινά (ζώνη ώρας, ufw, clone,
 `config.json`, κωδικοί) είναι τα ίδια και στα δύο. Η μόνη διαφορά στο firewall είναι
 το 8000: ανοίγει μόνο χωρίς Docker, γιατί στο compose ο admin δεν δημοσιεύει θύρα.
 Και τα δύο επιβιώνουν reboot — `pm2 startup`/`pm2 save` στο ένα, restart policy του
 compose στο άλλο.
+
+**Κράτα ό,τι τυπώνει το `generate-passwords`**: admin password (basic auth του `/admin`
+API) και το έτοιμο Stream Key του OBS. Τυπώνονται μία φορά — δεύτερη κλήση της ίδιας
+εντολής τα ξαναδείχνει, αλλά νέοι κωδικοί θέλουν ρητό `force`.
+
+Δεύτερο τρέξιμο με `--panel/--key` **σκάει**: το `Server.host` είναι unique, οπότε το
+`POST /servers` απορρίπτεται και το script σταματάει εκεί. Αν ξαναστήνεις μηχάνημα με το
+ίδιο hostname, σβήσε πρώτα την παλιά εγγραφή από το `/admin/servers` (`409` αν την
+χρησιμοποιούν πλάνα ή συνδρομές — τότε πάρε το token της και βάλ' το με το χέρι).
+
+Μένουν στο χέρι σου: τα DNS records (πριν), ο έλεγχος με
+`npm run test-stream -- rtmp.server.example.com` (τρέχει μέχρι να το κόψεις με Ctrl-C,
+γι' αυτό δεν μπαίνει στο script) και, όπου χρειάζονται,
+[R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος) και
+[encoder/ABR](#πολλαπλές-αναλύσεις-abr).
 
 ### Με cloud-init
 
