@@ -1,6 +1,6 @@
 {
   "name": "@pointer/panel",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "description": "Nuxt SPA: admin dashboard όλων των stream servers + user panel",
   "private": true,
   "type": "module",
