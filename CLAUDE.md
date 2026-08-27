@@ -383,4 +383,62 @@ Cloudflare με ψεύτικο `curl` στο PATH, χωρίς δίκτυο κα�
 merge σε κάθε `git pull` της ενημέρωσης. Το ffmpeg του image έχει ήδη χτισμένους τους
 nvenc/qsv/vaapi — λείπει πάντα μόνο ο runtime driver.
 
+### Ενημέρωση μηχανημάτων που τρέχουν
+
+**Είναι παραγωγή, όχι demo.** Πάνω στα μηχανήματα υπάρχουν πελάτες που εκπέμπουν, οπότε κάθε
+`docker compose up` είναι απόφαση και όχι εντολή. Ο κανόνας πριν από restart του stream:
+
+```bash
+docker exec stream-stream-1 sh -c 'find media -name "*.ts" -newermt "-2 minutes"'
+```
+
+Κάτι τυπώνει = κάποιος εκπέμπει **τώρα**, η ενημέρωση περιμένει (μέσα στο container δεν
+υπάρχει `ps`, και το `docker logs` σιωπά όσο όλα πάνε καλά). Ο φάκελος `media/live/x` υπάρχει
+και μετά το τέλος της εκπομπής — μόνο η **ώρα** του segment λέει την αλήθεια.
+
+Ο κώδικας φτάνει με `git pull` πάνω στο μηχάνημα και build επιτόπου — δεν υπάρχει registry.
+Όλα τα μηχανήματα τραβάνε **develop**, που είναι και το default branch του repo (άρα και το
+`git clone` του `install` το ίδιο παίρνει)· ο `master` είναι εγκαταλειμμένος εκατοντάδες
+commits πίσω και **δεν** χρησιμοποιείται για deploy.
+
+```bash
+cd node-media-server && git pull --ff-only     # σταματάει αντί να κάνει merge σε πειραγμένο μηχάνημα
+cd apps/api    && docker compose up -d --build api caddy   # panel + API (ίδιο μηχάνημα)
+cd apps/stream && docker compose up -d --build stream      # κάθε stream server
+```
+
+Και τα δύο ονόματα στο `apps/api`: τα στατικά του Nuxt ζουν στο image του **caddy** και τα
+endpoints στο image του **api** — μισό build σημαίνει νέες οθόνες που χτυπάνε 404 σε
+endpoints που δεν υπάρχουν ακόμα. Και ρητό `stream` στο `apps/stream`: σκέτο `up` σηκώνει
+και τον caddy εκείνου του compose, που σκάει με «port is already allocated» όταν στο ίδιο
+μηχάνημα τρέχει ήδη ο caddy του panel.
+
+**Σειρά δεν επιβάλλεται** και δεν χρειάζεται παράθυρο συντήρησης: το snapshot είναι συμβατό
+και προς τις δύο κατευθύνσεις — νέο panel με παλιό stream server δείχνει «—» στα πεδία που
+δεν στέλνει ακόμα (και κρύβει την κάρτα Log), παλιό panel με νέο stream server αγνοεί τα
+πεδία που δεν ξέρει. Ο στόλος ενημερώνεται σταδιακά, ένα μηχάνημα τη φορά.
+
+Δύο πράγματα που **δεν φαίνονται στα logs** όταν πάνε στραβά:
+- **`JWT_SECRET`**: από τον δεύτερο έλεγχο ασφαλείας η διεργασία δεν ξεκινάει χωρίς τυχαίο
+  ≥32 χαρακτήρων (`auth/secret.ts`). Έλεγχος στο `.env` **πριν** το build, αλλιώς ο
+  προηγούμενος container έχει ήδη σβήσει όταν το μάθεις.
+- **`USER node` + παλιό `data` volume**: το volume φτιάχτηκε με root, ο container τρέχει πια
+  ως `node`, και το sqlite γίνεται **read-only**. Η βλάβη είναι σιωπηλή — το API σηκώνεται
+  κανονικά, το panel απαντάει, οι αναγνώσεις δουλεύουν, και μόνο τα γραψίματα σκάνε
+  («attempt to write a readonly database»): το sync κάθε stream server παίρνει 500 κάθε 10s,
+  δηλαδή το `clients.json` παγώνει και οι ανακλήσεις δεν φτάνουν ποτέ. Μία φορά ανά μηχάνημα
+  (το γράφει και ο ίδιος ο `apps/api/Dockerfile`):
+
+```bash
+docker compose exec -u root api chown -R node:node /app/apps/api/data && docker compose restart api
+```
+
+Έλεγχος μετά, με αυτή τη σειρά — ο καθένας πιάνει ό,τι δεν πιάνει ο προηγούμενος:
+
+```bash
+docker compose exec stream npm test        # ο κώδικας του stream server, μέσα στο container
+docker logs --since 60s api-api-1 | grep -i error   # γραψίματα του API (δες read-only παραπάνω)
+# και από το panel: /admin/servers/<id> — φόρτος, δίσκος, encoder και κάρτα Log = πέρασαν και τα δύο μισά
+```
+
 `.m3u8` → ποτέ cache (αλλιώς σπάει η μέτρηση θεατών). `.ts` → immutable. Το `rtmp.<domain>` πρέπει να είναι DNS only στο Cloudflare — το proxy δεν περνάει το 1935.
