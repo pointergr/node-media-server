@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -65,6 +66,26 @@ export class MeController {
       where: { id: clientId },
       include: { ...withSubscriptions },
     });
+  }
+
+  // Πελάτης ή πακέτο σε **αναστολή = read-only**. Το sync έχει ήδη κόψει την
+  // εκπομπή (η εγγραφή λείπει από το clients.json, άρα άγνωστο path σε ≤10s),
+  // αλλά το API μέχρι τώρα δεχόταν κανονικά νέα streams, νέα κλειδιά και νέους
+  // προορισμούς: η αναστολή φαινόταν παντού εκτός από εκεί που γράφεται. Οι
+  // **αναγνώσεις** μένουν ανοιχτές επίτηδες — ο πελάτης πρέπει να βλέπει τι έχει
+  // και γιατί δεν παίζει (`suspended`), αλλιώς το panel αδειάζει χωρίς εξήγηση.
+  private async writable(
+    clientId: number | null,
+    match: (s: { id: number; disabled: boolean; paths: { id: number }[] }) => boolean,
+    missing: string,
+  ) {
+    const client = await this.mine(clientId);
+    if (!client) throw new NotFoundException(missing);
+    if (client.disabled) throw new ForbiddenException('ο λογαριασμός είναι σε αναστολή — επικοινώνησε μαζί μας');
+    const sub = client.subscriptions.find(match);
+    if (!sub) throw new NotFoundException(missing);
+    if (sub.disabled) throw new ForbiddenException('το πακέτο είναι σε αναστολή — επικοινώνησε μαζί μας');
+    return sub;
   }
 
   // Χωρίς @Roles(): και ο admin περνάει (JwtAuthGuard αρκεί), αλλά δεν έχει
@@ -165,10 +186,10 @@ export class MeController {
   // το βγάζει το API (nextPath): ο stream server το συγκρίνει
   // χαρακτήρα-χαρακτήρα και δεν υπάρχει λόγος να το διαλέγει ο πελάτης.
   @Post('streams')
-  create(@Req() req: Request, @Body() body: { subscriptionId?: number }) {
-    if (!req.user.clientId) throw new NotFoundException('subscription not found');
+  async create(@Req() req: Request, @Body() body: { subscriptionId?: number }) {
     if (!body.subscriptionId) throw new BadRequestException('subscriptionId απαιτείται');
-    return this.clients.addPath(req.user.clientId, undefined, body.subscriptionId);
+    await this.writable(req.user.clientId, (s) => s.id === body.subscriptionId, 'subscription not found');
+    return this.clients.addPath(req.user.clientId!, undefined, body.subscriptionId);
   }
 
   // Διαγραφή stream από τον ίδιο τον πελάτη — **όχι** όσο εκπέμπει: το κλειδί
@@ -180,10 +201,8 @@ export class MeController {
   // που μπορεί να είναι κάτω.
   @Delete('streams/:id')
   async remove(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
-    const client = await this.mine(req.user.clientId);
-    const sub = client?.subscriptions.find((s) => s.paths.some((p) => p.id === id));
-    const path = sub?.paths.find((p) => p.id === id);
-    if (!sub || !path) throw new NotFoundException('path not found');
+    const sub = await this.writable(req.user.clientId, (s) => s.paths.some((p) => p.id === id), 'path not found');
+    const path = sub.paths.find((p) => p.id === id)!;
 
     const live = this.sync.latest(sub.server.host)?.snapshot as StreamSnapshot | undefined;
     if (live?.streams?.find((s) => s.stream === path.path)?.since) {
@@ -197,11 +216,11 @@ export class MeController {
   // τον διαχειριστή. Ίδια συνάρτηση με το admin endpoint — ο έλεγχος ιδιοκτησίας
   // ζει εκεί και εδώ το clientId βγαίνει από το token, ποτέ από τον caller.
   @Post('streams/:id/key')
-  refreshKey(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
+  async refreshKey(@Req() req: Request, @Param('id', ParseIntPipe) id: number) {
     // Ο admin δεν έχει clientId — δεν έχει δικά του streams να ανανεώσει (τα κάνει
-    // από το /clients).
-    if (!req.user.clientId) throw new NotFoundException('path not found');
-    return this.clients.refreshKey(req.user.clientId, id);
+    // από το /clients). Το writable το καλύπτει: χωρίς clientId δεν υπάρχει πελάτης.
+    await this.writable(req.user.clientId, (s) => s.paths.some((p) => p.id === id), 'path not found');
+    return this.clients.refreshKey(req.user.clientId!, id);
   }
 
   // Οι προορισμοί αναδιανομής, από τον ίδιο τον πελάτη: αυτό είναι όλο το νόημα
@@ -210,47 +229,47 @@ export class MeController {
   // έλεγχος εγκυρότητας, έλεγχος ιδιοκτησίας): εδώ αλλάζει μόνο ότι το clientId
   // βγαίνει από το token και ποτέ από τον caller.
   @Post('streams/:id/destinations')
-  addDestination(
+  async addDestination(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<DestinationDto>,
   ) {
     // Ο admin δεν έχει clientId — δεν έχει δικά του streams (τα κάνει από το /clients).
-    if (!req.user.clientId) throw new NotFoundException('path not found');
-    return this.clients.addDestination(req.user.clientId, id, body);
+    await this.writable(req.user.clientId, (s) => s.paths.some((p) => p.id === id), 'path not found');
+    return this.clients.addDestination(req.user.clientId!, id, body);
   }
 
   @Patch('streams/:id/destinations/:destId')
-  setDestination(
+  async setDestination(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
     @Param('destId', ParseIntPipe) destId: number,
     @Body() body: Partial<DestinationDto>,
   ) {
-    if (!req.user.clientId) throw new NotFoundException('destination not found');
-    return this.clients.updateDestination(req.user.clientId, id, destId, body);
+    await this.writable(req.user.clientId, (s) => s.paths.some((p) => p.id === id), 'destination not found');
+    return this.clients.updateDestination(req.user.clientId!, id, destId, body);
   }
 
   @Delete('streams/:id/destinations/:destId')
-  removeDestination(
+  async removeDestination(
     @Req() req: Request,
     @Param('id', ParseIntPipe) id: number,
     @Param('destId', ParseIntPipe) destId: number,
   ) {
-    if (!req.user.clientId) throw new NotFoundException('destination not found');
-    return this.clients.removeDestination(req.user.clientId, id, destId);
+    await this.writable(req.user.clientId, (s) => s.paths.some((p) => p.id === id), 'destination not found');
+    return this.clients.removeDestination(req.user.clientId!, id, destId);
   }
 
   // Το φιλικό όνομα του πακέτου, από τον ίδιο τον πελάτη: εκείνος ξέρει ότι το
   // ένα basic είναι η εκκλησία και το άλλο το δημαρχείο, όχι ο διαχειριστής.
   // Μόνο το `label` — η αναστολή είναι εμπορική απόφαση και μένει στο /clients.
   @Patch('subscriptions/:id')
-  setLabel(@Req() req: Request, @Param('id', ParseIntPipe) id: number, @Body() body: { label?: string | null }) {
-    if (!req.user.clientId) throw new NotFoundException('subscription not found');
+  async setLabel(@Req() req: Request, @Param('id', ParseIntPipe) id: number, @Body() body: { label?: string | null }) {
     if (!('label' in body)) throw new BadRequestException('label απαιτείται');
+    await this.writable(req.user.clientId, (s) => s.id === id, 'subscription not found');
     // Ο έλεγχος ιδιοκτησίας ζει στο ClientsService (subscriptionOf): το id έρχεται
     // από τον caller, το clientId ποτέ — μόνο από το token.
-    return this.clients.updateSubscription(req.user.clientId, id, { label: cleanLabel(body.label) });
+    return this.clients.updateSubscription(req.user.clientId!, id, { label: cleanLabel(body.label) });
   }
 
   // Ιστορικό μόνο των δικών του streams. Δεν ανοίγει το /servers/:host/series

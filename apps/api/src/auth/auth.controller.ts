@@ -2,20 +2,33 @@ import { BadRequestException, Body, Controller, Get, HttpCode, Patch, Post, Req 
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { Public } from './public.decorator';
+import { checkAttempts, failedAttempt, resetAttempts } from './throttle';
 import { Roles } from './roles.decorator';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
+  // Το φρενάρισμα ζει εδώ και όχι στο service: το κλειδί είναι η IP του αιτήματος
+  // (δες main.ts#trust proxy) μαζί με το username — έτσι ένα μπαράζ σε έναν
+  // λογαριασμό δεν κλειδώνει τους υπόλοιπους, ούτε το ανάποδο.
   @Public()
   @HttpCode(200)
   @Post('login')
-  login(@Body() body: { username?: string; password?: string }) {
+  async login(@Req() req: Request, @Body() body: { username?: string; password?: string }) {
     if (!body?.username || !body?.password) {
       throw new BadRequestException('username και password απαιτούνται');
     }
-    return this.auth.login(body.username, body.password);
+    const key = `${req.ip}|${body.username}`;
+    checkAttempts(key);
+    try {
+      const token = await this.auth.login(body.username, body.password);
+      resetAttempts(key);
+      return token;
+    } catch (e) {
+      failedAttempt(key);
+      throw e;
+    }
   }
 
   // Το billing ζητάει link για τον πελάτη του (admin, άρα και API key), ο browser
@@ -32,12 +45,23 @@ export class AuthController {
     return this.auth.loginLink(body.clientId, process.env.PANEL_URL ?? `${proto}://${req.headers.host}`);
   }
 
+  // Ίδιο φρενάρισμα: το link είναι βραχύβιο JWT και δεν μαντεύεται, αλλά η
+  // επαλήθευση είναι ούτως ή άλλως δουλειά που δεν χρωστάμε σε άγνωστο.
   @Public()
   @HttpCode(200)
   @Post('exchange')
-  exchange(@Body() body: { token?: string }) {
+  async exchange(@Req() req: Request, @Body() body: { token?: string }) {
     if (!body?.token) throw new BadRequestException('token απαιτείται');
-    return this.auth.exchange(body.token);
+    const key = `${req.ip}|exchange`;
+    checkAttempts(key);
+    try {
+      const token = await this.auth.exchange(body.token);
+      resetAttempts(key);
+      return token;
+    } catch (e) {
+      failedAttempt(key);
+      throw e;
+    }
   }
 
   @Get('me')

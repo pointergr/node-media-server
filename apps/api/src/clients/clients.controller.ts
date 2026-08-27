@@ -88,7 +88,11 @@ export class ClientsController {
     // δεν θα ταίριαζε ποτέ — και η αποτυχία θα φαινόταν μόνο ως «άκυρο κλειδί»
     // στα logs του server, ώρες αργότερα.
     // Χωρίς path το φτιάχνει το service από τα ids — δες nextPath().
-    if (body.path && !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.path)) {
+    // Το `(?!\.)` κόβει τα `/../x` και `/./x`: ο δικός μας stream server τα
+    // σταματάει ήδη αλλού (SAFE_NAME_PATTERN του RTMP layer), αλλά ο κανόνας
+    // «το path δεν βγαίνει από τον φάκελό του» δεν έχει λόγο να ζει σε ξένη
+    // εξάρτηση — εδώ γράφεται, εδώ ελέγχεται.
+    if (body.path && !/^\/(?!\.)[A-Za-z0-9_.-]+\/(?!\.)[A-Za-z0-9_.-]+$/.test(body.path)) {
       throw new BadRequestException('path της μορφής /app/stream (π.χ. /live/kamera1)');
     }
     // Το path ανήκει σε συνδρομή, όχι στον πελάτη: από εκεί βγαίνει ο server και

@@ -1,4 +1,3 @@
-import { Password } from "@hosterai/passwords";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -39,15 +38,12 @@ if(force) {
     console.log("-------------------------");
 }
 
-const password = new Password();
-
-const adminPassword = password.generate(10);
-const streamSecret = password
-  .lowercaseLength(4)
-  .uppercaseLength(4)
-  .symbolsLength(0)
-  .numbersLength(4)
-  .generate(12);
+// Σκέτο crypto αντί για γεννήτρια κωδικών: το @hosterai/passwords κουβαλούσε
+// bcrypt -> node-pre-gyp -> tar (1 critical, 3 high στο npm audit) για να κάνει
+// αυτό που κάνει μια γραμμή — και κανείς δεν πληκτρολογεί αυτούς τους κωδικούς,
+// τους κάνει αντιγραφή από το config block.
+const adminPassword = crypto.randomBytes(12).toString("base64url"); // 16 χαρακτήρες
+const streamSecret = crypto.randomBytes(18).toString("base64url"); // 24 χαρακτήρες
 const config = await loadConfig();
 await updateConfig(config);
 

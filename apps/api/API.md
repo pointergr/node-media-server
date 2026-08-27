@@ -62,7 +62,8 @@ curl -H "authorization: Bearer pk_…" https://panel.example.com/api/plans
 |---|---|---|
 | `400` | λείπει ή είναι άκυρο πεδίο (`planId`, όρια < 1, κακοσχηματισμένο `path`) | διόρθωσε το σώμα |
 | `401` | κακό ή απόν token/key | μην ξαναδοκιμάσεις με το ίδιο |
-| `403` | ο ρόλος δεν επιτρέπεται (πελάτης σε admin endpoint) | — |
+| `403` | ο ρόλος δεν επιτρέπεται (πελάτης σε admin endpoint), ή API key σε ενέργεια που θέλει άνθρωπο (`/apikeys`, restart/kill session), ή πελάτης/πακέτο σε **αναστολή** που προσπαθεί να γράψει | — |
+| `429` | πολλές αποτυχημένες συνδέσεις (10 ανά IP+username) | περίμενε — το παράθυρο είναι 15' και μια επιτυχία το μηδενίζει |
 | `404` | το id δεν υπάρχει **ή ανήκει σε άλλον πελάτη** | δες παρακάτω |
 | `409` | σύγκρουση: path/όνομα/username που υπάρχει, πλάνο γεμάτο, διαγραφή με εξαρτήσεις | άλλαξε δεδομένα ή σβήσε πρώτα |
 | `502` | ο stream server δεν απάντησε στο proxy | retry |
@@ -122,7 +123,7 @@ curl "${auth[@]}" $API/plans
 ### 2. Φτιάξε τον πελάτη
 
 ```bash
-curl -X POST "${auth[@]}" -d '{"name":"Πελάτης ΑΕ","username":"pelatis","password":"…"}' $API/clients
+curl -X POST "${auth[@]}" -d '{"name":"Πελάτης ΑΕ","username":"pelatis","password":"…"}' $API/clients   # ≥8 χαρακτήρες ο κωδικός
 ```
 
 `201` → `{ "id": 7, "name": "Πελάτης ΑΕ", "disabled": false }`
@@ -279,8 +280,8 @@ RTMP. Δίνεις το Stream URL της πλατφόρμας και το Strea
 | `GET /live` | το τελευταίο snapshot **κάθε** server: `[{host, ts, online, snapshot}]`. `online: false` αν το τελευταίο tick είναι >30s παλιό. Ζει στη μνήμη — μετά από restart του API είναι άδειο για ≤10s |
 | `GET /servers/:host/series?range=1h\|24h\|7d\|30d` | ιστορικό θεατών/bitrate, proxy στο sqlite του stream server |
 | `GET /servers/:host/sessions` | ιστορικό συνδέσεων του server |
-| `DELETE /servers/:host/sessions/:id` | κόβει μία σύνδεση |
-| `POST /servers/:host/restart` | restart του stream server (απαντάει `202`, τον ξανασηκώνει ο supervisor του) |
+| `DELETE /servers/:host/sessions/:id` | κόβει μία σύνδεση — **μόνο** με JWT ανθρώπου· με API key `403` |
+| `POST /servers/:host/restart` | restart του stream server (απαντάει `202`, τον ξανασηκώνει ο supervisor του) — **μόνο** με JWT ανθρώπου· με API key `403` |
 
 Τα series/sessions είναι **ανά server**, γιατί εκεί ζουν — το panel δεν τα
 αντιγράφει κεντρικά. Ο σωστός `host` για έναν πελάτη είναι ο
@@ -300,15 +301,18 @@ RTMP. Δίνεις το Stream URL της πλατφόρμας και το Strea
 | `PATCH /me/subscriptions/:id` | `{label}` — ο πελάτης ονομάζει τα πακέτα του· μόνο το `label` (η αναστολή μένει στον admin) |
 | `GET /me/series?range=` | ιστορικό μόνο των δικών του paths, χωρίς CPU/μνήμη του μηχανήματος |
 
+Σε **αναστολή** (πελάτη ή πακέτου) το `/me/*` γίνεται read-only: οι αναγνώσεις
+δουλεύουν κανονικά και δείχνουν `suspended: true`, ό,τι γράφει απαντάει `403`.
+
 ### Χρήστες και σύνδεση
 
 | Endpoint | Σώμα | Σημείωση |
 |---|---|---|
-| `POST /auth/login` | `{username, password}` | `200 {access_token}` (12ωρο)· `401` σε λάθος στοιχεία — ίδιο μήνυμα για άγνωστο χρήστη και για λάθος κωδικό |
+| `POST /auth/login` | `{username, password}` | `200 {access_token}` (12ωρο)· `401` σε λάθος στοιχεία — ίδιο μήνυμα για άγνωστο χρήστη και για λάθος κωδικό· `429` μετά από 10 συνεχόμενες αποτυχίες στο ίδιο ζευγάρι IP+username |
 | `POST /auth/login-link` | `{clientId}` | `200 {url, expiresIn}` — link **μιας χρήσης**, 5 λεπτά, για τον χρήστη του πελάτη (δες βήμα 6)· `400` αν ο πελάτης δεν έχει χρήστη |
 | `POST /auth/exchange` | `{token}` | το καλεί **το panel**, όχι εσύ: ανταλλάσσει το token του link με 12ωρη συνεδρία· `401` σε ληγμένο, ξοδεμένο ή σκέτο token συνεδρίας |
 | `GET /auth/me` | — | `{username, role, clientId}` του token — το χρησιμοποιεί το panel· με API key `401` |
-| `PATCH /auth/me` | `{currentPassword, username?, password?}` | αλλάζει **τα δικά του** στοιχεία (το id βγαίνει από το token)· `401` λάθος τρέχων κωδικός, `409` username σε χρήση |
+| `PATCH /auth/me` | `{currentPassword, username?, password?}` | αλλάζει **τα δικά του** στοιχεία (το id βγαίνει από το token)· `401` λάθος τρέχων κωδικός, `409` username σε χρήση, `400` κωδικός κάτω από 8 χαρακτήρες |
 
 Δεν υπάρχει users endpoint: ο χρήστης ενός πελάτη φτιάχνεται και αλλάζει από τα
 `POST /clients` και `PATCH /clients/:id`.
@@ -321,8 +325,11 @@ RTMP. Δίνεις το Stream URL της πλατφόρμας και το Strea
 του μηχανήματος.
 
 Τα `GET/POST /servers`, `GET/PATCH/DELETE /servers/:id` διαχειρίζονται τα ίδια
-τα μηχανήματα (admin) — δεν αφορούν provisioning πελατών, και οι απαντήσεις τους
-περιέχουν διαπιστευτήρια.
+τα μηχανήματα (admin) — δεν αφορούν provisioning πελατών. Το `token` του sync και
+ο κωδικός του `/admin` γυρίζουν **μόνο** στην απάντηση του `POST /servers`, μία
+φορά: κράτα τα εκεί που θα τα χρειαστεί ο stream server (`config.json`), γιατί
+κανένα `GET` δεν τα ξαναδίνει. Χάθηκαν; `PATCH /servers/:id {token, adminPass}`
+με νέες τιμές.
 
 ## Χρόνοι
 

@@ -5,8 +5,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupTestDb, startTestApp } from './helpers';
+import { MAX_FAILS } from '../src/auth/throttle';
 
-process.env.JWT_SECRET = 'test-secret-only-for-tests';
+// ≥32 χαρακτήρες: το ίδιο κατώφλι που επιβάλλει το src/auth/secret.ts στο boot.
+process.env.JWT_SECRET = 'test-secret-only-for-tests-0123456789';
 
 let base: string;
 let closeApp: () => Promise<void>;
@@ -90,13 +92,13 @@ before(async () => {
   });
 
   await prisma.user.create({
-    data: { username: 'admin', password: hashPassword('adminpass'), role: 'admin', clientId: null },
+    data: { username: 'admin', password: await hashPassword('adminpass'), role: 'admin', clientId: null },
   });
   await prisma.user.create({
-    data: { username: 'usera', password: hashPassword('passa'), role: 'customer', clientId: clientA.id },
+    data: { username: 'usera', password: await hashPassword('passa123'), role: 'customer', clientId: clientA.id },
   });
   await prisma.user.create({
-    data: { username: 'userb', password: hashPassword('passb'), role: 'customer', clientId: clientB.id },
+    data: { username: 'userb', password: await hashPassword('passb123'), role: 'customer', clientId: clientB.id },
   });
 
   await prisma.$disconnect();
@@ -175,7 +177,7 @@ test('sync: σωστό token -> μόνο οι μη-disabled πελάτες αυ�
 });
 
 test('roles: customer σε admin endpoint -> 403', async () => {
-  const token = await login('usera', 'passa');
+  const token = await login('usera', 'passa123');
   const res = await fetch(`${base}/clients`, { headers: { authorization: `Bearer ${token}` } });
   assert.equal(res.status, 403);
 });
@@ -187,7 +189,7 @@ test('roles: admin σε admin endpoint -> 200', async () => {
 });
 
 test('/me/streams: ο πελάτης Α δεν βλέπει τα paths του Β', async () => {
-  const tokenA = await login('usera', 'passa');
+  const tokenA = await login('usera', 'passa123');
   const resA = await fetch(`${base}/me/streams`, { headers: { authorization: `Bearer ${tokenA}` } });
   assert.equal(resA.status, 200);
   const streamsA = (await resA.json()) as { host: string; path: string; key: string; streamKey: string; limit: number }[];
@@ -199,7 +201,7 @@ test('/me/streams: ο πελάτης Α δεν βλέπει τα paths του Β
   assert.equal(streamsA[0].host, 'server-a', 'το panel χτίζει από αυτό τα URL αναπαραγωγής/OBS');
   assert.ok(!streamsA.some((s) => s.path === '/live/kamerab'), 'δεν βλέπει το path του πελάτη Β');
 
-  const tokenB = await login('userb', 'passb');
+  const tokenB = await login('userb', 'passb123');
   const resB = await fetch(`${base}/me/streams`, { headers: { authorization: `Bearer ${tokenB}` } });
   const streamsB = (await resB.json()) as { path: string }[];
   assert.equal(streamsB.length, 1);
@@ -220,7 +222,7 @@ test('/me/streams: τα νούμερα του τελευταίου sync φτάν
     }),
   });
 
-  const token = await login('usera', 'passa');
+  const token = await login('usera', 'passa123');
   const res = await fetch(`${base}/me/streams`, { headers: { authorization: `Bearer ${token}` } });
   const [mine] = (await res.json()) as {
     viewers: number; since: number; in_bps: number; out_bps: number; r2Estimate: boolean;
@@ -460,7 +462,7 @@ test('συνδρομές: id άλλου πελάτη -> 404', async () => {
 test('ανανέωση κλειδιού: νέο κλειδί στο ίδιο path, από admin και από πελάτη', async () => {
   const auth = await adminAuth();
   const plan = await mkPlan(auth, 'ananeosi', 10, 2, ids.serverA);
-  const created = await post(auth, '/clients', { name: 'diarroi', username: 'diarroi', password: 'passd' });
+  const created = await post(auth, '/clients', { name: 'diarroi', username: 'diarroi', password: 'passd123' });
   const client = (await created.json()) as { id: number };
   const sub = await mkSub(auth, client.id, plan.id);
   const path = (await (
@@ -478,7 +480,7 @@ test('ανανέωση κλειδιού: νέο κλειδί στο ίδιο pat
     'ο stream server παίρνει το νέο κλειδί στο επόμενο sync',
   );
 
-  const token = await login('diarroi', 'passd');
+  const token = await login('diarroi', 'passd123');
   const asCustomer = (headers: Auth, id: number) =>
     fetch(`${base}/me/streams/${id}/key`, { method: 'POST', headers });
   const mine = (await (
@@ -489,7 +491,7 @@ test('ανανέωση κλειδιού: νέο κλειδί στο ίδιο pat
   assert.equal(own.status, 201);
   assert.notEqual(((await own.json()) as { key: string }).key, fresh.key, 'ο πελάτης το αλλάζει μόνος του');
 
-  const other = await login('usera', 'passa');
+  const other = await login('usera', 'passa123');
   const foreign = await asCustomer({ authorization: `Bearer ${other}` }, mine[0].id);
   assert.equal(foreign.status, 404, 'ξένο path δεν αλλάζει κλειδί');
 });
@@ -636,7 +638,7 @@ test('/me/series: μόνο τα paths του πελάτη, χωρίς το serve
     data: { adminUrl: `http://127.0.0.1:${port}` },
   });
 
-  const tokenA = await login('usera', 'passa');
+  const tokenA = await login('usera', 'passa123');
   const res = await fetch(`${base}/me/series?range=24h`, {
     headers: { authorization: `Bearer ${tokenA}` },
   });
@@ -657,19 +659,19 @@ test('PATCH /clients/:id: ο admin αλλάζει username/password του πε�
   const auth = await adminAuth();
   const client = (await (await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'me-xristi', username: 'palio', password: 'palios' }),
+    body: JSON.stringify({ name: 'me-xristi', username: 'palio', password: 'palios12' }),
   })).json()) as { id: number };
-  assert.ok(await login('palio', 'palios'));
+  assert.ok(await login('palio', 'palios12'));
 
   const res = await fetch(`${base}/clients/${client.id}`, {
-    method: 'PATCH', headers: auth, body: JSON.stringify({ username: 'neo', password: 'neos' }),
+    method: 'PATCH', headers: auth, body: JSON.stringify({ username: 'neo', password: 'neos1234' }),
   });
   assert.equal(res.status, 200);
-  assert.ok(await login('neo', 'neos'));
+  assert.ok(await login('neo', 'neos1234'));
 
   const old = await fetch(`${base}/auth/login`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'palio', password: 'palios' }),
+    body: JSON.stringify({ username: 'palio', password: 'palios12' }),
   });
   assert.equal(old.status, 401, 'το παλιό username δεν υπάρχει πια');
 
@@ -688,17 +690,17 @@ test('PATCH /clients/:id: ο admin αλλάζει username/password του πε�
   });
   assert.equal(half.status, 400, 'χωρίς username δεν ξέρουμε ποιον χρήστη να φτιάξουμε');
   const full = await fetch(`${base}/clients/${bare.id}`, {
-    method: 'PATCH', headers: auth, body: JSON.stringify({ username: 'argoporimenos', password: 'kodikos' }),
+    method: 'PATCH', headers: auth, body: JSON.stringify({ username: 'argoporimenos', password: 'kodikos1' }),
   });
   assert.equal(full.status, 200);
-  assert.ok(await login('argoporimenos', 'kodikos'));
+  assert.ok(await login('argoporimenos', 'kodikos1'));
 });
 
 test('username που υπάρχει ήδη -> 409 (όχι 500)', async () => {
   const auth = await adminAuth();
   const dup = await fetch(`${base}/clients`, {
     method: 'POST', headers: auth,
-    body: JSON.stringify({ name: 'diplos', username: 'admin', password: 'x' }),
+    body: JSON.stringify({ name: 'diplos', username: 'admin', password: 'pass1234' }),
   });
   assert.equal(dup.status, 409);
 });
@@ -739,20 +741,20 @@ test('GET /clients?username=: φιλτράρει στον χρήστη του π
 });
 
 test('PATCH /auth/me: ο καθένας αλλάζει μόνο τον δικό του λογαριασμό', async () => {
-  const tokenB = await login('userb', 'passb');
+  const tokenB = await login('userb', 'passb123');
   const headersB = { authorization: `Bearer ${tokenB}`, 'content-type': 'application/json' };
 
   const wrong = await fetch(`${base}/auth/me`, {
-    method: 'PATCH', headers: headersB, body: JSON.stringify({ currentPassword: 'λάθος', password: 'neos' }),
+    method: 'PATCH', headers: headersB, body: JSON.stringify({ currentPassword: 'λάθος', password: 'neos1234' }),
   });
   assert.equal(wrong.status, 401, 'το token μόνο δεν αρκεί για αλλαγή κωδικού');
 
   const ok = await fetch(`${base}/auth/me`, {
-    method: 'PATCH', headers: headersB, body: JSON.stringify({ currentPassword: 'passb', password: 'passb2' }),
+    method: 'PATCH', headers: headersB, body: JSON.stringify({ currentPassword: 'passb123', password: 'passb2-neos' }),
   });
   assert.equal(ok.status, 200);
-  assert.ok(await login('userb', 'passb2'));
-  assert.ok(await login('usera', 'passa'), 'ο άλλος πελάτης δεν επηρεάστηκε');
+  assert.ok(await login('userb', 'passb2-neos'));
+  assert.ok(await login('usera', 'passa123'), 'ο άλλος πελάτης δεν επηρεάστηκε');
 
   // Και ο admin: το ίδιο endpoint, ο μόνος τρόπος να αλλάξει ο κωδικός του seed.
   const auth = await adminAuth();
@@ -795,7 +797,7 @@ test('seed force: ξαναγράφει τον κωδικό υπάρχοντος 
     run('node', [seed, 'force'], { env: { ...env, SEED_ADMIN_USER: 'usera' } }),
     /δεν είναι admin/,
   );
-  assert.ok(await login('usera', 'passa'), 'ο κωδικός του πελάτη έμεινε ως ήταν');
+  assert.ok(await login('usera', 'passa123'), 'ο κωδικός του πελάτη έμεινε ως ήταν');
 
   // Επαναφορά για ό,τι τρέξει μετά.
   await run('node', [seed, 'force'], { env: { ...env, SEED_ADMIN_PASSWORD: 'adminpass' } });
@@ -840,7 +842,7 @@ test('συνδρομές: αλλαγή πλάνου, με έλεγχο των st
   const small = await mkPlan(auth, 'anav-mikro', 5, 1, ids.serverA);
   const big = await mkPlan(auth, 'anav-megalo', 50, 3, ids.serverA);
   const otherHost = await mkPlan(auth, 'anav-allou', 9, 3, ids.serverB);
-  const created = await post(auth, '/clients', { name: 'anavathmisi', username: 'anavathmisi', password: 'passan' });
+  const created = await post(auth, '/clients', { name: 'anavathmisi', username: 'anavathmisi', password: 'passan12' });
   const client = (await created.json()) as { id: number };
   const sub = await mkSub(auth, client.id, small.id);
   const mkPath = async (path: string) =>
@@ -881,7 +883,7 @@ test('συνδρομές: αλλαγή πλάνου, με έλεγχο των st
 
   // Ο πελάτης ονομάζει το πακέτο του, δεν το αλλάζει: η αναβάθμιση είναι εμπορική
   // απόφαση, όπως και η αναστολή.
-  const token = await login('anavathmisi', 'passan');
+  const token = await login('anavathmisi', 'passan12');
   const customer = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   assert.equal((await setPlan(customer, `/me/subscriptions/${sub.id}`, big.id)).status, 400);
   assert.equal((await entry())!.limit, 5, 'το πλάνο δεν άλλαξε από το /me');
@@ -909,7 +911,7 @@ test('συνδρομές: αλλαγή πλάνου, με έλεγχο των st
 test('συνδρομές: φιλικό όνομα από admin και από πελάτη, ξένη συνδρομή 404', async () => {
   const auth = await adminAuth();
   const plan = await mkPlan(auth, 'onomata', 10, 2, ids.serverA);
-  const created = await post(auth, '/clients', { name: 'onomasia', username: 'onomasia', password: 'passo' });
+  const created = await post(auth, '/clients', { name: 'onomasia', username: 'onomasia', password: 'passo123' });
   const client = (await created.json()) as { id: number };
   const ekklisia = await mkSub(auth, client.id, plan.id);
   const dimarcheio = await mkSub(auth, client.id, plan.id);
@@ -925,7 +927,7 @@ test('συνδρομές: φιλικό όνομα από admin και από π�
 
   // Το όνομα φτάνει στον πελάτη μαζί με τα streams — εκεί το χρειάζεται η
   // ομαδοποίηση της οθόνης.
-  const token = await login('onomasia', 'passo');
+  const token = await login('onomasia', 'passo123');
   const customer = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   const streams = async () =>
     (await (await fetch(`${base}/me/streams`, { headers: customer })).json()) as
@@ -961,7 +963,7 @@ test('συνδρομές: φιλικό όνομα από admin και από π�
   assert.ok(stillOn[`onomasia#${ekklisia.id}`], 'η συνδρομή δεν μπήκε σε αναστολή από το /me');
 
   // Ξένη συνδρομή: το clientId βγαίνει από το token, όχι από το URL.
-  const other = await login('usera', 'passa');
+  const other = await login('usera', 'passa123');
   const foreign = await patchSub(
     { authorization: `Bearer ${other}`, 'content-type': 'application/json' },
     `/me/subscriptions/${ekklisia.id}`,
@@ -1042,7 +1044,7 @@ test('/apikeys: ο admin τα διαχειρίζεται από το panel, το
     403,
   );
   // Ούτε ο πελάτης, φυσικά.
-  const customer = { authorization: `Bearer ${await login('usera', 'passa')}` };
+  const customer = { authorization: `Bearer ${await login('usera', 'passa123')}` };
   assert.equal((await fetch(`${base}/apikeys`, { headers: customer })).status, 403);
 
   assert.equal((await post(auth, '/apikeys', { name: '  ' })).status, 400, 'το όνομα είναι υποχρεωτικό');
@@ -1057,7 +1059,7 @@ test('/apikeys: ο admin τα διαχειρίζεται από το panel, το
 // Το username δεν είναι στο JWT (payload: sub/role/clientId), οπότε η οθόνη
 // «Ο λογαριασμός μου» δεν έχει άλλο τρόπο να δείξει ποιος είναι συνδεδεμένος.
 test('GET /auth/me: τα στοιχεία του συνδεδεμένου, χωρίς hash κωδικού', async () => {
-  const token = await login('usera', 'passa');
+  const token = await login('usera', 'passa123');
   const res = await fetch(`${base}/auth/me`, { headers: { authorization: `Bearer ${token}` } });
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -1107,7 +1109,7 @@ test('login-link: ο πελάτης μπαίνει χωρίς κωδικό, με
 
 // Χωρίς αυτό, όποιος έχει μια συνεδρία θα την ανανέωνε επ' άπειρον από το exchange.
 test('exchange: κανονικό token συνεδρίας -> 401', async () => {
-  const token = await login('usera', 'passa');
+  const token = await login('usera', 'passa123');
   const res = await fetch(`${base}/auth/exchange`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -1186,7 +1188,7 @@ test('/me/subscriptions: τα πακέτα του πελάτη με τα όρι�
 
   // Ξένα πακέτα δεν φαίνονται: το clientId βγαίνει από το token.
   const other = (await (await fetch(`${base}/me/subscriptions`, {
-    headers: { authorization: `Bearer ${await login('usera', 'passa')}` },
+    headers: { authorization: `Bearer ${await login('usera', 'passa123')}` },
   })).json()) as { id: number }[];
   assert.equal(other.some((s) => s.id === sub.id), false);
 });
@@ -1230,7 +1232,7 @@ test('DELETE /me/streams/:id: όχι όσο εκπέμπει, ναι όταν σ
 
   // Το path του pelatis-a δεν είναι δικό του: 404, όχι διαγραφή ξένου stream.
   const foreign = (await (await fetch(`${base}/me/streams`, {
-    headers: { authorization: `Bearer ${await login('usera', 'passa')}` },
+    headers: { authorization: `Bearer ${await login('usera', 'passa123')}` },
   })).json()) as { id: number }[];
   assert.equal((await del(foreign[0]!.id)).status, 404);
 });
@@ -1430,4 +1432,166 @@ test('/me/streams: οι προορισμοί με τη ζωντανή τους �
   assert.equal(mine.destinations[0]!.state, 'retrying', 'η κατάσταση από το snapshot');
   // Ο ιδιοκτήτης βλέπει το κλειδί του — το κρύβει το panel, όχι το API.
   assert.equal(mine.destinations[0]!.key, YT.key, 'ο πελάτης μπορεί να ελέγξει τι έβαλε');
+});
+
+// ── Security review #2 (2026-08-27) ────────────────────────────────────────
+// Τα ευρήματα του δεύτερου ελέγχου, ένα test ανά τρύπα. Ό,τι ελέγχεται χωρίς
+// app (μήκος secret, κωδικού, IP σε προορισμό) ζει στο unit.spec.ts.
+
+// Κάθε GET /servers έδινε το bearer του sync και τον κωδικό του /admin σε
+// plaintext — δηλαδή τα έπαιρνε και κάθε API key, που έχει ρόλο admin.
+test('/servers: τα μυστικά φεύγουν μόνο μία φορά, στη δημιουργία', async () => {
+  const auth = await adminAuth();
+  const res = await post(auth, '/servers', {
+    host: 'server-mystiko', adminUrl: 'http://127.0.0.1:9', adminUser: 'xristis', adminPass: 'mystikos-kodikos',
+  });
+  assert.equal(res.status, 201);
+  const created = (await res.json()) as { id: number; token: string };
+  assert.ok(created.token, 'το install script γράφει αυτό στο config.json του stream server');
+
+  const one = (await (await fetch(`${base}/servers/${created.id}`, { headers: auth })).json()) as Record<string, unknown>;
+  assert.equal(one.token, undefined, 'το bearer του sync δεν ξαναδίνεται');
+  assert.equal(one.adminPass, undefined, 'ούτε ο κωδικός του /admin');
+  assert.equal(one.adminUser, 'xristis', 'ό,τι δεν είναι μυστικό μένει — το panel το δείχνει στη φόρμα');
+
+  const list = await (await fetch(`${base}/servers`, { headers: auth })).text();
+  assert.ok(!list.includes(created.token), 'ούτε στη λίστα');
+  assert.ok(!list.includes('mystikos-kodikos'));
+
+  // Ο ίδιος ο stream server συνεχίζει να συγχρονίζεται κανονικά με το token του.
+  const sync = await fetch(`${base}/servers/server-mystiko/sync`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${created.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ streams: [] }),
+  });
+  assert.equal(sync.status, 200);
+  await fetch(`${base}/servers/${created.id}`, { method: 'DELETE', headers: auth });
+});
+
+// Spread του body στον Prisma: άγνωστο κλειδί = 500, γνωστό = γράψιμο που δεν
+// ζήτησε κανείς. Το σωστό μοτίβο υπήρχε ήδη στα plans (valid()).
+test('mass assignment: ό,τι δεν είναι πεδίο του σχήματος αγνοείται αντί να σκάει', async () => {
+  const auth = await adminAuth();
+  const res = await post(auth, '/clients', { name: 'mass-assign', id: 9999, disabled: true, role: 'admin' });
+  assert.equal(res.status, 201);
+  const client = (await res.json()) as { id: number; disabled: boolean };
+  assert.notEqual(client.id, 9999, 'το id το δίνει η βάση, όχι ο caller');
+
+  const srv = await post(auth, '/servers', {
+    host: 'server-mass', adminUrl: 'http://127.0.0.1:9', adminUser: 'u', adminPass: 'p',
+  });
+  const server = (await srv.json()) as { id: number };
+  const patch = await fetch(`${base}/servers/${server.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ adminUser: 'neos', lastSeen: 'χθες', agnosto: 1 }),
+  });
+  assert.equal(patch.status, 200, 'άγνωστα πεδία δεν φτάνουν στο Prisma');
+  assert.equal(((await patch.json()) as { adminUser: string }).adminUser, 'neos');
+  await fetch(`${base}/servers/${server.id}`, { method: 'DELETE', headers: auth });
+});
+
+// Το `/../x` περνούσε το regex. Ο stream server το κόβει αλλού (SAFE_NAME_PATTERN),
+// αλλά ο κανόνας δεν έχει λόγο να ζει σε ξένη εξάρτηση.
+test('paths: κομμάτι που αρχίζει από τελεία -> 400', async () => {
+  const auth = await adminAuth();
+  for (const path of ['/../etc', '/live/..', '/./x', '/.ssh/id']) {
+    const res = await post(auth, `/clients/${ids.clientA}/paths`, { path, subscriptionId: ids.subA });
+    assert.equal(res.status, 400, path);
+  }
+});
+
+test('κωδικοί: κάτω από το όριο -> 400 (όχι 500, ούτε αποδοχή)', async () => {
+  const auth = await adminAuth();
+  const res = await post(auth, '/clients', { name: 'kontos-kodikos', username: 'kontos', password: 'abc' });
+  assert.equal(res.status, 400);
+});
+
+// Ανεμπόδιστο brute force, με το scrypt να πληρώνεται σε κάθε προσπάθεια.
+test('login: φρενάρισμα μετά από συνεχόμενες αποτυχίες, ανά λογαριασμό', async () => {
+  const tryLogin = (username: string) =>
+    fetch(`${base}/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password: 'λάθος' }),
+    });
+
+  for (let i = 0; i < MAX_FAILS; i++) {
+    assert.equal((await tryLogin('stoxos-brute')).status, 401, `προσπάθεια ${i + 1}`);
+  }
+  assert.equal((await tryLogin('stoxos-brute')).status, 429, 'μετά το όριο δεν φτάνει καν στο scrypt');
+  // Το μπαράζ σε έναν λογαριασμό δεν κλειδώνει τους υπόλοιπους.
+  assert.ok(await login('admin', 'adminpass'));
+});
+
+// Ένα API key είναι admin χωρίς scopes: ό,τι δεν χρειάζεται καμία εξωτερική
+// υπηρεσία μένει κλειστό σε αυτό (δες auth/human-only.ts).
+test('api key: provisioning ναι, χειρισμοί μηχανημάτων όχι', async () => {
+  const auth = await adminAuth();
+  const created = (await (await post(auth, '/apikeys', { name: 'ops-key' })).json()) as { id: number; key: string };
+  const keyAuth = { authorization: `Bearer ${created.key}`, 'content-type': 'application/json' };
+
+  // Ό,τι κάνει το install script συνεχίζει να δουλεύει με το key.
+  const server = await post(keyAuth, '/servers', {
+    host: 'server-apikey', adminUrl: 'http://127.0.0.1:9', adminUser: 'u', adminPass: 'p',
+  });
+  assert.equal(server.status, 201);
+  const { id } = (await server.json()) as { id: number };
+
+  assert.equal((await post(keyAuth, '/servers/server-apikey/restart', {})).status, 403);
+  assert.equal(
+    (await fetch(`${base}/servers/server-apikey/sessions/1`, { method: 'DELETE', headers: keyAuth })).status,
+    403,
+  );
+  // Ο άνθρωπος περνάει — 502 επειδή ο stream server δεν απαντάει, όχι 403.
+  assert.equal((await post(auth, '/servers/server-apikey/restart', {})).status, 502);
+
+  await fetch(`${base}/apikeys/${created.id}`, { method: 'DELETE', headers: auth });
+  await fetch(`${base}/servers/${id}`, { method: 'DELETE', headers: auth });
+});
+
+// Η αναστολή έκοβε την εκπομπή (sync) αλλά όχι το API: ο πελάτης συνέχιζε να
+// φτιάχνει streams, να ανανεώνει κλειδιά και να βάζει προορισμούς.
+test('/me: αναστολή = read-only, οι αναγνώσεις μένουν με τον λόγο', async () => {
+  const auth = await adminAuth();
+  const plan = await mkPlan(auth, 'anastoli-me', 5, 3, ids.serverA);
+  const created = await post(auth, '/clients', {
+    name: 'anastalmenos', username: 'anastalmenos', password: 'pass1234',
+  });
+  const client = (await created.json()) as { id: number };
+  const sub = await mkSub(auth, client.id, plan.id);
+  const pathRes = await post(auth, `/clients/${client.id}/paths`, {
+    path: '/live/anastalmeno', subscriptionId: sub.id,
+  });
+  const path = (await pathRes.json()) as { id: number };
+  const me = {
+    authorization: `Bearer ${await login('anastalmenos', 'pass1234')}`,
+    'content-type': 'application/json',
+  };
+
+  assert.equal((await post(me, `/me/streams/${path.id}/key`, {})).status, 201, 'πριν την αναστολή, κανονικά');
+
+  const suspend = (disabled: boolean) =>
+    fetch(`${base}/clients/${client.id}/subscriptions/${sub.id}`, {
+      method: 'PATCH', headers: auth, body: JSON.stringify({ disabled }),
+    });
+  await suspend(true);
+
+  const streams = (await (await fetch(`${base}/me/streams`, { headers: me })).json()) as { suspended: boolean }[];
+  assert.equal(streams[0]!.suspended, true, 'ο πελάτης βλέπει το stream και τον λόγο');
+  assert.equal((await post(me, `/me/streams/${path.id}/key`, {})).status, 403);
+  assert.equal((await post(me, '/me/streams', { subscriptionId: sub.id })).status, 403);
+  assert.equal(
+    (await post(me, `/me/streams/${path.id}/destinations`, {
+      name: 'yt', url: 'rtmp://a.rtmp.youtube.com/live2', key: 'k',
+    })).status,
+    403,
+  );
+  assert.equal((await fetch(`${base}/me/streams/${path.id}`, { method: 'DELETE', headers: me })).status, 403);
+
+  // Και η αναστολή ολόκληρου του πελάτη, το ίδιο.
+  await suspend(false);
+  await fetch(`${base}/clients/${client.id}`, {
+    method: 'PATCH', headers: auth, body: JSON.stringify({ disabled: true }),
+  });
+  assert.equal((await post(me, `/me/streams/${path.id}/key`, {})).status, 403);
+  assert.equal((await fetch(`${base}/me/streams`, { headers: me })).status, 200, 'βλέπει ακόμα τι έχει');
 });

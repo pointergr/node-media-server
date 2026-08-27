@@ -9,10 +9,13 @@ import {
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { ServersService, CreateServerDto, UpdateServerDto } from './servers.service';
 import { SyncService } from '../sync/sync.service';
 import { Roles } from '../auth/roles.decorator';
+import { humanOnly } from '../auth/human-only';
 
 @Roles('admin')
 @Controller()
@@ -72,13 +75,17 @@ export class ServersController {
 
   // Ο stream server απαντάει 202 και τερματίζει μετά· τον ξανασηκώνει ο
   // supervisor του (pm2 / restart policy), όχι εμείς.
+  // humanOnly: ένα provisioning key φτιάχνει πελάτες και servers, δεν ρίχνει
+  // εκπομπές που παίζουν — δες auth/human-only.ts.
   @Post('servers/:host/restart')
-  restart(@Param('host') host: string) {
+  restart(@Req() req: Request, @Param('host') host: string) {
+    humanOnly(req);
     return this.servers.proxy(host, '/admin/api/restart', 'POST');
   }
 
   @Delete('servers/:host/sessions/:id')
-  killSession(@Param('host') host: string, @Param('id') id: string) {
+  killSession(@Req() req: Request, @Param('host') host: string, @Param('id') id: string) {
+    humanOnly(req);
     return this.servers.proxy(host, `/admin/api/sessions/${encodeURIComponent(id)}`, 'DELETE');
   }
 }
