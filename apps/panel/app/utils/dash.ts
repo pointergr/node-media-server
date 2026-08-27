@@ -14,6 +14,9 @@ export interface StreamRow {
   // εκπομπή χωρίς ABR, και σε πηγή που είναι ήδη πιο χαμηλή από το ladder του
   // πακέτου (stats.js#snapshot). Παλιός stream server: απόν.
   ladder?: number[]
+  // Οι εξωτερικοί προορισμοί που τρέχουν αυτή τη στιγμή για αυτή την εκπομπή
+  // (apps/stream/relay.js). Υπάρχει μόνο όσο υπάρχει publisher.
+  relays?: { name: string, state: string, since: number | null }[]
   audio: string
   viewers: number
   in_bps: number

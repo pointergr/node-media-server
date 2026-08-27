@@ -6,8 +6,12 @@
 // Ο πελάτης δεν έχει ούτε server ούτε όρια — τα έχει η κάθε συνδρομή του, και
 // τίποτα δεν αθροίζεται μεταξύ τους (δες apps/api/prisma/schema.prisma).
 interface ServerOption { id: number, host: string }
-interface PlanRow { id: number, name: string, maxViewers: number, maxStreams: number, serverId: number }
-interface PathRow { id: number, path: string, key: string }
+interface PlanRow { id: number, name: string, maxViewers: number, maxStreams: number, maxRelays: number, serverId: number }
+interface PathRow { id: number, path: string, key: string, destinations: Destination[] }
+// Οι εξωτερικοί προορισμοί του stream. Χωρίς `state` εδώ: το /clients διαβάζει τη
+// βάση, όχι το τελευταίο snapshot — η ζωντανή κατάσταση φαίνεται στο /admin και
+// στο panel του πελάτη.
+interface Destination { id: number, name: string, url: string, key: string, enabled: boolean, state: null }
 interface SubscriptionRow {
   id: number
   // Αναστολή της συνδρομής, ξεχωριστά από το disabled του πελάτη: ένα πλάνο
@@ -328,6 +332,10 @@ async function refreshKey(c: ClientRow, p: PathRow) {
 // του path) + το κλειδί — ίδια μορφή με το streamKey του GET /me/streams.
 const streamKey = (p: PathRow) => `${p.path.split('/').pop()}?key=${p.key}`
 
+// Ένα path ανοιχτό τη φορά: οι προορισμοί είναι μια δεύτερη σειρά κάτω από τη
+// γραμμή του stream, και τρεις ανοιχτές μαζί κάνουν τον πίνακα αδιάβαστο.
+const openDests = ref<number | null>(null)
+
 onMounted(load)
 </script>
 
@@ -441,7 +449,7 @@ onMounted(load)
         <div class="scroll">
           <table v-if="c.subscriptions.length">
             <thead>
-              <tr>
+                  <tr>
                 <th>Όνομα</th><th>Πλάνο</th><th>Server</th><th>Θεατές</th><th>Streams</th><th>Κατάσταση</th><th />
               </tr>
             </thead>
@@ -500,32 +508,64 @@ onMounted(load)
         <div class="scroll">
           <table v-if="c.subscriptions.some(s => s.paths.length)">
             <thead>
-              <tr>
-                <th>Path</th><th>Πλάνο</th><th>Stream Key</th><th />
+                  <tr>
+                <th>Path</th><th>Πλάνο</th><th>Stream Key</th><th>Αναδιανομή</th><th />
               </tr>
             </thead>
             <tbody>
               <template v-for="s in c.subscriptions" :key="s.id">
-                <tr v-for="p in s.paths" :key="p.id">
-                  <td>{{ p.path }}</td>
-                  <td>{{ s.plan.name }} <span class="host">{{ s.server.host }}</span></td>
-                  <td>
-                    <div class="flex items-center gap-2">
-                      <code>{{ streamKey(p) }}</code>
-                      <CopyButton :text="streamKey(p)" label="" />
-                    </div>
-                  </td>
-                  <td>
-                    <UButton
-                      icon="i-lucide-refresh-cw" size="xs" color="neutral" variant="ghost"
-                      aria-label="Νέο κλειδί" title="Νέο κλειδί" @click="refreshKey(c, p)"
-                    />
-                    <UButton
-                      icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
-                      aria-label="Διαγραφή stream" @click="removePath(c, p)"
-                    />
-                  </td>
-                </tr>
+                <!-- Οι δύο γραμμές του stream —η ίδια και οι προορισμοί της— σε κοινό
+                     `template v-for`, όχι δύο ξεχωριστά v-for: το `p` του δεύτερου `tr`
+                     πρέπει να είναι το ίδιο path με του πρώτου. Με το v-for πάνω στο
+                     `tr` το δεύτερο έμενε εκτός scope και το `p.id` έσκαγε σε render. -->
+                <template v-for="p in s.paths" :key="p.id">
+                  <tr>
+                    <td>{{ p.path }}</td>
+                    <td>{{ s.plan.name }} <span class="host">{{ s.server.host }}</span></td>
+                    <td>
+                      <div class="flex items-center gap-2">
+                        <code>{{ streamKey(p) }}</code>
+                        <CopyButton :text="streamKey(p)" label="" />
+                      </div>
+                    </td>
+                    <!-- Ο admin τους βάζει «στο τηλέφωνο», όταν ο πελάτης δεν τα
+                         καταφέρνει μόνος του από το δικό του panel. Πλάνο χωρίς
+                         αναδιανομή δεν έχει τι να δείξει: το κουμπί θα οδηγούσε σε
+                         φόρμα που απαντάει 409. -->
+                    <td>
+                      <UButton
+                        v-if="s.plan.maxRelays"
+                        size="xs" color="neutral" variant="ghost" icon="i-lucide-share-2"
+                        :title="`${p.destinations.length} / ${s.plan.maxRelays} προορισμοί`"
+                        @click="openDests = openDests === p.id ? null : p.id"
+                      >
+                        {{ p.destinations.length }} / {{ s.plan.maxRelays }}
+                      </UButton>
+                      <span v-else class="host">—</span>
+                    </td>
+                    <td>
+                      <UButton
+                        icon="i-lucide-refresh-cw" size="xs" color="neutral" variant="ghost"
+                        aria-label="Νέο κλειδί" title="Νέο κλειδί" @click="refreshKey(c, p)"
+                      />
+                      <UButton
+                        icon="i-lucide-trash-2" size="xs" color="error" variant="ghost"
+                        aria-label="Διαγραφή stream" @click="removePath(c, p)"
+                      />
+                    </td>
+                  </tr>
+                  <tr v-if="openDests === p.id">
+                    <td colspan="5">
+                      <!-- `live` false: εδώ δεν υπάρχει snapshot, μόνο η βάση — δες
+                           το σχόλιο στο Destination. -->
+                      <StreamDestinations
+                        :endpoint="`/clients/${c.id}/paths/${p.id}/destinations`"
+                        :destinations="p.destinations" :max="s.plan.maxRelays" :live="false"
+                        @changed="load"
+                      />
+                    </td>
+                  </tr>
+                </template>
               </template>
             </tbody>
           </table>

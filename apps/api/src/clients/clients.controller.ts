@@ -11,6 +11,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { cleanLabel, ClientsService, CreateClientDto, UpdateClientDto } from './clients.service';
+import { DestinationDto } from './destinations';
 import { Roles } from '../auth/roles.decorator';
 
 @Roles('admin')
@@ -104,5 +105,37 @@ export class ClientsController {
   @Delete(':id/paths/:pathId')
   removePath(@Param('id', ParseIntPipe) id: number, @Param('pathId', ParseIntPipe) pathId: number) {
     return this.clients.removePath(id, pathId);
+  }
+
+  // Οι εξωτερικοί προορισμοί του stream (YouTube κ.λπ.). Τα ίδια τρία endpoints
+  // υπάρχουν και στο /me: ο πελάτης βάζει μόνος του το κανάλι του, ο admin
+  // μπορεί να το κάνει γι' αυτόν στο τηλέφωνο. Ο έλεγχος εγκυρότητας και το
+  // όριο του πλάνου ζουν στο service, μία φορά για τους δύο δρόμους.
+  @Post(':id/paths/:pathId/destinations')
+  addDestination(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('pathId', ParseIntPipe) pathId: number,
+    @Body() body: Partial<DestinationDto>,
+  ) {
+    return this.clients.addDestination(id, pathId, body);
+  }
+
+  @Patch(':id/paths/:pathId/destinations/:destId')
+  setDestination(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('pathId', ParseIntPipe) pathId: number,
+    @Param('destId', ParseIntPipe) destId: number,
+    @Body() body: Partial<DestinationDto>,
+  ) {
+    return this.clients.updateDestination(id, pathId, destId, body);
+  }
+
+  @Delete(':id/paths/:pathId/destinations/:destId')
+  removeDestination(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('pathId', ParseIntPipe) pathId: number,
+    @Param('destId', ParseIntPipe) destId: number,
+  ) {
+    return this.clients.removeDestination(id, pathId, destId);
   }
 }

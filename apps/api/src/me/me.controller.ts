@@ -18,11 +18,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from '../sync/sync.service';
 import { ServersService } from '../servers/servers.service';
 import { cleanLabel, ClientsService, withSubscriptions } from '../clients/clients.service';
+import { DestinationDto } from '../clients/destinations';
 
 // Ελάχιστο σχήμα του snapshot που στέλνει ο stream server (stats.js#snapshot) —
 // μόνο ό,τι χρειάζεται εδώ, όχι όλο το contract.
 interface StreamSnapshot {
-  streams?: { stream: string; viewers: number; since?: number; in_bps?: number; out_bps?: number }[];
+  streams?: {
+    stream: string;
+    viewers: number;
+    since?: number;
+    in_bps?: number;
+    out_bps?: number;
+    // Η κατάσταση της αναδιανομής, από τα ffmpeg jobs του stream server
+    // (apps/stream/relay.js). Υπάρχει μόνο όσο εκπέμπει.
+    relays?: { name: string; state: string; since: number | null }[];
+  }[];
   // Με R2 ενεργό το out_bps είναι εκτίμηση (bytes segment × θεατές): τα .ts
   // σερβίρονται από το CDN και δεν περνάνε ποτέ από τον stream server.
   r2Estimate?: boolean;
@@ -105,6 +115,22 @@ export class MeController {
         // διαβάζει μια εκτίμηση σαν μετρημένη κίνηση (ίδιος αστερίσκος με το
         // /admin — δες apps/stream/stats.js#addR2Out).
         r2Estimate: live?.r2Estimate ?? false,
+        // Οι προορισμοί αναδιανομής, με τη ζωντανή τους κατάσταση κολλημένη από
+        // το snapshot. Το ταίριασμα γίνεται με το όνομα — αυτό στέλνει ο stream
+        // server, που δεν ξέρει τίποτα από ids της βάσης. Δύο προορισμοί με το
+        // ίδιο όνομα στο ίδιο stream θα έδειχναν την ίδια κατάσταση· δεν το
+        // απαγορεύουμε, γιατί η ζημιά είναι ένα λάθος badge και ο περιορισμός θα
+        // ήταν πιο ενοχλητικός από το πρόβλημα.
+        // `null` σημαίνει «δεν εκπέμπει τώρα», όχι «χαλασμένο»: χωρίς publisher
+        // δεν υπάρχει relay να έχει κατάσταση.
+        destinations: p.destinations.map((d) => ({
+          id: d.id,
+          name: d.name,
+          url: d.url,
+          key: d.key,
+          enabled: d.enabled,
+          state: now?.relays?.find((r) => r.name === d.name)?.state ?? null,
+        })),
       };
       });
     });
@@ -125,6 +151,9 @@ export class MeController {
       host: sub.server.host,
       maxStreams: sub.plan.maxStreams,
       maxViewers: sub.plan.maxViewers,
+      // Πόσους προορισμούς αναδιανομής επιτρέπει το πλάνο ανά stream. 0 = δεν
+      // την πουλάει — το panel τότε δεν δείχνει καν τη φόρμα.
+      maxRelays: sub.plan.maxRelays,
       streams: sub.paths.length,
       suspended: sub.disabled,
     }));
@@ -173,6 +202,43 @@ export class MeController {
     // από το /clients).
     if (!req.user.clientId) throw new NotFoundException('path not found');
     return this.clients.refreshKey(req.user.clientId, id);
+  }
+
+  // Οι προορισμοί αναδιανομής, από τον ίδιο τον πελάτη: αυτό είναι όλο το νόημα
+  // του χαρακτηριστικού — ο πελάτης συνδέει το **δικό του** κανάλι, χωρίς να
+  // περιμένει διαχειριστή. Ίδιες συναρτήσεις με το /clients (όριο πλάνου,
+  // έλεγχος εγκυρότητας, έλεγχος ιδιοκτησίας): εδώ αλλάζει μόνο ότι το clientId
+  // βγαίνει από το token και ποτέ από τον caller.
+  @Post('streams/:id/destinations')
+  addDestination(
+    @Req() req: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: Partial<DestinationDto>,
+  ) {
+    // Ο admin δεν έχει clientId — δεν έχει δικά του streams (τα κάνει από το /clients).
+    if (!req.user.clientId) throw new NotFoundException('path not found');
+    return this.clients.addDestination(req.user.clientId, id, body);
+  }
+
+  @Patch('streams/:id/destinations/:destId')
+  setDestination(
+    @Req() req: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('destId', ParseIntPipe) destId: number,
+    @Body() body: Partial<DestinationDto>,
+  ) {
+    if (!req.user.clientId) throw new NotFoundException('destination not found');
+    return this.clients.updateDestination(req.user.clientId, id, destId, body);
+  }
+
+  @Delete('streams/:id/destinations/:destId')
+  removeDestination(
+    @Req() req: Request,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('destId', ParseIntPipe) destId: number,
+  ) {
+    if (!req.user.clientId) throw new NotFoundException('destination not found');
+    return this.clients.removeDestination(req.user.clientId, id, destId);
   }
 
   // Το φιλικό όνομα του πακέτου, από τον ίδιο τον πελάτη: εκείνος ξέρει ότι το

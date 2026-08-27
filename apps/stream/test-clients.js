@@ -7,7 +7,7 @@ import os from "os";
 // πριν — γι' αυτό δυναμικό import.
 const file = `${fs.mkdtempSync(`${os.tmpdir()}/clients-test-`)}/clients.json`;
 process.env.CLIENTS_FILE = file;
-const { loadClients, clientOf, ladderOf, publishAllowed, clearClientsCache, CLIENTS } =
+const { loadClients, clientOf, ladderOf, relaysOf, publishAllowed, clearClientsCache, CLIENTS } =
   await import("./config.js");
 
 assert.equal(CLIENTS, file, "το path είναι override-able για τα tests");
@@ -63,6 +63,33 @@ assert.deepEqual(ladderOf("/live/skoupidia"), [], "ό,τι δεν είναι λ�
 assert.deepEqual(ladderOf("/live/keno"), [], "κενή λίστα = κενό ladder");
 assert.deepEqual(ladderOf("/live/άγνωστο"), [], "path χωρίς πελάτη = κενό ladder");
 assert.deepEqual(ladderOf("/live/abr"), ladderOf("/live/plain"), "το ladder είναι της εγγραφής, ίδιο σε όλα της τα paths");
+
+// Οι προορισμοί αναδιανομής ζουν σε δικό τους πεδίο της εγγραφής, με κλειδί το
+// path: το `paths` (path→κλειδί εκπομπής) δεν αλλάζει σχήμα, γιατί το διαβάζει
+// ο έλεγχος εκπομπής. Ίδια ανοχή με το ladder: ό,τι δεν είναι {name,url} πέφτει
+// έξω σιωπηλά αντί να ρίξει την εκπομπή.
+write({
+  a: {
+    paths: { "/live/yt": "K", "/live/plain": "K" },
+    relays: {
+      "/live/yt": [
+        { name: "YouTube", url: "rtmp://a.rtmp.youtube.com/live2/K" },
+        { name: "Twitch", url: "rtmp://live.fra.twitch.tv/app/K" },
+      ],
+    },
+  },
+  b: { paths: { "/live/palio": "K" } },
+  c: { paths: { "/live/skoupidia": "K" }, relays: { "/live/skoupidia": "rtmp://x/y" } },
+  d: { paths: { "/live/misa": "K" }, relays: { "/live/misa": [{ name: "χωρίς url" }, { url: "rtmp://x/y" }] } },
+});
+clearClientsCache();
+assert.equal(relaysOf("/live/yt").length, 2, "οι προορισμοί του path");
+assert.equal(relaysOf("/live/yt")[0].name, "YouTube", "με τη σειρά που τους έγραψε το panel");
+assert.deepEqual(relaysOf("/live/plain"), [], "άλλο path της ίδιας εγγραφής, χωρίς προορισμούς");
+assert.deepEqual(relaysOf("/live/palio"), [], "παλιό σχήμα χωρίς πεδίο = κανένας προορισμός");
+assert.deepEqual(relaysOf("/live/skoupidia"), [], "ό,τι δεν είναι λίστα αγνοείται");
+assert.deepEqual(relaysOf("/live/misa"), [], "εγγραφή χωρίς name ή χωρίς url αγνοείται");
+assert.deepEqual(relaysOf("/live/άγνωστο"), [], "path χωρίς πελάτη = κανένας προορισμός");
 
 // Ο διακόπτης είναι η ύπαρξη του αρχείου, όχι το πόσοι πελάτες υπάρχουν μέσα:
 // έγκυρο `{}` (server χωρίς πελάτες, ή με όλους απενεργοποιημένους) κλείνει —

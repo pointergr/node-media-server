@@ -40,7 +40,14 @@ function isLocal(session) {
 // ξέρει μόνο το app.js (εκεί ζουν τα jobs), και το snapshot πρέπει να δείχνει
 // αυτό — όχι το ladder του πακέτου, που μπορεί να έχει κοπεί ολόκληρο από την
 // ανάλυση της πηγής ή από το πλαφόν του server.
-export function startStats(nms, config, { onRestart = () => process.exit(0), stepsOf = () => [] } = {}) {
+// relayStateOf: η κατάσταση των προορισμών αναδιανομής, από την ίδια πηγή και για
+// τον ίδιο λόγο με το stepsOf — ένα relay που δεν συνδέεται είναι αόρατο από
+// παντού αλλού, γιατί η εκπομπή συνεχίζει κανονικά σε RTMP και HLS.
+export function startStats(
+  nms,
+  config,
+  { onRestart = () => process.exit(0), stepsOf = () => [], relayStateOf = () => [] } = {},
+) {
   // Τα env overrides υπάρχουν για το docker-compose: αλλιώς κάθε deployment θα
   // έπρεπε να πειράξει με το χέρι το mounted config.json.
   const dbPath = process.env.ADMIN_DB ?? config.admin.db;
@@ -343,6 +350,7 @@ export function startStats(nms, config, { onRestart = () => process.exit(0), ste
         resolution: pub.videoWidth ? `${pub.videoWidth}x${pub.videoHeight}` : "-",
         audio: AUDIO_CODECS[pub.audioCodec] ?? String(pub.audioCodec || "-"),
         ladder: stepsOf(stream),
+        relays: relayStateOf(stream),
         viewers: viewersOf(stream),
         ...(lastBps.get(stream) ?? { in_bps: 0, out_bps: 0 }),
       })),
