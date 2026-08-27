@@ -41,8 +41,29 @@ export interface SessionRow {
 export interface Snapshot {
   streams: StreamRow[]
   sessions: SessionRow[]
-  server: { uptime: number, rss_mb: number, node: string }
+  server: {
+    uptime: number
+    rss_mb: number
+    node: string
+    // Ό,τι χρειάζεται ο διαχειριστής για να ΜΗΝ μπει με ssh: φόρτος, δίσκος (τον
+    // γεμίζουν τα segments) και ο encoder που όντως πέρασε το probe του boot —
+    // μπορεί να ΜΗΝ είναι αυτός του config.json. Παλιός stream server: απόντα.
+    load?: number
+    cpus?: number
+    disk?: { free_gb: number, used_pct: number } | null
+    encoder?: string
+  }
   r2Estimate: boolean
+}
+
+// GET /servers/:host/logs — οι τελευταίες γραμμές της κονσόλας του stream server
+// (ring buffer στη μνήμη του, apps/stream/stats.js). Το ts είναι σε ms, όχι σε
+// δευτερόλεπτα όπως τα ts των χρονοσειρών: είναι σκέτο Date.now() της στιγμής
+// που γράφτηκε η γραμμή.
+export interface LogLine {
+  ts: number
+  level: 'log' | 'warn' | 'error'
+  text: string
 }
 
 // GET /live — ένα entry ανά server· `online: false` όταν το τελευταίο sync είναι

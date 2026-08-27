@@ -232,6 +232,7 @@ endpoint και γιατί έτσι. Για όποιον καλεί το API α�
 | `GET/PATCH/DELETE /servers/:id` | admin | οι απαντήσεις **δεν** έχουν `token`/`adminPass`: ένα `GET` δεν πρέπει να παραδίδει τα μυστικά του μηχανήματος (και το `GET` το κάνει και κάθε API key). Ο κωδικός αλλάζει με `PATCH {adminPass}`, δεν διαβάζεται |
 | `GET /servers/:host/series?range=` | admin | proxy → `/admin/api/series` του stream server (basic auth από το Server) |
 | `GET /servers/:host/sessions` | admin | proxy → `/admin/api/sessions` |
+| `GET /servers/:host/logs` | admin | proxy → `/admin/api/logs` — οι τελευταίες 300 γραμμές της κονσόλας του stream server (`[{ts, level, text}]`, ts σε ms, παλαιότερη πρώτη). Ζουν στη μνήμη του: restart του stream server = άδειο log |
 | `DELETE /servers/:host/sessions/:id` | admin **χρήστης** | proxy → `/admin/api/sessions/:id`· με API key **403** |
 | `POST /servers/:host/restart` | admin **χρήστης** | proxy → `/admin/api/restart`· με API key **403** |
 | `GET /clients` / `POST /clients` | admin | `POST` δέχεται προαιρετικά `username`+`password` — φτιάχνει μαζί και τον customer χρήστη (δες «Αποφάσεις» παρακάτω). Το `GET` δίνει και `users: [{id, username}]`, **χωρίς** το hash του κωδικού, και δέχεται `?username=` — **αναζήτηση** πελάτη από το username του χρήστη του, με μερικό ταίριασμα, χωρίς διάκριση πεζών/κεφαλαίων στα ASCII (`?username=nik` και `?username=NIK` βρίσκουν τον `nikos` — sqlite LIKE)· κενό ή απόν = όλοι οι πελάτες |

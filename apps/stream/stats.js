@@ -1,7 +1,9 @@
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
+import { format } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { clientOf, publishAllowed, closeSession } from "./config.js";
 
@@ -14,6 +16,28 @@ const RETENTION_DAYS = 30;
 // Ο player ξαναζητά το playlist κάθε ~2s (hls_time). 30s αντέχει και ένα stall.
 const HLS_TTL_MS = 30_000;
 const CLEANUP_MS = 24 * 60 * 60 * 1000;
+// Οι τελευταίες γραμμές της κονσόλας, για να τις δει το panel χωρίς ssh. Στη
+// μνήμη και μόνο: το πού γράφεται το log έχει άλλη απάντηση σε pm2 και άλλη σε
+// docker, ενώ η κονσόλα είναι η ίδια και στα δύο. 300 γραμμές πιάνουν και το
+// respawn του ffmpeg και την υποβάθμιση του R2· χωρίς πλαφόν μια 24/7 εκπομπή
+// είναι διαρροή μνήμης, όπως τα uploaded/fromOrigin του r2.js.
+const LOG_MAX = 300;
+const logLines = [];
+
+// Patch στο ίδιο το console και όχι wrapper που θα έπρεπε να τον καλέσουν όλα τα
+// αρχεία: το log που θέλει ο διαχειριστής είναι ακριβώς αυτό που γράφεται ήδη
+// (app.js, r2.js, relay.js, config.js) — μια δεύτερη συνάρτηση θα σήμαινε ότι
+// όποια γραμμή ξεχάστηκε λείπει από το panel χωρίς να το ξέρει κανείς.
+for (const level of ["log", "warn", "error"]) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    // util.format = ακριβώς ό,τι κάνει το console από κάτω, οπότε ένα Error ή
+    // ένα %s στο panel φαίνεται όπως στο τερματικό.
+    logLines.push({ ts: Date.now(), level, text: format(...args) });
+    if (logLines.length > LOG_MAX) logLines.shift();
+    original(...args);
+  };
+}
 
 // range -> [πόσο πίσω σε δευτερόλεπτα, μέγεθος bucket σε δευτερόλεπτα]
 const RANGES = {
@@ -43,10 +67,12 @@ function isLocal(session) {
 // relayStateOf: η κατάσταση των προορισμών αναδιανομής, από την ίδια πηγή και για
 // τον ίδιο λόγο με το stepsOf — ένα relay που δεν συνδέεται είναι αόρατο από
 // παντού αλλού, γιατί η εκπομπή συνεχίζει κανονικά σε RTMP και HLS.
+// encoder: αυτός που πέρασε το probe του boot και όχι το config.hls.encoder — η
+// αναδίπλωση σε x264 γράφεται μία φορά στο log και μετά δεν φαίνεται από πουθενά.
 export function startStats(
   nms,
   config,
-  { onRestart = () => process.exit(0), stepsOf = () => [], relayStateOf = () => [] } = {},
+  { onRestart = () => process.exit(0), stepsOf = () => [], relayStateOf = () => [], encoder = "x264" } = {},
 ) {
   // Τα env overrides υπάρχουν για το docker-compose: αλλιώς κάθε deployment θα
   // έπρεπε να πειράξει με το χέρι το mounted config.json.
@@ -371,6 +397,23 @@ export function startStats(
     db.prepare("DELETE FROM sessions WHERE end_ts < ?").run(cutoff);
   }
 
+  // Ο δίσκος του φακέλου που γράφει το HLS — το μόνο πράγμα που γεμίζει μόνο του
+  // εδώ πάνω. null όταν ο φάκελος δεν υπάρχει ακόμα (πρώτο boot, πριν από το
+  // πρώτο segment): ένα statfs που σκάει θα έριχνε ολόκληρο το snapshot, δηλαδή
+  // και το /admin και το sync.
+  function diskOf(root) {
+    if (!root) return null;
+    try {
+      const { bsize, blocks, bavail } = fs.statfsSync(root);
+      return {
+        free_gb: Number((bavail * bsize / 1073741824).toFixed(1)),
+        used_pct: Math.round((1 - bavail / blocks) * 100),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   function snapshot() {
     return {
       streams: [...publishers.entries()].map(([stream, pub]) => ({
@@ -396,6 +439,12 @@ export function startStats(
         uptime: process.uptime(),
         rss_mb: Number((process.memoryUsage().rss / 1048576).toFixed(1)),
         node: process.version,
+        // Ο μέσος όρος του ενός λεπτού μόνο του δεν λέει τίποτα — «3» είναι
+        // άνεση σε 8 πυρήνες και πνιγμός σε 2, γι' αυτό φεύγουν μαζί.
+        load: Number(os.loadavg()[0].toFixed(2)),
+        cpus: os.cpus().length,
+        disk: diskOf(config.static?.root),
+        encoder,
       },
       // Το dashboard το χρειάζεται για να μην παρουσιάσει το out_bps σαν μέτρηση
       // ενώ είναι εκτίμηση (δες addR2Out παραπάνω).
@@ -447,6 +496,7 @@ export function startStats(
       return;
     }
     if (p === "/admin/api/live") return json(res, 200, snapshot());
+    if (p === "/admin/api/logs") return json(res, 200, logLines);
     if (p === "/admin/api/series") return json(res, 200, series(url.searchParams.get("range")));
     if (p === "/admin/api/sessions") {
       return json(res, 200, db.prepare("SELECT * FROM sessions ORDER BY end_ts DESC LIMIT 100").all());

@@ -299,6 +299,9 @@ const stats = startStats(nms, config, {
   // είναι το μόνο σημείο απ' όπου φαίνεται ότι το YouTube δεν παίρνει σήμα —
   // παντού αλλού η εκπομπή δείχνει μια χαρά.
   relayStateOf: (streamPath) => hlsJobs.get(streamPath)?.relays?.state() ?? [],
+  // Ο encoder που πέρασε το probe παραπάνω, όχι αυτός του config: αν έπεσε σε
+  // x264 το ξέρει μόνο μια γραμμή του log, και το panel πρέπει να το δείχνει.
+  encoder,
 });
 startPanelSync(config, stats.snapshot);
 

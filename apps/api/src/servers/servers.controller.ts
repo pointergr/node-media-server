@@ -73,6 +73,15 @@ export class ServersController {
     return this.servers.proxy(host, '/admin/api/sessions');
   }
 
+  // Οι τελευταίες γραμμές της κονσόλας του stream server (ring buffer στη μνήμη
+  // του, apps/stream/stats.js). Ο λόγος που υπάρχει: χωρίς αυτό το «γιατί πέθανε
+  // ο ffmpeg» ζητάει ssh στο μηχάνημα — και το πού γράφεται το log έχει άλλη
+  // απάντηση σε pm2 και άλλη σε docker.
+  @Get('servers/:host/logs')
+  logs(@Param('host') host: string) {
+    return this.servers.proxy(host, '/admin/api/logs');
+  }
+
   // Ο stream server απαντάει 202 και τερματίζει μετά· τον ξανασηκώνει ο
   // supervisor του (pm2 / restart policy), όχι εμείς.
   // humanOnly: ένα provisioning key φτιάχνει πελάτες και servers, δεν ρίχνει

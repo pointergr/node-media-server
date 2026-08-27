@@ -277,6 +277,14 @@ test('proxy: περνάει basic auth και method στον stream server', as
   assert.equal(seen[1].method, 'POST', 'το restart φτάνει ως POST');
   assert.equal(seen[1].url, '/admin/api/restart');
 
+  // Τα logs του stream server: ίδιο proxy, γιατί δεν υπάρχει δεύτερος δρόμος
+  // προς το μηχάνημα — ο admin τα διαβάζει από το panel αντί για ssh.
+  const logs = await fetch(`${base}/servers/server-a/logs`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(logs.status, 200);
+  assert.equal(seen[2].url, '/admin/api/logs');
+
   await new Promise<void>((r) => stub.close(() => r()));
 });
 
