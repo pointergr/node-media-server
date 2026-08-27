@@ -28,7 +28,7 @@ configs (Dockerfiles, Caddyfiles, compose, `install`) και των dependencies
 
 ### 1. Hardcoded JWT secret fallback — πλήρης παράκαμψη auth
 
-- [ ] Fix
+- [x] **Έγινε** (2026-08-27): `src/auth/secret.ts` — τυχαίο ≥32 χαρακτήρων ή η διεργασία δεν ξεκινάει· `HS256` καρφωμένο σε sign και verify· `.env.example` με κενή τιμή.
 - **Αρχείο**: `apps/api/src/auth/auth.module.ts:15`
 - **Πρόβλημα**: Το JWT signing secret πέφτει σε hardcoded string όταν λείπει το `JWT_SECRET`.
   Το compose το επιβάλλει (`${JWT_SECRET:?...}`), αλλά ο μη-Docker δρόμος όχι: το `start:dev`
@@ -135,7 +135,7 @@ configs (Dockerfiles, Caddyfiles, compose, `install`) και των dependencies
 
 ### 4. Καμία rate limiting στο login + το scrypt το κάνει CPU-DoS amplifier
 
-- [ ] Fix
+- [x] **Έγινε για το API** (2026-08-27): `src/auth/throttle.ts` (10 αποτυχίες ανά IP+username → 429/15'), ασύγχρονο `scrypt` στο `password.ts`, `trust proxy` στο `main.ts`. **Ανοιχτό**: το admin HTTP του `apps/stream/stats.js` (rate limit στον Caddy ή delay στο `authorized()`).
 - **Αρχεία**: `apps/api/src/auth/auth.controller.ts:9-17`,
   `apps/api/src/auth/password.ts:13-21`, εξίσου `apps/stream/stats.js:401-413`
   (admin Basic auth, δημόσια εκτεθειμένο μέσω `apps/api/Caddyfile` → `handle /admin*`)
@@ -155,7 +155,7 @@ configs (Dockerfiles, Caddyfiles, compose, `install`) και των dependencies
 
 ### 5. Critical `tar@6.2.1` στο runtime image μέσω `@hosterai/passwords` → `bcrypt` → `node-pre-gyp`
 
-- [ ] Fix
+- [x] **Έγινε** (2026-08-27): έφυγε το `@hosterai/passwords`, τα δύο strings βγαίνουν με `crypto.randomBytes` στο `passwords.js`. `npm audit`: 0 ευρήματα.
 - **Αρχεία**: dependency chain `apps/stream/package.json` → `@hosterai/passwords@1.1.0` →
   `bcrypt@5.1.1` → `@mapbox/node-pre-gyp@1.0.11` → `tar@6.2.1`· επίσης `esbuild 0.27.3`
   (low) μέσω `fontless`
@@ -180,7 +180,7 @@ configs (Dockerfiles, Caddyfiles, compose, `install`) και των dependencies
 
 ### 6. Admin credentials του stream server: αδύναμος generator, plaintext στο rest, γνωστό default στο example config
 
-- [ ] Fix
+- [x] **Εν μέρει** (2026-08-27): ο generator είναι πια `crypto.randomBytes` (16/24 χαρακτήρες) και το `GET /servers` δεν επιστρέφει `token`/`adminPass` — φεύγουν μόνο στην απάντηση του `POST`. **Ανοιχτό**: plaintext στη sqlite, `MySuperPassword` στο `config.example.json`.
 - **Αρχεία**: `apps/stream/stats.js:388-394`, `apps/stream/passwords.js:44`,
   `apps/stream/config.example.json:33`, `apps/api/prisma/schema.prisma:19` (`adminPass String`)
 - **Πρόβλημα**: Ο κωδικός admin API είναι 10 chars από pool ~54 συμβόλων (≈57 bits) για
@@ -205,7 +205,7 @@ configs (Dockerfiles, Caddyfiles, compose, `install`) και των dependencies
 
 ### 7. Username enumeration μέσω timing στο login
 
-- [ ] Fix
+- [x] **Έγινε** (2026-08-27): σύγκριση με dummy hash όταν λείπει ο χρήστης (`auth.service.ts#dummyHash`) — πάντα ένα scrypt.
 - **Αρχείο**: `apps/api/src/auth/auth.service.ts:18` — το `!user ||` short-circuit.skipάρει
   το scrypt για άγνωστο username, άρα ο χρόνος απόκρισης ξεχωρίζει «υπάρχει ο χρήστης» από
   «δεν υπάρχει» (το ενιαίο μήνυμα λάθους καλύπτει το περιεχόμενο, όχι το timing).
@@ -234,7 +234,7 @@ configs (Dockerfiles, Caddyfiles, compose, `install`) και των dependencies
 
 ### 10. Latent path-traversal footgun στο regex των client paths
 
-- [ ] Fix (needs investigation for intent)
+- [x] **Εν μέρει** (2026-08-27): το regex του API δεν δέχεται πια κομμάτια που αρχίζουν από τελεία. **Ανοιχτό**: το sanity check στο `streamPath` πριν το `rmSync` του `app.js` — το invariant εξακολουθεί να κρέμεται από τον έλεγχο του RTMP layer.
 - **Αρχείο**: `apps/api/src/clients/clients.controller.ts:52` — το
   `/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/` δέχεται και `.`/`..` segments (π.χ. `/../x`).
   Σήμερα δεν εκμεταλλεύσιμο ως traversal: το RTMP layer απορρίπτει τελείες
@@ -266,3 +266,39 @@ configs (Dockerfiles, Caddyfiles, compose, `install`) και των dependencies
 
 - [Snyk Security Database — node-media-server](https://security.snyk.io/package/npm/node-media-server)
 - Τοπικό `npm audit --workspaces` επί του `package-lock.json` (2026-08-16)
+
+---
+
+## Δεύτερος έλεγχος — 2026-08-27
+
+Επανέλεγχος του `apps/api` μετά τις αλλαγές του καλοκαιριού (πλάνα, συνδρομές,
+API keys, αναδιανομή). Τι έκλεισε:
+
+| # | Εύρημα | Πού |
+|---|---|---|
+| 1 | `JWT_SECRET` fail-open (fallback + τιμή που «δουλεύει» στο `.env.example`) | `auth/secret.ts`, `auth.module.ts`, `.env.example` |
+| 2 | Τα `/servers` επέστρεφαν `token`/`adminPass` σε κάθε `GET` | `servers.service.ts#noSecrets` |
+| 3 | Κάθε API key = πλήρης admin | `auth/human-only.ts` — κλειδιά και restart/kill session μόνο από άνθρωπο |
+| 4 | Καμία rate limiting στο login, `scryptSync` στον event loop | `auth/throttle.ts`, `auth/password.ts` |
+| 5 | Mass assignment (spread του σώματος στο Prisma) | `clients.service.ts`, `servers.service.ts#fields` |
+| 6 | Username enumeration μέσω timing | `auth.service.ts#dummyHash` |
+| 7 | Path regex δεχόταν `.`/`..` κομμάτια | `clients.controller.ts` |
+| 8 | SSRF bypass με μη δεκαδικά IPv4 στους προορισμούς | `clients/destinations.ts#isPrivateHost` |
+| 9 | Αναστολή αόρατη στο API (`/me` δεχόταν γραψίματα) | `me.controller.ts#writable` |
+| 10 | Host header στο login-link | `PANEL_URL` από το compose |
+| 11 | Καμία πολιτική κωδικού | `auth/password.ts#MIN_PASSWORD` (8) |
+| 12 | Container ως root | `Dockerfile`: `USER node` |
+
+Και το εκτός πεδίου: η αλυσίδα `@hosterai/passwords → bcrypt → tar` έφυγε από το
+`apps/stream` (δες #5 παραπάνω) — `npm audit` καθαρό σε όλο το monorepo.
+
+Τι **δεν** έκλεισε, συνειδητά:
+
+- **Scopes στα API keys.** Ένα κλειδί εξακολουθεί να μπορεί ό,τι κι ένας admin
+  στο provisioning — και το `login-link` είναι ακριβώς η δουλειά του billing,
+  οπότε δεν κόβεται. Έκλεισαν οι δύο δρόμοι που καμία υπηρεσία δεν χρειάζεται.
+- **Κρυπτογράφηση των secrets στη sqlite.** Το κλειδί θα ζούσε δίπλα στη βάση
+  (ίδιο μηχάνημα, ίδιο backup) — προστατεύει μόνο από αντίγραφο *μόνο* της βάσης.
+- **`POST /servers/:id/rotate-token`.** Το `PATCH /servers/:id {token}` κάνει ήδη
+  το ίδιο με ένα endpoint λιγότερο.
+- Τα υπόλοιπα ανοιχτά του πρώτου ελέγχου (#2, #3, #8, #9, #11 και τα μισά #4/#6/#10).

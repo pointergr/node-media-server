@@ -4,7 +4,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword, verifyPassword } from './password';
@@ -14,6 +14,13 @@ import { Role } from './roles.decorator';
 // Δευτερόλεπτα ζωής του link: όσο χρειάζεται ένα redirect, όχι όσο κρατάει ένα
 // email. Ό,τι μεγαλύτερο είναι κωδικός σε URL.
 const LINK_TTL = 300;
+
+// Hash ενός κωδικού που δεν ξέρει κανείς, φτιαγμένο μία φορά και με τεμπελιά:
+// όταν το username δεν υπάρχει συγκρίνουμε με αυτό, ώστε η απάντηση να κοστίζει
+// το ίδιο scrypt. Χωρίς αυτό ο άγνωστος χρήστης γυρίζει αισθητά πιο γρήγορα από
+// τον λάθος κωδικό — δηλαδή το login λέει ποια ονόματα υπάρχουν.
+let dummy: Promise<string> | null = null;
+const dummyHash = () => (dummy ??= hashPassword(randomBytes(24).toString('base64url')));
 
 @Injectable()
 export class AuthService {
@@ -29,8 +36,10 @@ export class AuthService {
 
   async login(username: string, password: string): Promise<{ access_token: string }> {
     const user = await this.prisma.user.findUnique({ where: { username } });
-    // Ίδιο μήνυμα λάθους/απόντος χρήστη — δεν αποκαλύπτουμε ποια από τα δύο ίσχυε.
-    if (!user || !verifyPassword(password, user.password)) {
+    // Πάντα ένα scrypt, με ή χωρίς χρήστη (δες dummyHash) — και ίδιο μήνυμα για
+    // τα δύο: δεν αποκαλύπτουμε ποιο από τα δύο ίσχυε, ούτε με το ρολόι.
+    const ok = await verifyPassword(password, user?.password ?? (await dummyHash()));
+    if (!user || !ok) {
       throw new UnauthorizedException('λάθος στοιχεία σύνδεσης');
     }
     const payload: JwtPayload = { sub: user.id, role: user.role as Role, clientId: user.clientId };
@@ -103,13 +112,13 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     // Το token μόνο δεν αρκεί: μια συνεδρία που έμεινε ανοιχτή σε ξένο μηχάνημα
     // δεν πρέπει να μπορεί να κλειδώσει έξω τον κάτοχο του λογαριασμού.
-    if (!user || !verifyPassword(currentPassword, user.password)) {
+    if (!user || !(await verifyPassword(currentPassword, user.password))) {
       throw new UnauthorizedException('λάθος τρέχων κωδικός');
     }
     try {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { username, password: password ? hashPassword(password) : undefined },
+        data: { username, password: password ? await hashPassword(password) : undefined },
       });
     } catch (e) {
       if (typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002') {

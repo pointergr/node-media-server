@@ -68,23 +68,23 @@ export class ClientsService {
     return client;
   }
 
+  // Ρητά πεδία και όχι spread του dto: ό,τι στείλει ο caller παραπάνω θα πήγαινε
+  // αυτούσιο στο Prisma — άγνωστο κλειδί βγάζει 500, γνωστό (`id`) γράφεται χωρίς
+  // να το ζητήσει κανείς. Το `name` και το `disabled` είναι όλες οι στήλες του
+  // Client· τα υπόλοιπα του DTO αφορούν τον χρήστη σύνδεσης (setUser).
   async create(dto: CreateClientDto) {
-    // Destructuring και όχι σκέτο dto: ό,τι δεν είναι στήλη του Client (username,
-    // password) θα έδινε PrismaClientValidationError, δηλαδή 500.
-    const { username, password, ...clientData } = dto;
     return this.prisma.$transaction(async (tx) => {
-      const client = await tx.client.create({ data: clientData });
-      await this.setUser(tx, client.id, username, password);
+      const client = await tx.client.create({ data: { name: dto.name } });
+      await this.setUser(tx, client.id, dto.username, dto.password);
       return client;
     });
   }
 
   async update(id: number, dto: UpdateClientDto) {
     await this.get(id);
-    const { username, password, ...clientData } = dto;
     return this.prisma.$transaction(async (tx) => {
-      await this.setUser(tx, id, username, password);
-      return tx.client.update({ where: { id }, data: clientData });
+      await this.setUser(tx, id, dto.username, dto.password);
+      return tx.client.update({ where: { id }, data: { name: dto.name, disabled: dto.disabled } });
     });
   }
 
@@ -102,7 +102,7 @@ export class ClientsService {
     }
     // `undefined` στο update σημαίνει «μην το αγγίξεις» για το Prisma: κενός
     // κωδικός αφήνει το username να αλλάξει μόνο του, και αντίστροφα.
-    const hash = password ? hashPassword(password) : undefined;
+    const hash = password ? await hashPassword(password) : undefined;
     try {
       await (user
         ? tx.user.update({ where: { id: user.id }, data: { username, password: hash } })

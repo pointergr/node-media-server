@@ -30,6 +30,14 @@ RUN npm ci --omit=dev -w apps/api
 COPY --from=build /app/apps/api/dist apps/api/dist
 WORKDIR /app/apps/api
 
+# Χωρίς root: ο φάκελος των δεδομένων φτιάχνεται ΣΤΟ IMAGE και ανήκει στον node,
+# ώστε το named volume να κληρονομήσει την ιδιοκτησία του όταν το αρχικοποιεί το
+# Docker — εκεί γράφει το `prisma db push` και το sqlite.
+# Υπάρχουσα εγκατάσταση (volume φτιαγμένο ως root) θέλει μία φορά:
+#   docker compose exec -u root api chown -R node:node /app/apps/api/data
+RUN mkdir -p /app/apps/api/data && chown -R node:node /app/apps/api
+USER node
+
 EXPOSE 3000
 
 # Το `prisma` CLI μένει dependency (όχι dev) ειδικά γι' αυτό: schema.prisma

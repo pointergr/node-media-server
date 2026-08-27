@@ -12,6 +12,22 @@ export interface CreateServerDto {
 
 export type UpdateServerDto = Partial<CreateServerDto>;
 
+// Τα μυστικά του stream server (bearer του sync, κωδικός του /admin) δεν φεύγουν
+// ποτέ σε ανάγνωση: τα έδινε ολόκληρα κάθε GET /servers, δηλαδή και κάθε API key
+// (jwt-auth.guard: ρόλος admin, χωρίς scopes). Το token φαίνεται **μία φορά**,
+// στην απάντηση του POST — από εκεί το παίρνει το install script και το panel.
+const noSecrets = { omit: { token: true, adminPass: true } } as const;
+
+// Ρητά πεδία και όχι spread του dto: ό,τι άλλο στείλει ο caller δεν φτάνει στο
+// Prisma (άγνωστο κλειδί = 500, γνωστό = αλλαγή που δεν ζήτησε κανείς).
+const fields = ({ host, adminUrl, adminUser, adminPass, token }: UpdateServerDto) => ({
+  host,
+  adminUrl,
+  adminUser,
+  adminPass,
+  token,
+});
+
 @Injectable()
 export class ServersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -21,12 +37,13 @@ export class ServersService {
   // _count δεν ξέρει distinct πάνω από τις συνδρομές.
   list() {
     return this.prisma.server.findMany({
+      ...noSecrets,
       include: { _count: { select: { plans: true, subscriptions: true, paths: true } } },
     });
   }
 
   async get(id: number) {
-    const server = await this.prisma.server.findUnique({ where: { id } });
+    const server = await this.prisma.server.findUnique({ where: { id }, ...noSecrets });
     if (!server) throw new NotFoundException('server not found');
     return server;
   }
@@ -39,13 +56,19 @@ export class ServersService {
 
   create(dto: CreateServerDto) {
     return this.prisma.server.create({
-      data: { ...dto, token: dto.token || randomBytes(24).toString('base64url') },
+      data: {
+        host: dto.host,
+        adminUrl: dto.adminUrl,
+        adminUser: dto.adminUser,
+        adminPass: dto.adminPass,
+        token: dto.token || randomBytes(24).toString('base64url'),
+      },
     });
   }
 
   async update(id: number, dto: UpdateServerDto) {
     await this.get(id);
-    return this.prisma.server.update({ where: { id }, data: dto });
+    return this.prisma.server.update({ where: { id }, data: fields(dto), ...noSecrets });
   }
 
   async remove(id: number) {

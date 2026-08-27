@@ -16,6 +16,13 @@ services:
       # σιωπηλά σε κάθε recreate του container.
       DATABASE_URL: file:/app/apps/api/data/api.db
       JWT_SECRET: ${JWT_SECRET:?βάλε JWT_SECRET στο .env — ίδιο σε κάθε restart, αλλιώς αποσυνδέονται όλοι}
+      # Το compose ελέγχει μόνο ότι υπάρχει· ότι είναι και τυχαίο (≥32 χαρακτήρες)
+      # το ελέγχει το ίδιο το API στο boot — δες src/auth/secret.ts.
+      #
+      # Το link σύνδεσης του billing δείχνει εδώ, από ρύθμιση και όχι από το Host
+      # του αιτήματος: αλλιώς όποιος καλεί το /auth/login-link διαλέγει και πού
+      # θα σταλεί ο πελάτης με το token του.
+      PANEL_URL: https://${DOMAIN}
       PORT: 3000
     volumes:
       # Named volume: το sqlite πρέπει να επιβιώνει το recreate του container.

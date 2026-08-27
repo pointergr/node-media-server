@@ -7,6 +7,9 @@ interface ServerRow {
   host: string
   adminUrl: string
   adminUser: string
+  // Μόνο στην απάντηση του POST: το API δεν το ξαναδίνει σε κανένα GET (τα
+  // μυστικά του stream server δεν διαβάζονται πίσω) — γι' αυτό και το config
+  // block παρακάτω φαίνεται μία φορά, στη δημιουργία.
   token: string
   lastSeen: string | null
   // Πλάνα που πουλάνε εδώ, συνδρομές που κάθονται εδώ, paths που ζουν εδώ — ο

@@ -27,11 +27,11 @@ async function main() {
   // username θα προήγαγε σιωπηλά έναν πελάτη σε admin.
   if (existing) {
     if (existing.role !== 'admin') throw new Error(`ο χρήστης "${username}" δεν είναι admin — δες apps/api/README.md`);
-    await prisma.user.update({ where: { id: existing.id }, data: { password: hashPassword(password) } });
+    await prisma.user.update({ where: { id: existing.id }, data: { password: await hashPassword(password) } });
   }
   else {
     await prisma.user.create({
-      data: { username, password: hashPassword(password), role: 'admin', clientId: null },
+      data: { username, password: await hashPassword(password), role: 'admin', clientId: null },
     });
   }
 
