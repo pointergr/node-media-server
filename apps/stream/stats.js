@@ -1,5 +1,6 @@
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -43,10 +44,12 @@ function isLocal(session) {
 // relayStateOf: η κατάσταση των προορισμών αναδιανομής, από την ίδια πηγή και για
 // τον ίδιο λόγο με το stepsOf — ένα relay που δεν συνδέεται είναι αόρατο από
 // παντού αλλού, γιατί η εκπομπή συνεχίζει κανονικά σε RTMP και HLS.
+// encoder: αυτός που πέρασε το probe του boot και όχι το config.hls.encoder — η
+// αναδίπλωση σε x264 γράφεται μία φορά στο log και μετά δεν φαίνεται από πουθενά.
 export function startStats(
   nms,
   config,
-  { onRestart = () => process.exit(0), stepsOf = () => [], relayStateOf = () => [] } = {},
+  { onRestart = () => process.exit(0), stepsOf = () => [], relayStateOf = () => [], encoder = "x264" } = {},
 ) {
   // Τα env overrides υπάρχουν για το docker-compose: αλλιώς κάθε deployment θα
   // έπρεπε να πειράξει με το χέρι το mounted config.json.
@@ -371,6 +374,23 @@ export function startStats(
     db.prepare("DELETE FROM sessions WHERE end_ts < ?").run(cutoff);
   }
 
+  // Ο δίσκος του φακέλου που γράφει το HLS — το μόνο πράγμα που γεμίζει μόνο του
+  // εδώ πάνω. null όταν ο φάκελος δεν υπάρχει ακόμα (πρώτο boot, πριν από το
+  // πρώτο segment): ένα statfs που σκάει θα έριχνε ολόκληρο το snapshot, δηλαδή
+  // και το /admin και το sync.
+  function diskOf(root) {
+    if (!root) return null;
+    try {
+      const { bsize, blocks, bavail } = fs.statfsSync(root);
+      return {
+        free_gb: Number((bavail * bsize / 1073741824).toFixed(1)),
+        used_pct: Math.round((1 - bavail / blocks) * 100),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   function snapshot() {
     return {
       streams: [...publishers.entries()].map(([stream, pub]) => ({
@@ -396,6 +416,12 @@ export function startStats(
         uptime: process.uptime(),
         rss_mb: Number((process.memoryUsage().rss / 1048576).toFixed(1)),
         node: process.version,
+        // Ο μέσος όρος του ενός λεπτού μόνο του δεν λέει τίποτα — «3» είναι
+        // άνεση σε 8 πυρήνες και πνιγμός σε 2, γι' αυτό φεύγουν μαζί.
+        load: Number(os.loadavg()[0].toFixed(2)),
+        cpus: os.cpus().length,
+        disk: diskOf(config.static?.root),
+        encoder,
       },
       // Το dashboard το χρειάζεται για να μην παρουσιάσει το out_bps σαν μέτρηση
       // ενώ είναι εκτίμηση (δες addR2Out παραπάνω).

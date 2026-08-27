@@ -41,7 +41,18 @@ export interface SessionRow {
 export interface Snapshot {
   streams: StreamRow[]
   sessions: SessionRow[]
-  server: { uptime: number, rss_mb: number, node: string }
+  server: {
+    uptime: number
+    rss_mb: number
+    node: string
+    // Ό,τι χρειάζεται ο διαχειριστής για να ΜΗΝ μπει με ssh: φόρτος, δίσκος (τον
+    // γεμίζουν τα segments) και ο encoder που όντως πέρασε το probe του boot —
+    // μπορεί να ΜΗΝ είναι αυτός του config.json. Παλιός stream server: απόντα.
+    load?: number
+    cpus?: number
+    disk?: { free_gb: number, used_pct: number } | null
+    encoder?: string
+  }
   r2Estimate: boolean
 }
 

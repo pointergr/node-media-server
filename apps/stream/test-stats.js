@@ -165,7 +165,7 @@ assert.equal(
 // το CDN) — ο εκτιμητής παίρνει bitrate εξόδου από bytes segment × ενεργοί HLS
 // θεατές. Δύο ξεχωριστά instances, ένα με R2 off κι ένα με R2 on: το r2Active
 // αποφασίζεται μία φορά στο startStats() από το config.
-function freshStats(hls, opts) {
+function freshStats(hls, opts, extra) {
   const fakeNms = {
     h: {},
     on(event, fn) { (this.h[event] ??= []).push(fn); },
@@ -176,6 +176,7 @@ function freshStats(hls, opts) {
     admin: { port: 0, db: ":memory:" },
     auth: { jwt: { users: [{ username: "admin", password: "x" }] } },
     ...(hls && { hls }),
+    ...extra,
   }, opts);
   return { nms: fakeNms, ...s };
 }
@@ -506,6 +507,30 @@ clearClientsCache();
     s.db.prepare("SELECT * FROM samples WHERE stream = '/live/ff' ORDER BY ts").all().at(-1).out_bps > 0,
     "stream που λέγεται ff μετράει στον εαυτό του, όχι στο /live"
   );
+  s.server.close();
+}
+
+// Το snapshot είναι ο ΜΟΝΟΣ δρόμος του panel προς το μηχάνημα — δεν υπάρχει ssh
+// από το /admin, οπότε ό,τι λείπει από εδώ δεν φαίνεται πουθενά. Τα δύο που δεν
+// τα ξέρει κανείς αλλού: ο δίσκος (τον γεμίζουν τα segments) και ο encoder που
+// όντως τρέχει — το probe του app.js πέφτει σιωπηλά σε x264.
+{
+  const s = freshStats(null, { encoder: "nvenc" }, { static: { root: os.tmpdir() } });
+  const srv = s.snapshot().server;
+  assert.equal(srv.encoder, "nvenc", "ο encoder του probe, όχι του config");
+  assert.equal(srv.cpus, os.cpus().length, "πυρήνες του μηχανήματος");
+  assert.ok(srv.load >= 0, "load average του τελευταίου λεπτού");
+  assert.ok(srv.disk.free_gb > 0, "ελεύθερος χώρος στον φάκελο του HLS");
+  assert.ok(srv.disk.used_pct >= 0 && srv.disk.used_pct <= 100, "ποσοστό χρήσης δίσκου");
+  s.server.close();
+}
+
+// Φάκελος που δεν υπάρχει ακόμα (πρώτο boot, πριν το πρώτο segment): το snapshot
+// δεν σκάει — αλλιώς ένα statfs ρίχνει όλο το /admin και το sync μαζί.
+{
+  const s = freshStats(null, {}, { static: { root: "/δεν/υπάρχει" } });
+  assert.equal(s.snapshot().server.disk, null, "άγνωστος φάκελος = disk null, όχι εξαίρεση");
+  assert.equal(s.snapshot().server.encoder, "x264", "προεπιλογή encoder");
   s.server.close();
 }
 
