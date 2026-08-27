@@ -2,6 +2,9 @@
 
 ## Αυτόματη εγκατάσταση
 
+**Πρώτα τα δύο A records** ([πίνακας παρακάτω](#χειροκίνητη-εγκατάσταση)): ο Caddy ζητάει
+certificate στο πρώτο boot και χωρίς DNS το ACME challenge αποτυγχάνει.
+
 Αντικατάστησε το `server.example.com` με το hostname του server σου:
 ```bash
 apt update
@@ -9,8 +12,29 @@ apt install git -y
 git clone https://github.com/pointergr/node-media-server.git
 cd node-media-server
 git checkout master
+cd apps/stream
 ./install server.example.com            # ή: ./install server.example.com --docker
+
+# ...ή όλα μαζί, μαζί με τη δήλωση στο κεντρικό panel:
+./install server.example.com --docker \
+  --panel https://panel.example.com/api --key pk_<provisioning key> \
+  --cf-token <cloudflare token> --cf-zone <zone id>
 ```
+
+| Παράμετρος | Τι κάνει |
+|---|---|
+| `<hostname>` | υποχρεωτικό, πρώτο όρισμα — το δημόσιο hostname (χωρίς το `rtmp.`) |
+| `--docker` | Docker + compose αντί για caddy/volta/pm2 στο μηχάνημα |
+| `--panel <url>` | το **API** του κεντρικού panel, δηλαδή `https://panel.example.com/api` |
+| `--key pk_…` | provisioning API key του panel (`apikey.js`) — μόνο μαζί με το `--panel` |
+| `--cf-token <token>` | Cloudflare API token με **Zone · DNS · Edit** στο zone — φτιάχνει [τα δύο A records](#dns) |
+| `--cf-zone <id>` | το Zone ID του domain (sidebar του Cloudflare dashboard) — μόνο μαζί με το `--cf-token` |
+
+Με τη σειρά, το script: ζώνη ώρας Europe/Athens και `apt upgrade` → `ufw` (22, 80, 443,
+1935) → [DNS records](#dns), αν δόθηκαν τα δύο cf flags → clone, αν δεν τρέχει ήδη μέσα
+στο repo, και `config.json` από το example → Docker ή caddy + volta/node 24 + pm2 →
+`generate-passwords` → [δήλωση στο panel](#σύνδεση-με-το-κεντρικό-panel), αν δόθηκαν τα
+δύο flags → σηκώνει τον server.
 
 Χωρίς `--docker` στήνεται στο μηχάνημα (caddy + volta/node 24 + pm2). Με `--docker`
 εγκαθιστά τον Docker και σηκώνει το compose· τα κοινά (ζώνη ώρας, ufw, clone,
@@ -18,6 +42,21 @@ git checkout master
 το 8000: ανοίγει μόνο χωρίς Docker, γιατί στο compose ο admin δεν δημοσιεύει θύρα.
 Και τα δύο επιβιώνουν reboot — `pm2 startup`/`pm2 save` στο ένα, restart policy του
 compose στο άλλο.
+
+**Κράτα ό,τι τυπώνει το `generate-passwords`**: admin password (basic auth του `/admin`
+API) και το έτοιμο Stream Key του OBS. Τυπώνονται μία φορά — δεύτερη κλήση της ίδιας
+εντολής τα ξαναδείχνει, αλλά νέοι κωδικοί θέλουν ρητό `force`.
+
+Δεύτερο τρέξιμο με `--panel/--key` **σκάει**: το `Server.host` είναι unique, οπότε το
+`POST /servers` απορρίπτεται και το script σταματάει εκεί. Αν ξαναστήνεις μηχάνημα με το
+ίδιο hostname, σβήσε πρώτα την παλιά εγγραφή από το `/admin/servers` (`409` αν την
+χρησιμοποιούν πλάνα ή συνδρομές — τότε πάρε το token της και βάλ' το με το χέρι).
+
+Μένουν στο χέρι σου: τα DNS records (πριν), ο έλεγχος με
+`npm run test-stream -- rtmp.server.example.com` (τρέχει μέχρι να το κόψεις με Ctrl-C,
+γι' αυτό δεν μπαίνει στο script) και, όπου χρειάζονται,
+[R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος) και
+[encoder/ABR](#πολλαπλές-αναλύσεις-abr).
 
 ### Με cloud-init
 
@@ -31,7 +70,7 @@ packages: [git]
 runcmd:
   - export HOME=/root
   - git clone -b master https://github.com/pointergr/node-media-server.git /opt/node-media-server
-  - cd /opt/node-media-server && ./install stream.example.com --docker
+  - cd /opt/node-media-server/apps/stream && ./install stream.example.com --docker
 ```
 
 - **Το `HOME=/root` το θέλει ρητά.** Το `runcmd` δεν εγγυάται `$HOME`· αν λείπει, το
@@ -52,6 +91,7 @@ runcmd:
 Docker και τα δύο DNS records. Χειροκίνητα, αν δεν χρησιμοποιήσεις το `./install --docker`:
 
 ```bash
+cd apps/stream
 cp .env.example .env               # βάλε μέσα το DOMAIN σου
 cp config.example.json config.json # χωρίς αυτό το bind mount φτιάχνει φάκελο
 docker compose up -d --build
@@ -80,7 +120,7 @@ sudo systemctl enable --now docker
 |---|---|
 | `./config.json` | ο server γράφει μέσα το jwt secret στο πρώτο boot — χωρίς mount χάνεται σε κάθε recreate και ακυρώνονται όλα τα tokens |
 | `media` | τα HLS segments· χωρίς R2 σερβίρονται από εδώ. Named volume, όχι bind mount: ο φάκελος `media/` δίπλα στο compose μένει **πάντα άδειος** — τα αρχεία τα βλέπεις με `docker compose exec stream ls -R /app/media` |
-| `data` | το `stats.db` με τα στατιστικά 30 ημερών και το `passwords.json` |
+| `data` | το `stats.db` με τα στατιστικά 30 ημερών, το `passwords.json` και το `clients.json` |
 | `caddy-data` | τα certificates· χωρίς αυτό κάθε recreate ζητάει νέο cert και η Let's Encrypt κόβει στο rate limit |
 
 Δημοσιεύεται **μόνο** το 1935 (RTMP) πέρα από τα 80/443 του Caddy. Τα 8000/8001 μένουν
@@ -93,8 +133,10 @@ docker compose exec stream npm run generate-passwords stream.example.com
 docker compose restart stream
 ```
 
-Τυπώνει admin password, stream secret και τις έτοιμες ρυθμίσεις του OBS, και γράφει τα
-credentials στο mounted `config.json` — γι' αυτό χρειάζεται restart, διαβάζεται μόνο στο boot.
+Τυπώνει admin password, το έτοιμο Stream Key του OBS (`stream?key=...`) και τις υπόλοιπες
+ρυθμίσεις, γράφει τα credentials στο mounted `config.json` — γι' αυτό χρειάζεται restart,
+διαβάζεται μόνο στο boot — και φτιάχνει τον πελάτη `default` στο `data/clients.json`
+αν δεν υπάρχει ήδη (δες [Πελάτες](#πελάτες-κλειδιά-εκπομπής-και-όριο-θεατών)).
 
 **Μέχρι να τρέξει αυτό, ο server δουλεύει με τους κωδικούς-παραδείγματα του `config.example.json`.**
 
@@ -111,6 +153,7 @@ docker compose exec stream npm run generate-passwords stream.example.com force
 Πρέπει να έχεις ένα πραγματικό URL που να δείχνει στον server (A Record).
 Παρακάτω θα χρησιμοποιήσουμε το υποθετικό `stream.example.com`.
 
+<a id="dns"></a>
 Χρειάζονται **δύο** A Records στην ίδια IP, με διαφορετικό ρόλο το καθένα:
 
 | Record | Ρόλος | Cloudflare |
@@ -127,6 +170,15 @@ docker compose exec stream npm run generate-passwords stream.example.com force
 
 Αν λείπει το `rtmp.` record, ο Caddy δεν μπορεί να βγάλει certificate γι' αυτό και
 γεμίζει τα logs με ACME errors.
+
+Και τα δύο τα φτιάχνει μόνο του το `install` με `--cf-token <token> --cf-zone <id>`
+(token με **Zone · DNS · Edit**, zone id από το sidebar του dashboard). Την IP τη
+ρωτάει από το `api.ipify.org` — ο ίδιος ο server βλέπει μόνο τη διεύθυνση της κάρτας
+του. Record που υπάρχει ήδη δεν πειράζεται (ώστε το install να ξανατρέχει και να
+μη σβήνει ρύθμιση που έγινε με το χέρι)· οτιδήποτε άλλο απορρίψει το Cloudflare
+σταματάει το install, γιατί χωρίς DNS ο Caddy δεν βγάζει certificate και ο server
+θα «εγκαθίστατο επιτυχώς» χωρίς να σηκώνει ούτε εκπομπή ούτε θεατή. Το token δεν
+γράφεται πουθενά — ζει όσο τρέχει το curl, όπως και το provisioning key.
 
 ### Εγκατάσταση πακέτων στο λειτουργικό
 ```bash
@@ -158,7 +210,7 @@ systemctl restart caddy
 
 Το `STREAM_HOST` μένει στο default (`localhost`) γιατί εδώ ο Caddy και ο server είναι
 στο ίδιο μηχάνημα. Δεν μπαίνει basic auth στο Caddyfile: το κάνει ο ίδιος ο admin server
-με τον κωδικό του `config.json` (δες [Admin UI](#admin-ui)).
+με τον κωδικό του `config.json` (δες [Στατιστικά](#στατιστικά-json-api)).
 
 ### Logs του Caddy
 ```bash
@@ -170,14 +222,14 @@ journalctl -u caddy -f               # access logs, certificates, ACME, config
 ```bash
 curl https://get.volta.sh | bash
 source ~/.bashrc
-volta install node@20
+volta install node@24
 volta install npm@bundled
 ```
 
 ### Εγκατάσταση του stream server
 ```bash
 git clone git@github.com:pointergr/node-media-server.git
-cd node-media-server
+cd node-media-server/apps/stream
 cp config.example.json config.json
 npm install
 ```
@@ -215,6 +267,7 @@ pm2 logs stream
 ```bash
 cd node-media-server
 git pull
+cd apps/stream
 npm install         # μόνο αν άλλαξαν dependencies
 pm2 restart stream
 ```
@@ -224,6 +277,7 @@ pm2 restart stream
 ```bash
 cd node-media-server
 git pull
+cd apps/stream
 docker compose up -d --build
 docker compose logs -f stream    # Ctrl-C· τα logs συνεχίζουν χωρίς αυτό
 ```
@@ -286,8 +340,8 @@ npm run test-stream                              # bare metal
 docker compose exec stream npm run test-stream   # Docker
 ```
 
-Εκπέμπει τις χρωματικές μπάρες του ffmpeg (`testsrc`) με συνθετικό ήχο, φτιάχνοντας μόνο
-του το `sign` από το `config.json`. Αποδεικνύει σε ένα βήμα ότι δουλεύουν RTMP, publish
+Εκπέμπει τις χρωματικές μπάρες του ffmpeg (`testsrc`) με συνθετικό ήχο, παίρνοντας μόνο
+του το κλειδί του `/live/stream` από το `clients.json`. Αποδεικνύει σε ένα βήμα ότι δουλεύουν RTMP, publish
 auth, ffmpeg και HLS — χωρίς να ανοίξεις OBS. Ctrl-C για τερματισμό.
 
 Με το δημόσιο hostname περνάει από έξω, οπότε ελέγχει και Caddy, DNS και στατιστικά:
@@ -303,22 +357,189 @@ ffmpeg του HLS) και **δεν** το δείχνει στο admin. Από ε
 Ο encoder χρησιμοποιεί `-g 60`, δηλαδή keyframe κάθε 2s στα 30fps — ακριβώς το
 Keyframe Interval = 2 που θέλει και το OBS.
 
+### Πολλαπλές αναλύσεις (ABR)
+
+Από προεπιλογή η εκπομπή βγαίνει σε **μία** ποιότητα, αυτή που στέλνει ο πελάτης (remux,
+μηδενικό κόστος). Ένα πλάνο μπορεί όμως να πουλάει και χαμηλότερα σκαλοπάτια: το πεδίο
+**Αναλύσεις** στο `/admin/plans` (`Plan.ladder`, csv από ύψη — 1080, 720, 480, 360, 240)
+ταξιδεύει με το sync ως `ladder` στο `clients.json` και ο `app.js` χτίζει τα args του
+ffmpeg αναλόγως ([`ladder.js`](apps/stream/ladder.js)).
+
+Τότε το `index.m3u8` γίνεται **master playlist** και δίπλα του γράφονται `v720.m3u8`,
+`v480.m3u8` κ.ο.κ. — το URL αναπαραγωγής δεν αλλάζει, ο player διαλέγει μόνος του
+σκαλοπάτι ανάλογα με τη γραμμή του θεατή.
+
+- **Η αρχική ποιότητα προσφέρεται πάντα, αυτούσια** (`copy`). Το ladder περιγράφει μόνο
+  τα σκαλοπάτια από κάτω· ποτέ δεν ξανακωδικοποιείται η κορυφή και ποτέ δεν γίνεται
+  upscale (ύψος ≥ της πηγής παραλείπεται).
+- **Ο ήχος περνάει αυτούσιος** σε όλα τα σκαλοπάτια.
+- **Το Keyframe Interval = 2 του OBS γίνεται εδώ υποχρεωτικό**, όχι απλώς καλή ιδέα: τα
+  σκαλοπάτια που κωδικοποιούμε είναι κλειδωμένα στα 2s, ενώ η αρχική ποιότητα σπάει όπου
+  τη σπάει ο encoder του πελάτη. Αν δεν συμπίπτουν, η εναλλαγή ποιότητας τρίζει.
+- **Κοστίζει CPU, και όχι λίγη.** Ένα «720+480» σε πηγή 1080p είναι περίπου 1,5 πυρήνας
+  **ανά εκπομπή** — ένα 8πύρηνο μηχάνημα σηκώνει 3-4 τέτοιες εκπομπές, εκεί που χωρίς
+  ladder σηκώνει δεκάδες. Γι' αυτό υπάρχει και πλαφόν ανά server
+  (`config.json` → `hls.maxRenditions`, προεπιλογή 3): το πλάνο είναι εμπορική υπόσχεση,
+  το πλαφόν είναι τι αντέχει το μηχάνημα.
+
+Η αλλαγή του ladder ενός πλάνου ισχύει **από την επόμενη εκπομπή** κάθε stream — δεν
+διακόπτει όσες τρέχουν. (Η *ανάκληση* πελάτη παραμένει άμεση, ≤10s: άλλο πράγμα.)
+
+Δες [PLAN-transcoding.md](PLAN-transcoding.md) για το σκεπτικό.
+
+#### Επιτάχυνση με GPU
+
+Το `config.json` → `hls.encoder` λέει **με τι** κωδικοποιεί αυτό το μηχάνημα:
+
+| τιμή | codec | πότε |
+|---|---|---|
+| `x264` (προεπιλογή, ή απόν) | `libx264 -preset veryfast` | παντού· καμία απαίτηση |
+| `qsv` | `h264_qsv` | Intel iGPU/Arc, με `/dev/dri` περασμένο στο container |
+| `nvenc` | `h264_nvenc` | NVIDIA, με nvidia-container-toolkit και GPU στο compose |
+
+Το πλάνο δεν το ξέρει και δεν το αλλάζει: ο πελάτης αγοράζει *σκαλοπάτια*, ο server τα
+βγάζει με ό,τι έχει. Ένα μηχάνημα με GPU μπαίνει ως κανονικός server στο panel και τα
+πλάνα με ladder δείχνουν εκεί (`Plan.serverId`) — καμία νέα έννοια, μεγαλύτερο
+`hls.maxRenditions`.
+
+Επιταχύνονται **μόνο τα σκαλοπάτια που κωδικοποιούνται**. Η κορυφή είναι `copy` ούτως ή
+άλλως, και το scaling μένει στη CPU και στις τρεις περιπτώσεις (φθηνό· ακριβό είναι το
+encode).
+
+Το ffmpeg του image (Debian 5.1) έχει **ήδη χτισμένους** τους `h264_nvenc`, `h264_qsv`
+και `h264_vaapi` — δεν χρειάζεται δικό μας build. Λείπει μόνο ο runtime driver της κάρτας
+και το device μέσα στο container.
+
+Ο encoder **δοκιμάζεται στο boot** με ένα καρέ. Αν δεν δουλεύει (λάθος τιμή, GPU που δεν
+υπάρχει, driver ή codec που λείπει από το ffmpeg) γράφεται μια γραμμή στο log και ο server
+συνεχίζει με x264: πιο ακριβά, αλλά οι εκπομπές βγαίνουν. Σε server χωρίς τη ρύθμιση δεν
+τρέχει καν η δοκιμή — τίποτα δεν αλλάζει, ούτε ένα ffmpeg arg.
+
+```
+HLS encoder: h264_nvenc                                     # δουλεύει
+config.hls.encoder "nvenc": ο h264_nvenc δεν δουλεύει εδώ (exit 255) — συνεχίζω με x264
+```
+
+Το `hls.encoder` διαβάζεται **μόνο στο boot**: μετά την αλλαγή θέλει
+`docker compose restart stream` (ή `pm2 restart stream`).
+
+##### NVIDIA (nvenc)
+
+Στο host: ο driver της NVIDIA και το
+[nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+Στο μηχάνημα με την κάρτα — και **μόνο** εκεί — ένα `apps/stream/docker-compose.override.yml`
+(είναι στο `.gitignore` και το φορτώνει μόνο του το compose):
+
+```yaml
+services:
+  stream:
+    environment:
+      # Χωρίς αυτό ο toolkit περνάει μόνο compute/utility και ο nvenc σκάει σε
+      # μηχάνημα που κατά τα άλλα «βλέπει» την κάρτα.
+      NVIDIA_DRIVER_CAPABILITIES: video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video]
+```
+
+Στο κοινό `docker-compose.yml` δεν μπαίνει ποτέ: κάθε `docker compose up` σε απλό VPS θα
+έσκαγε στο `could not select device driver "nvidia"`.
+
+Οι **consumer** κάρτες (GeForce) έχουν όριο ταυτόχρονων NVENC sessions στον driver — το
+όριο μετράει *encoded renditions*, όχι εκπομπές, οπότε ένα ladder των δύο σκαλοπατιών το
+πιάνει στις μισές εκπομπές. Οι Quadro/datacenter δεν το έχουν.
+
+##### Intel (qsv)
+
+Στο override, το device του host και ο iHD driver ως build arg:
+
+```yaml
+services:
+  stream:
+    build:
+      args:
+        # Το node:24-slim έχει μόνο το `main` του Debian: το
+        # intel-media-va-driver-non-free δεν υπάρχει εκεί — αν το θέλεις
+        # (HEVC/VP9 encode), πρόσθεσε πρώτα το non-free component.
+        # Για Gen8-11 iGPU: libmfx1 αντί για libmfx-gen1.2.
+        EXTRA_PKGS: intel-media-va-driver libmfx-gen1.2
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+Το `EXTRA_PKGS` είναι build arg του [`Dockerfile`](apps/stream/Dockerfile) ώστε το
+μηχάνημα με το iGPU να μην κρατάει τοπική αλλαγή σε αρχείο του git — αλλιώς κάθε
+`git pull` της [ενημέρωσης](#ενημέρωση-υπάρχοντος-server) θα ζητούσε merge. Μετά την
+αλλαγή θέλει `docker compose up -d --build`.
+
+##### AMD και VA-API
+
+**Δεν υποστηρίζεται**, σκόπιμα. Ο VA-API είναι ο μόνος δρόμος για κάρτες AMD, αλλά σε
+αντίθεση με τους άλλους δύο *απαιτεί* τα frames να ανέβουν ρητά στην GPU
+(`-vaapi_device` + `format=nv12,hwupload` μέσα στο filter graph) — δηλαδή διαφορετικό
+`filter_complex` ανά encoder, εκεί που σήμερα αλλάζουν τρεις λέξεις. Επειδή ο VA-API
+δουλεύει και σε Intel, ένα μηχάνημα Intel το εξυπηρετεί το `qsv` χωρίς τίποτα από αυτά.
+
+Μπαίνει όταν υπάρξει μηχάνημα με AMD κάρτα και ζήτηση να το γεμίσει — τότε το `ENCODERS`
+του [`ladder.js`](apps/stream/ladder.js) αποκτά και προαιρετικό filter/global args ανά
+encoder. Μέχρι τότε: `vaapi` στο `config.json` είναι άγνωστη τιμή, δηλαδή x264.
+
+##### Έλεγχος
+
+```bash
+docker compose exec stream ffmpeg -hide_banner -encoders | grep -E "nvenc|qsv"   # χτισμένο στο ffmpeg;
+docker compose exec stream ffmpeg -hide_banner -f lavfi -i testsrc=d=0.1 \
+  -c:v h264_nvenc -b:v 1000k -f null -                                           # δουλεύει εδώ;
+docker compose logs stream | grep -i encoder                                     # τι διάλεξε στο boot
+```
+
+Το πρώτο δεν αρκεί μόνο του — **πάντα** περνάει: το ffmpeg του Debian δείχνει τον
+`h264_nvenc` και σε μηχάνημα χωρίς κάρτα, γιατί τη `libnvidia-encode` την ψάχνει στο
+runtime. Γι' αυτό ο server κάνει το δεύτερο, στο boot.
+
 ### Segments στο R2 (προαιρετικό, αλλά ο σωστός τρόπος)
 
-Το ToS 2.8 της Cloudflare απαγορεύει το σερβίρισμα βίντεο μέσω του CDN σε non-Enterprise
-plan — δηλαδή ακριβώς το κασάρισμα των `.ts`, που όμως είναι όλο το bandwidth. Το R2 δεν
-είναι CDN αλλά storage με μηδενικό egress· το να φεύγει βίντεο από R2 custom domain είναι
-η προβλεπόμενη χρήση του.
+Η Cloudflare περιορίζει το σερβίρισμα βίντεο μέσω του CDN σε non-Enterprise plan — δηλαδή
+ακριβώς το κασάρισμα των `.ts`, που όμως είναι όλο το bandwidth. Το R2 δεν είναι CDN αλλά
+storage με μηδενικό egress· το να φεύγει βίντεο από R2 custom domain είναι η προβλεπόμενη
+χρήση του.
+
+<a name="tos"></a>
+**Το setup με R2 είναι ρητά εντός των όρων** — μην το ξαναψάχνεις. Ο παλιός όρος 2.8
+(«Limitation on Serving Non-HTML Content») [καταργήθηκε τον Μάιο 2023](https://blog.cloudflare.com/updated-tos)
+ακριβώς επειδή το R2 τον έκανε αντιφατικό. Η ανακοίνωση το λέει ονομαστικά:
+
+> customers can serve video and other large files using the CDN so long as that content is
+> hosted by a Cloudflare service like Stream, Images, or R2.
+
+Και το κατοπτρικό, που είναι το μόνο που πρέπει να προσέχεις:
+
+> Video and large files **hosted outside of Cloudflare** will still be restricted on our CDN.
+
+Δηλαδή η *χωρίς R2* παραλλαγή — `.ts` στον δικό μας δίσκο, cached από το πορτοκαλί σύννεφο
+(ο κανόνας #1 [παρακάτω](#cloudflare-cache-rules)) — είναι αυτή που πατάει στα όρια, όχι η
+R2. Ο ίδιος κανόνας επιβιώνει σήμερα στα
+[Service-Specific Terms](https://www.cloudflare.com/service-specific-terms-application-services/),
+διατυπωμένος ανάποδα: *«specific Paid Services (e.g., the Developer Platform, Images, and
+Stream) that you must use in order to serve video […] via the CDN»* — και το R2 **είναι**
+το Developer Platform.
+
+Το `index.m3u8` που μένει στο origin δεν αλλάζει τίποτα: κείμενο μερικών εκατοντάδων bytes,
+ούτε video ούτε large file.
 
 Γι' αυτό σπάμε το HLS στα δύο:
 
 | | Πού | Γιατί |
 |---|---|---|
-| `index.m3u8` | origin, όπως και πριν | ψίχουλα bytes, ήδη bypass cache — δεν αγγίζει το 2.8 |
+| `index.m3u8` | origin, όπως και πριν | ψίχουλα bytes, ήδη bypass cache — δεν είναι «large file» |
 | `*.ts` | R2 + custom domain | εδώ είναι το 100% του bandwidth |
 
 Το playlist **πρέπει** να μείνει στο origin: πάνω στα requests του μετράμε τους θεατές
-(δες [Admin UI](#admin-ui)). Αν πήγαινε κι αυτό στο R2, το admin UI θα έδειχνε μόνιμα μηδέν.
+(δες [Στατιστικά](#στατιστικά-json-api)). Αν πήγαινε κι αυτό στο R2, τα στατιστικά θα έδειχναν μόνιμα μηδέν.
 
 Ρύθμιση στο Cloudflare:
 
@@ -348,20 +569,39 @@ plan — δηλαδή ακριβώς το κασάρισμα των `.ts`, πο�
 
 Άδειο `accessKeyId` σημαίνει R2 off: τα segments σερβίρονται από τον ίδιο τον server, όπως πριν.
 
-Πώς δουλεύει (`r2.js`): ο ffmpeg γράφει το playlist του σε `ff.m3u8` με απόλυτα URLs
-(`-hls_base_url`), το `r2.js` ανεβάζει τα segments που δείχνει και **μετά** το δημοσιεύει
-ως `index.m3u8`. Αν γινόταν ανάποδα, ο player θα ζητούσε από το R2 segment που δεν έχει
-ανέβει ακόμα — το R2 είναι strongly consistent, οπότε μετά το upload είναι αμέσως εκεί.
+Πώς δουλεύει (`r2.js`): ο ffmpeg γράφει playlists και segments σε υποφάκελο `ff/`, με
+απόλυτα URLs του R2 (`-hls_base_url`). Το `r2.js` ανεβάζει τα segments και δημοσιεύει τα
+playlists ένα επίπεδο πάνω, εκεί που τα ζητάνε οι θεατές. Ό,τι ανέβηκε δείχνει στο R2 —
+**ό,τι δεν πρόλαβε δείχνει στον ίδιο τον server** (`ff/<segment>.ts`, το σερβίρει ο static
+server όπως χωρίς R2). Το playlist προχωράει έτσι πάντα στην ώρα του: το R2 είναι
+βελτιστοποίηση της κίνησης, ποτέ εξάρτηση της αναπαραγωγής.
 
-Κόστος σε latency: μόνο ο χρόνος του upload, ~100–300 ms για segment των 2s. Αν ένα PUT
-αργήσει πάνω από 2 δευτερόλεπτα, τα uploads μένουν πίσω και το latency μεγαλώνει μόνιμα —
-βγαίνει warning στο `pm2 logs stream`. Έλεγχος: `node test-r2.js`.
+Εκεί είναι όλη η διαφορά ανάμεσα σε «το R2 αργεί σήμερα» και «η εκπομπή δεν παίζει». Όσο το
+playlist περίμενε να ανέβουν **όλα** τα segments, ένας γύρος που ξεπερνούσε τα 2s άφηνε ένα
+segment πίσω· ο επόμενος έβρισκε δύο και τα ξανάστελνε παράλληλα στην ίδια γραμμή, οπότε
+αργούσε κι άλλο. Από εκεί και πέρα δεν ξαναπρολάβαινε ποτέ: το playlist πάγωνε για 12s
+(όσο το παράθυρο) και μετά πηδούσε μπροστά με κενό.
 
-Κάθε PUT κόβεται στα 5s και το `aws4fetch` περιορίζεται σε 2 retries: σε live, ένα segment
-που άργησε παραπάνω δεν το θέλει πια κανένας player, ενώ οι default 10 retries με
-exponential backoff θα πάγωναν το `index.m3u8` για ~50 δευτερόλεπτα — και χωρίς προθεσμία
-μια κολλημένη σύνδεση για λεπτά, χωρίς ούτε ένα log. Ο γύρος που αποτυγχάνει δεν δημοσιεύει
-playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί από το σημείο που είναι τότε το stream.
+Η προθεσμία κάθε PUT είναι **ένα segment** και το `aws4fetch` περιορίζεται σε 2 retries: σε
+live, ένα segment που άργησε παραπάνω δεν το θέλει πια κανένας player, ενώ οι default 10
+retries με exponential backoff θα κρατούσαν την αλυσίδα ~50 δευτερόλεπτα — και χωρίς
+προθεσμία μια κολλημένη σύνδεση για λεπτά, χωρίς ούτε ένα log. Μία προσπάθεια ανά segment
+και τέλος: από τη στιγμή που ο θεατής το παίρνει από εμάς, ένα δεύτερο PUT στέλνει bytes
+που κανείς δεν πρόκειται να ζητήσει από το R2 — και τα στέλνει ακριβώς όταν το uplink
+χρειάζεται για να σερβίρει.
+
+Στα logs (`pm2 logs stream`, `docker compose logs stream`) γράφεται η **μετάβαση**, δύο
+γραμμές ανά επεισόδιο και όχι μία ανά segment:
+
+```
+R2 /live/stream: δεν προλαβαίνει — τα segments φεύγουν από το origin (…)
+R2 /live/stream: ξαναπρολαβαίνει, τα segments ξαναπάνε στο R2
+```
+
+Ανάμεσα στις δύο γραμμές το bandwidth το πληρώνει ο server. Το ίδιο επεισόδιο φαίνεται
+και στο `/admin` του κεντρικού panel χωρίς να σκύψεις σε logs: badge **ΕΚΤΟΣ R2** δίπλα
+στην έξοδο του stream όσο τρέχει, και το πόσα segments κόστισε αφού κλείσει. Έλεγχος:
+`node test-r2.js`.
 
 ### Cloudflare cache rules
 
@@ -371,20 +611,22 @@ playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί 
 
 | # | Expression | Ρύθμιση |
 |---|---|---|
-| 1 | `ends_with(http.request.uri.path, ".ts")` | **Μόνο χωρίς R2:** Eligible for cache · Edge TTL: use origin cache-control |
+| 1 | `ends_with(http.request.uri.path, ".ts")` | Eligible for cache · Edge TTL: use origin cache-control |
 | 2 | `ends_with(http.request.uri.path, ".m3u8")` | **Bypass cache** |
 | 3 | `ends_with(http.request.uri.path, ".flv") or starts_with(http.request.uri.path, "/api/") or starts_with(http.request.uri.path, "/admin")` | **Bypass cache** |
 
 Γιατί:
 
-- **`.ts` — κασάρισέ τα, αν δεν έχεις R2.** Εδώ είναι όλο το bandwidth. Είναι ασφαλές επειδή
-  κάθε publish γράφει segments με μοναδικό prefix (`<timestamp>-0.ts`), οπότε ένα όνομα δεν
-  ξαναχρησιμοποιείται ποτέ για διαφορετικό περιεχόμενο. Με R2 ο κανόνας φεύγει εντελώς: τα
-  segments δεν περνάνε καν από αυτό το domain.
+- **`.ts` — κασάρισέ τα.** Εδώ είναι όλο το bandwidth. Είναι ασφαλές επειδή κάθε publish
+  γράφει segments με μοναδικό prefix (`<timestamp>-0.ts`), οπότε ένα όνομα δεν
+  ξαναχρησιμοποιείται ποτέ για διαφορετικό περιεχόμενο. Ο κανόνας μένει **και με R2**: στην
+  κανονική ροή δεν τον χρησιμοποιεί κανείς (τα segments δεν περνάνε από αυτό το domain),
+  αλλά όταν το R2 δεν προλαβαίνει τα segments έρχονται από εδώ — δηλαδή ακριβώς όταν το
+  cache του Cloudflare έχει τη μεγαλύτερη αξία.
 - **`.m3u8` — ποτέ.** Ξαναγράφεται κάθε ~2 δευτερόλεπτα. Ακόμα και 10 δευτερόλεπτα cache
   σημαίνει ότι ο player ζητάει segments που έχουν ήδη σβηστεί, δηλαδή 404 και κόλλημα.
   Είναι επίσης προϋπόθεση για τη μέτρηση θεατών: κάθε request στο playlist πρέπει να
-  φτάνει στο origin, αλλιώς το admin UI δείχνει μηδέν θεατές (δες [Admin UI](#admin-ui)).
+  φτάνει στο origin, αλλιώς τα στατιστικά δείχνουν μηδέν θεατές (δες [Στατιστικά](#στατιστικά-json-api)).
   Και το `Set-Cookie` του πρώτου request δεν πρέπει ποτέ να κασαριστεί, αλλιώς πολλοί
   players μοιράζονται το ίδιο cookie και μετράνε ως ένας.
 - **`.flv` — ποτέ.** Είναι ατέρμονο chunked response· αν το πιάσει κανόνας τύπου
@@ -396,41 +638,201 @@ playlist· ο επόμενος, 2s αργότερα, ξαναπροσπαθεί 
 - Caching → Configuration → Browser Cache TTL: **Respect Existing Headers**. Αλλιώς το
   Cloudflare επιβάλλει δικό του TTL στον browser και ακυρώνει το `no-store` του playlist.
 - **Tiered Cache: On** — με πολλούς θεατές μειώνει αισθητά τα requests στο origin. Σε
-  αντάλλαγμα, τα segments που σερβίρει το edge δεν μετράνε στο bitrate εξόδου του admin UI —
+  αντάλλαγμα, τα segments που σερβίρει το edge δεν μετράνε στο bitrate εξόδου των στατιστικών —
   το πραγματικό bandwidth προς τους θεατές το δείχνει το dashboard της Cloudflare.
 - Το `rtmp.` υποdomain δεν αφορά καθόλου το cache: είναι DNS only, δεν περνάει από το Cloudflare.
 - Ποτέ «Cache Everything» σε όλο το domain, ποτέ Edge TTL override στα `.m3u8`.
 
-Το κασάρισμα των `.ts` στο CDN αντιβαίνει στο ToS 2.8 της Cloudflare σε non-Enterprise plan —
-η καθαρή λύση είναι το [R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος).
+Ο κανόνας #1 κασάρει στο CDN βίντεο που φιλοξενείται εκτός Cloudflare — αυτό ακριβώς που
+περιορίζουν οι όροι σε non-Enterprise plan. Η καθαρή λύση είναι το
+[R2](#segments-στο-r2-προαιρετικό-αλλά-ο-σωστός-τρόπος), που είναι
+[ρητά εντός των όρων](#tos) και κάνει τον κανόνα περιττό.
 
-## Admin UI
+## Πελάτες, κλειδιά εκπομπής και όριο θεατών
 
-Στο `https://stream.example.com/admin` (χρήστης `admin`, ο κωδικός από το
-`generate-passwords`). Το v4 δεν έχει δικό του panel — αυτό είναι δικό μας.
+Ο έλεγχος της εκπομπής είναι δικός μας, όχι του nms (`auth.publish: false`). Κάθε path
+ανήκει σε έναν πελάτη και θέλει το δικό του τυχαίο κλειδί — όλα δηλωμένα στο
+`data/clients.json`:
+
+```json
+{
+  "pelatis-a": {
+    "limit": 200,
+    "paths": { "/live/kamera1": "KEY1", "/live/kamera2": "KEY2" }
+  }
+}
+```
+
+Στο OBS το κλειδί μπαίνει στο Stream Key: `kamera1?key=KEY1`. Το nms κόβει το query πριν
+φτιάξει το path, οπότε φάκελος HLS, στατιστικά και urls αναπαραγωγής δεν αλλάζουν.
+
+- **Άγνωστο path δεν εκπέμπει.** Περνάει μόνο ό,τι είναι δηλωμένο εδώ.
+- **Ο διακόπτης της επιβολής είναι η ύπαρξη του `clients.json`, όχι το περιεχόμενό του.**
+  Αρχείο που λείπει ή έχει χαλασμένο JSON → καμία επιβολή, δρόμος αναδίπλωσης: δεν ρίχνει
+  τις εκπομπές. Έγκυρο `{}` → ο server δεν έχει κανέναν πελάτη, άρα **κανείς** δεν εκπέμπει
+  — αλλιώς ένας server που μόλις μπήκε στο panel, ή του οποίου απενεργοποιήθηκαν όλοι οι
+  πελάτες, θα γινόταν ορθάνοιχτος με το πρώτο sync. Γι' αυτό ακριβώς το `generate-passwords`
+  φτιάχνει στην πρώτη εγκατάσταση έναν πελάτη `default` για το `/live/stream`: αλλιώς ένας
+  καθαρός server χωρίς αρχείο ακόμα θα ήταν ορθάνοιχτος σε όποιον ξέρει το URL.
+- Το `limit` είναι **αθροιστικό σε όλα τα paths του πελάτη** (πουλιέται ανά πελάτη, όχι ανά
+  κάμερα)· `0` ή απόν = χωρίς όριο. Ο θεατής πάνω από το όριο παίρνει 404 στο playlist —
+  ίδιο σήμα με το «δεν εκπέμπει», οπότε ο player μπαίνει στον υπάρχοντα δρόμο
+  επανασύνδεσης — ενώ όποιος ήδη μετριέται δεν κόβεται ποτέ. Ο HLS θεατής ελευθερώνει τη
+  θέση του 30s μετά το κλείσιμο του player.
+- Αλλαγή κλειδιού ή διαγραφή πελάτη κόβει τον publisher **μέσα σε 10s**, χωρίς restart.
+
+### Πλάνα και συνδρομές (μόνο με panel)
+
+Με το κεντρικό panel το `limit` δεν το γράφεις στο χέρι. Ο κατάλογος έχει **πλάνα** (δύο
+νούμερα το καθένα: μέγιστοι θεατές, μέγιστα streams) και ο πελάτης αγοράζει όσα θέλει — το
+ίδιο πλάνο ακόμα και πολλές φορές. Κάθε αγορά είναι μια **συνδρομή** και στέκεται μόνη της:
+
+| Συνδρομή | Server | Θεατές | Streams |
+|---|---|---|---|
+| `basic` | `stream1` | 50 | 1 |
+| `basic` | `stream2` | 50 | 1 |
+| `extra` | `stream2` | 100 | 2 |
+
+- **Τίποτα δεν αθροίζεται.** Ο πελάτης του πίνακα δεν έχει «200 θεατές»: έχει τρία πλάνα,
+  με 50, 50 και 100 αντίστοιχα, και το καθένα μετράει μόνο τους θεατές των δικών του
+  streams. Δύο φορές το ίδιο πλάνο = δύο συνδρομές, όχι διπλό όριο.
+- **Το stream ανήκει σε συνδρομή.** Όταν προσθέτεις path διαλέγεις σε ποιο πλάνο μπαίνει —
+  από εκεί παίρνει και τον server και το όριο θεατών του. Το όριο **streams** μετράει πόσα
+  paths χωράει η συνδρομή και επιβάλλεται μόνο στο panel, τη στιγμή της προσθήκης (409).
+  Paths που υπάρχουν ήδη δεν κόβονται αν αργότερα μικρύνει το πλάνο.
+- **Ο server είναι του πλάνου, όχι του πελάτη.** Κάθε πλάνο δηλώνει πού πέφτουν οι επόμενες
+  συνδρομές του. Όταν ο `stream1` γεμίσει και βάλεις το `basic` να δείχνει `stream2`,
+  **καμία** υπάρχουσα συνδρομή δεν μετακομίζει — εκεί πάει μόνο η επόμενη αγορά. Ένας
+  πελάτης μπορεί έτσι να έχει πλάνα σε δύο μηχανήματα ταυτόχρονα.
+- **Τα όρια όμως ακολουθούν τον κατάλογο.** Αλλάζεις το `basic` σε 80 θεατές και το παίρνουν
+  όλες οι συνδρομές του, παλιές και νέες — δεν χρειάζεται να τις πειράξεις μία μία. Το ίδιο
+  ισχύει και για τις **αναλύσεις** του πλάνου (δες «Πολλαπλές αναλύσεις (ABR)»), με τη
+  διαφορά ότι εκείνες πιάνουν από την επόμενη εκπομπή κάθε stream.
+- **Ο stream server δεν ξέρει τι είναι πλάνο.** Παίρνει έτοιμο `limit` στο `clients.json`,
+  με το σχήμα που έχει πάντα: απλώς το panel γράφει μία εγγραφή ανά **συνδρομή** αντί για
+  μία ανά πελάτη, και το γνωστό «όριο ανά εγγραφή» βγάζει από μόνο του όριο ανά πλάνο.
+- **Αναστολή ανά συνδρομή.** Έληξε το ένα από τα τρία πλάνα του πελάτη; Το κάνεις suspend
+  μόνο αυτό, από τη γραμμή του στη σελίδα του πελάτη (`/admin/clients/<id>`) — τα υπόλοιπα συνεχίζουν. Η εκπομπή του
+  πέφτει σε ≤10s και τα paths με τα κλειδιά τους μένουν ανέπαφα, οπότε η επαναφορά είναι ένα
+  κλικ. Το disable του **πελάτη** εξακολουθεί να τα κόβει όλα μαζί.
+- Πλάνο που το έχει έστω μία συνδρομή δεν διαγράφεται (409), και συνδρομή με streams δεν
+  αφαιρείται (409) — αλλιώς θα χάνονταν σιωπηλά κλειδιά εκπομπής.
+
+### Sync με το panel
+
+Με συμπληρωμένο `panel.url` στο `config.json`, ο server κάνει ανά 10s POST
+`<url>/servers/<host>/sync` με το snapshot (τι παίζει, πόσοι θεατές) και γράφει την
+απάντηση στο `data/clients.json`. Pull αντί για push: ο server συγχρονίζεται μόνος του
+μετά από restart ή deploy, ενώ ένα push προς server εκτός λειτουργίας θα χανόταν και το
+panel θα έπρεπε να κρατάει ουρά. Αν το panel είναι κάτω, μένει σε ισχύ το τελευταίο
+`clients.json` — panel κάτω δεν σημαίνει εκπομπές κάτω. Κενό `url` = απενεργοποιημένο,
+το `clients.json` το γράφει το χέρι.
+
+### Το κεντρικό panel
+
+`apps/api` (NestJS) + `apps/panel` (Nuxt SPA με Nuxt UI, στατικά αρχεία) — μία εφαρμογή
+διαχείρισης για όλους τους stream servers, ένα μόνο deployment (`docker compose up -d --build`
+μέσα στο `apps/api` σηκώνει Nest + Caddy με τα στατικά του panel). Το `Caddy` κάνει
+`/api/*` → Nest και ό,τι άλλο → `file_server` με SPA fallback στο `index.html`
+(client-side routing). Φωτεινό/σκοτεινό θέμα με διακόπτη στην κεφαλίδα — τον ακολουθούν
+και τα γραφήματα.
+
+- **Ο admin** βλέπει `/admin/servers` (προσθήκη/διαγραφή stream server, εδώ παράγεται και το
+  `panel: {...}` block για το `config.json` κάθε server), `/admin/plans` (ο κατάλογος με τα
+  πλάνα), `/admin/clients` (λίστα πελατών· συνδρομές, streams και κλειδιά στη σελίδα του καθενός), `/admin/apikeys` (τα
+  API keys των εξωτερικών υπηρεσιών) και `/admin` (live streams
+  **όλων** των servers, θεατές, bitrate, restart — ισοδύναμο του παλιού
+  `admin/dashboard.html` αλλά συγκεντρωτικό).
+- **Ο πελάτης** βλέπει μόνο τα δικά του streams (`/`): stream key έτοιμο για αντιγραφή στο
+  OBS, player, κατάσταση εκπομπής («εκπέμπει 01:23»), bitrate εισόδου και εξόδου, θεατές
+  **ανά πλάνο** σε σχέση με το όριό του (το όριο είναι της συνδρομής, όχι της κάθε κάμερας
+  ούτε του λογαριασμού) και γραφήματα για θεατές, είσοδο και έξοδο, με επιλογή διαστήματος
+  (1 ώρα έως 30 μέρες, όσο κρατάει το ιστορικό του stream server). Τα δικά του και μόνο: το
+  `GET /me/series` φιλτράρει με το `clientId` του token και δεν δίνει CPU/μνήμη του
+  μηχανήματος — οι `/servers/:host/*` οθόνες μένουν admin.
+
+Deployment του κεντρικού host:
+
+```bash
+cd apps/api
+cp .env.example .env      # DOMAIN=panel.example.com, JWT_SECRET
+docker compose up -d --build
+docker compose exec api node dist/src/seed.js   # πρώτος admin χρήστης
+docker compose exec api node dist/src/apikey.js "<υπηρεσία>"   # μόνο αν κάνει provisioning εξωτερική υπηρεσία
+```
+
+Το API key είναι για **μηχανές**: `Authorization: Bearer pk_…` στα ίδια admin endpoints,
+χωρίς login και χωρίς λήξη, με ανάκληση σε μία εντολή (`apikey.js revoke`) ή από την
+οθόνη `/admin/apikeys` του panel — η γραμμή εντολών μένει γιατί δουλεύει και με χαμένο
+κωδικό admin. Πλήρης αναφορά
+του API — σώματα, απαντήσεις, σφάλματα, ροή provisioning — στο
+[`apps/api/API.md`](apps/api/API.md).
+
+Το σχήμα της βάσης εφαρμόζεται μόνο του σε κάθε boot (`prisma db push`, καμία migrations
+directory). Μία αλλαγή που **σβήνει** στήλη είναι η μόνη εξαίρεση: το `db push` αρνείται
+χωρίς TTY και το container δεν σηκώνεται, οπότε θέλει μία φορά, χειροκίνητα:
+
+```bash
+docker compose build api
+docker compose run --rm api sh -c \
+  "node /app/node_modules/prisma/build/index.js db push --accept-data-loss --skip-generate --schema=prisma/schema.prisma"
+docker compose up -d --build api caddy
+```
+
+### Σύνδεση με το κεντρικό panel
+
+Πλήρες συμβόλαιο των endpoints στο [`apps/api/README.md`](apps/api/README.md). Εδώ μόνο
+τα βήματα άκρη σε άκρη:
+
+Με `--panel <url> --key <pk_...>` τα βήματα 2-3 τα κάνει το ίδιο το `./install`: δηλώνει
+τον server με το provisioning API key (`POST /servers`) και γράφει το `panel: {...}` με το
+token της απάντησης, πριν σηκωθεί ο server. Χειροκίνητα:
+
+1. Το κεντρικό panel είναι ήδη πάνω (δες «Το κεντρικό panel» παραπάνω) και έχεις συνδεθεί
+   ως admin.
+2. `/admin/servers` → πρόσθεσε τον server με `host`, `adminUrl`, `adminUser`, `adminPass`
+   (τα credentials του `/admin` API αυτού του stream server) — η οθόνη δείχνει, μία φορά,
+   το έτοιμο μπλοκ `panel: {...}` για το `config.json` (μαζί με το `token` του server).
+3. Στον stream server, `config.json`:
+   ```json
+   "panel": { "url": "https://panel.example.com/api", "token": "<το token>", "host": "<το host>" }
+   ```
+   και restart.
+4. Από εκεί και πέρα το `data/clients.json` το γράφει αποκλειστικά το sync — ό,τι υπήρχε
+   τοπικά (π.χ. ο πελάτης `default` του `generate-passwords`) **αντικαθίσταται** στο
+   πρώτο tick. Αν το `/live/stream` πρέπει να συνεχίσει να παίζει, δήλωσε τον πελάτη στο
+   panel **πριν** βάλεις το `panel.url`.
+
+## Στατιστικά (JSON API)
+
+Ο stream server δεν σερβίρει πια δική του οθόνη διαχείρισης — αυτή μετακόμισε στο
+κεντρικό panel (`apps/api`). Το `/admin` εδώ μένει «χαζό» JSON API πίσω από basic auth
+(χρήστης `admin`, ο κωδικός από το `generate-passwords`), που το panel καταναλώνει:
+
+- `GET /admin/api/live` — τρέχον snapshot: ενεργά streams (θεατές, bitrate, codec,
+  ανάλυση, διάρκεια), ενεργές συνδέσεις, στατιστικά server.
+- `GET /admin/api/series?range=1h|24h|7d|30d` — ιστορικά δείγματα.
+- `GET /admin/api/sessions` — log των τελευταίων 100 συνδέσεων.
+- `DELETE /admin/api/sessions/<id>` — κόβει μια ενεργή σύνδεση.
+- `POST /admin/api/restart` — restart του server (δες παρακάτω).
 
 Το basic auth το κάνει ο ίδιος ο admin server, με τον κωδικό του `config.json`. Δεν
 μπαίνει hash στο Caddyfile: ένα δεύτερο αντίγραφο του κωδικού σε άλλο αρχείο σημαίνει
 σίγουρο 401 την πρώτη φορά που θα αλλάξουν οι κωδικοί και δεν θα ενημερωθεί.
 
-Δείχνει ενεργά streams (θεατές, bitrate, codec, ανάλυση, διάρκεια), γραφήματα για
-1h / 24h / 7d / 30d, ενεργές συνδέσεις με κουμπί kill, log πρόσφατων συνδέσεων, και
-κουμπί **Restart** στο header.
+Το `POST /admin/api/restart` δεν ξανασηκώνει τον server μόνο του: σκοτώνει πρώτα τα
+ffmpeg jobs του HLS (αλλιώς μένουν ορφανά και κλειδώνουν το streamPath για το επόμενο
+process) και μετά τερματίζει με `process.exit(0)`· τον ξανασηκώνει ο supervisor — pm2
+σε bare metal, `restart: unless-stopped` σε Docker. Απαντάει **202 πρώτα και exit μετά**:
+αν ο server τερματίσει πριν απαντήσει, ο caller βλέπει connection reset αντί για
+επιτυχία και δεν μπορεί να το ξεχωρίσει από πραγματική αποτυχία.
 
-Το Restart δεν ξανασηκώνει τον server μόνο του: κάνει `POST /admin/api/restart`,
-που σκοτώνει πρώτα τα ffmpeg jobs του HLS (αλλιώς μένουν ορφανά και κλειδώνουν το
-streamPath για το επόμενο process) και μετά τερματίζει με `process.exit(0)`· τον
-ξανασηκώνει ο supervisor — pm2 σε bare metal, `restart: unless-stopped` σε Docker.
-Το UI ζητάει επιβεβαίωση (και προειδοποιεί ρητά αν υπάρχει ενεργή εκπομπή), δείχνει
-«γίνεται restart…» και κάνει poll το `/admin/api/live` μέχρι να ξαναπαντήσει ο server,
-πριν κάνει reload τη σελίδα.
-
-Πώς δουλεύει:
+Πώς δουλεύει ο collector:
 
 - Ο collector στο `stats.js` κρεμιέται στα events του server και κρατάει δείγμα κάθε
   60 δευτερόλεπτα σε SQLite (`stats.db`), με διατήρηση 30 ημερών. Το bitrate δεν υπάρχει
   πουθενά στο API του v4 — βγαίνει από τη διαφορά δύο δειγμάτων.
-- Το UI σερβίρεται από δικό μας HTTP server στο `127.0.0.1:8001`. **Δεν** ακούει σε
+- Το API σερβίρεται από δικό μας HTTP server στο `127.0.0.1:8001`. **Δεν** ακούει σε
   εξωτερικό interface, οπότε δεν χρειάζεται άνοιγμα στο ufw· περνάει μόνο μέσω Caddy.
   Σε Docker ακούει στο `0.0.0.0` (`ADMIN_HOST`) γιατί ο Caddy είναι σε άλλο container,
   αλλά η θύρα δεν δημοσιεύεται στο host.
@@ -451,23 +853,6 @@ streamPath για το επόμενο process) και μετά τερματίζ�
   θεατών παραμένει σωστός· το πραγματικό bandwidth το δείχνουν τα R2 metrics.
 
 Το `stats.db` είναι στο `.gitignore`. Έλεγχος του collector: `node test-stats.js`.
-
-## Demo player
-
-Στο `https://stream.example.com/admin/player` — πίσω από το ίδιο basic auth με το admin UI.
-Κλικ στο όνομα ενός ενεργού stream στο admin το ανοίγει απευθείας.
-
-Παίζει το `<stream>/index.m3u8` με [hls.js](https://github.com/video-dev/hls.js) από CDN
-(σε Safari με το native HLS του browser) και ξαναδοκιμάζει κάθε 3 δευτερόλεπτα όσο δεν
-εκπέμπει κανείς — μπορείς να την αφήσεις ανοιχτή και να ξεκινήσεις το OBS μετά.
-Το stream path αλλάζει από το πεδίο πάνω δεξιά ή από το `?stream=`:
-
-```
-https://stream.example.com/admin/player?stream=/live/stream
-```
-
-Ο preview μετράει ως κανονικός θεατής στα στατιστικά — είναι ο ευκολότερος τρόπος να
-επαληθεύσεις ότι δουλεύει η μέτρηση, αλλά μην τον αφήνεις ανοιχτό όταν κοιτάς νούμερα.
 
 ## Admin API
 

@@ -1,0 +1,53 @@
+# Το ίδιο αρχείο για Docker και για bare metal:
+#   - Docker: το compose δίνει DOMAIN (από το .env) και STREAM_HOST=stream
+#   - bare metal: το ./install βάζει το hostname στη θέση του placeholder και το
+#     STREAM_HOST πέφτει στο default, localhost
+#
+# Χωρίς scheme ο Caddy εξυπηρετεί και τα δύο: βγάζει μόνος του certificate, ακούει
+# στο 443 και κάνει redirect 80->443. Θέλει Cloudflare SSL mode Full — με Flexible
+# το CF χτυπάει το origin σε http και ο redirect γίνεται loop.
+{$DOMAIN}, rtmp.{$DOMAIN} {
+	# Το basic auth του admin το κάνει το ίδιο το app, με τον κωδικό του
+	# config.json. Δεν μπαίνει εδώ: ένα δεύτερο αντίγραφο του κωδικού σε hash
+	# που κανείς δεν ενημερώνει είναι σίγουρο 401 μόλις αλλάξουν οι κωδικοί.
+	# Δεν σερβίρει πια HTML — μόνο JSON API που καταναλώνει το κεντρικό panel
+	# (apps/api). Προαιρετικά μπορεί να κλειδωθεί στην IP του κεντρικού server
+	# (π.χ. remote_ip matcher πριν το reverse_proxy)· το basic auth μένει έτσι
+	# κι αλλιώς σαν δεύτερη γραμμή άμυνας.
+	handle /admin* {
+		reverse_proxy {$STREAM_HOST:localhost}:8001
+	}
+
+	handle {
+		reverse_proxy {$STREAM_HOST:localhost}:8000
+	}
+
+	# HLS: το playlist δεν πρέπει ποτέ να κασάρεται, τα segments είναι immutable.
+	#
+	# Το defer είναι υποχρεωτικό: χωρίς αυτό ο Caddy γράφει το header πριν τρέξει
+	# το reverse_proxy και μετά προστίθεται από πάνω και το "public, max-age=0"
+	# του express.static. Το αποτέλεσμα είναι δύο Cache-Control στην ίδια
+	# απόκριση και το CDN διαλέγει όποιο θέλει — δηλαδή τα segments μπορεί να
+	# μην κασάρονται καθόλου.
+	@m3u8 path *.m3u8
+	@ts path *.ts
+	header @m3u8 {
+		Cache-Control "no-store"
+		defer
+	}
+	header @ts {
+		Cache-Control "public, max-age=31536000, immutable"
+		defer
+	}
+
+	# Οι online HLS players τρέχουν σε άλλο origin — χωρίς αυτό το hls.js
+	# μπλοκάρεται από τον browser και δεν βλέπει ούτε segments ούτε bitrates
+	@hls path *.m3u8 *.ts
+	header @hls {
+		Access-Control-Allow-Origin "*"
+		defer
+	}
+
+	# Στο stderr, δηλαδή journalctl -u caddy ή docker compose logs caddy
+	log
+}

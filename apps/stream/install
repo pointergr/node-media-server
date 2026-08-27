@@ -1,0 +1,190 @@
+#!/bin/bash
+set -e
+
+# Έλεγχος αν δόθηκε το hostname ως παράμετρος
+if [ -z "$1" ]; then
+  echo "Χρήση: $0 <hostname> [--docker] [--panel <url> --key <pk_...>] [--cf-token <token> --cf-zone <id>]"
+  exit 1
+fi
+
+HOSTNAME=$1
+shift
+DOCKER=""
+PANEL=""
+KEY=""
+CF_TOKEN=""
+CF_ZONE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --docker) DOCKER=1 ;;
+    --panel) PANEL=$2; shift ;;
+    --key) KEY=$2; shift ;;
+    --cf-token) CF_TOKEN=$2; shift ;;
+    --cf-zone) CF_ZONE=$2; shift ;;
+    *) echo "Άγνωστη παράμετρος: $1"; exit 1 ;;
+  esac
+  shift
+done
+
+# Δήλωση στο κεντρικό panel — ό,τι κάνει το χέρι στο /admin/servers, με το
+# provisioning API key. Τρέχει μετά το generate-passwords γιατί το panel
+# χρειάζεται τον κωδικό του /admin API, που παράγεται εκεί.
+connect_panel() {
+  local pass=$1 body token
+  body=$(curl -fsS -X POST "$PANEL/servers" \
+    -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+    -d "{\"host\":\"$HOSTNAME\",\"adminUrl\":\"https://$HOSTNAME\",\"adminUser\":\"admin\",\"adminPass\":\"$pass\"}")
+  token=$(echo "$body" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+  if [ -z "$token" ]; then
+    echo "Το panel δεν επέστρεψε token: $body"
+    exit 1
+  fi
+  # sed πάνω στο φρεσκοαντιγραμμένο config.example.json: τα τρία κενά πεδία
+  # υπάρχουν μόνο στο panel block. Αν αλλάξει το σχήμα, θέλει node one-liner.
+  sed -i "s|\"url\": \"\"|\"url\": \"$PANEL\"|; s|\"token\": \"\"|\"token\": \"$token\"|; s|\"host\": \"\"|\"host\": \"$HOSTNAME\"|" config.json
+  echo "Ο server δηλώθηκε στο panel. Προσοχή: το clients.json το γράφει πια το sync"
+  echo "— ο πελάτης default του generate-passwords αντικαθίσταται στο πρώτο tick."
+}
+
+# Τα δύο A records στο Cloudflare — ό,τι κάνει το χέρι στο dashboard. Το token
+# (Zone·DNS·Edit) δεν αποθηκεύεται πουθενά, όπως και το provisioning key: ζει
+# όσο τρέχει το curl. Την IP τη λέει μόνο υπηρεσία απ' έξω· ο ίδιος ο server
+# βλέπει τη διεύθυνση της κάρτας του, που πίσω από NAT δεν είναι η δημόσια.
+cloudflare_dns() {
+  local ip name proxied body
+  ip=$(curl -fsS https://api.ipify.org)
+  for name in "$HOSTNAME" "rtmp.$HOSTNAME"; do
+    # Το rtmp. μένει DNS only: το proxy του Cloudflare περνάει μόνο HTTP(S),
+    # οπότε με πορτοκαλί σύννεφο το publish στο 1935 δεν φτάνει ποτέ εδώ.
+    proxied=true
+    [ "$name" = "$HOSTNAME" ] || proxied=false
+    # Χωρίς -f: το «υπάρχει ήδη» έρχεται ως HTTP 400 και το θέλουμε διαβασμένο.
+    body=$(curl -sS -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE/dns_records" \
+      -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
+      -d "{\"type\":\"A\",\"name\":\"$name\",\"content\":\"$ip\",\"proxied\":$proxied,\"ttl\":1}")
+    case "$body" in
+      *'"success":true'*) echo "DNS: $name -> $ip (proxied: $proxied)" ;;
+      # 81057 = record already exists. Δεύτερο τρέξιμο του install στον ίδιο
+      # server δεν είναι λάθος — και δεν πειράζουμε record που ίσως ρυθμίστηκε
+      # με το χέρι. Ό,τι άλλο (λάθος token, λάθος zone) σταματάει εδώ: χωρίς
+      # DNS ο Caddy δεν βγάζει certificate και το install τελειώνει «επιτυχώς»
+      # σε έναν server που δεν σηκώνει ούτε εκπομπή ούτε θεατή.
+      *81057*) echo "DNS: το $name υπάρχει ήδη — δεν πειράχτηκε" ;;
+      *) echo "Το Cloudflare απέρριψε το $name: $body"; exit 1 ;;
+    esac
+  done
+}
+
+# Σημείο εισόδου των tests (test-install.js): με source και INSTALL_LIB=1
+# φορτώνονται μόνο οι συναρτήσεις, χωρίς να αγγιχτεί το μηχάνημα.
+[ -z "$INSTALL_LIB" ] || return 0
+
+# ── Κοινά ──────────────────────────────────────────────────────────────────
+
+# Αυτόματη επιλογή ζώνης ώρας
+echo 'tzdata tzdata/Areas select Europe' | debconf-set-selections
+echo 'tzdata tzdata/Zones/Europe select Athens' | debconf-set-selections
+
+# Ορισμός του DEBIAN_FRONTEND για μη διαδραστική εγκατάσταση
+export DEBIAN_FRONTEND=noninteractive
+
+apt update
+apt upgrade -y
+apt install -y git ufw curl
+
+# Τα records μπαίνουν εδώ και όχι στο τέλος: και οι δύο δρόμοι σηκώνουν Caddy
+# παρακάτω, που ζητάει certificate και για τα δύο hostnames — αν το DNS δεν
+# υπάρχει ακόμα, το ACME αποτυγχάνει και γεμίζει τα logs μέχρι να ξαναδοκιμάσει.
+if [ -n "$CF_TOKEN" ] && [ -n "$CF_ZONE" ]; then cloudflare_dns; fi
+
+# Ενεργοποίηση του firewall. Το 8000 μόνο χωρίς Docker: στο compose ο admin δεν
+# δημοσιεύει θύρα, τον φτάνεις μέσω Caddy.
+ufw allow 22
+ufw allow 80
+ufw allow 443
+ufw allow 1935
+if [ -z "$DOCKER" ]; then ufw allow 8000; fi
+ufw default deny incoming
+ufw default allow outgoing
+ufw --force enable
+
+# Το README λέει clone-και-μετά-./install, οπότε συνήθως είμαστε ήδη μέσα στο repo.
+if [ ! -f config.example.json ]; then
+  git clone https://github.com/pointergr/node-media-server.git
+  cd node-media-server/apps/stream
+fi
+cp config.example.json config.json
+
+# ── Docker ─────────────────────────────────────────────────────────────────
+
+if [ -n "$DOCKER" ]; then
+  curl -fsSL https://get.docker.com | sh
+  # Χωρίς αυτό δεν ξανασηκώνεται τίποτα μετά από reboot: το restart policy των
+  # containers παίζει μόνο αν ξεκινάει ο ίδιος ο daemon στο boot.
+  systemctl enable --now docker
+
+  sed "s/^DOMAIN=.*/DOMAIN=$HOSTNAME/" .env.example > .env
+  docker compose up -d --build
+
+  # Οι κωδικοί γράφονται στο mounted config.json, που διαβάζεται μόνο στο boot.
+  OUT=$(docker compose exec -T stream npm run generate-passwords "$HOSTNAME")
+  echo "$OUT"
+  if [ -n "$PANEL" ] && [ -n "$KEY" ]; then
+    connect_panel "$(echo "$OUT" | sed -n 's/^Admin password: //p')"
+  fi
+  docker compose restart stream
+
+  echo "Ο streaming server εγκαταστάθηκε σε Docker και ξεκίνησε επιτυχώς!"
+  exit 0
+fi
+
+# ── Χωρίς Docker ───────────────────────────────────────────────────────────
+
+apt install -y caddy ffmpeg
+
+# Εγκατάσταση volta.sh (το node:sqlite του admin θέλει node 24)
+curl https://get.volta.sh | bash
+export VOLTA_HOME="$HOME/.volta"
+export PATH="$VOLTA_HOME/bin:$PATH"
+sleep 3
+volta install node@24
+volta install npm@bundled
+
+# Το package-lock.json είναι ένα και ζει στη ρίζα του monorepo (npm workspaces).
+# Επαληθεύτηκε: σκέτο `npm ci` εδώ μέσα δουλεύει επίσης (το npm ανεβαίνει και
+# βρίσκει μόνο του τη ρίζα), αλλά εγκαθιστά ΟΛΑ τα workspaces· το -w από τη ρίζα
+# εγκαθιστά μόνο ό,τι αφορά το apps/stream — προτιμότερο όταν προστεθούν apps/api
+# και apps/panel.
+(cd ../.. && npm ci -w apps/stream)
+
+# Εγκατάσταση του pm2
+npm install pm2 -g
+
+# Παραγωγή κωδικών — και, αν δόθηκαν, δήλωση στο panel πριν σηκωθεί ο server:
+# το config.json διαβάζεται μόνο στο boot, οπότε δεν χρειάζεται restart μετά.
+OUT=$(npm run generate-passwords $HOSTNAME)
+echo "$OUT"
+if [ -n "$PANEL" ] && [ -n "$KEY" ]; then
+  connect_panel "$(echo "$OUT" | sed -n 's/^Admin password: //p')"
+fi
+
+# Ρύθμιση Caddy — ένα μόνο Caddyfile, αυτό του repo. Το STREAM_HOST μένει στο
+# default (localhost) γιατί εδώ ο Caddy και ο server είναι στο ίδιο μηχάνημα.
+sed "s/{\\\$DOMAIN}/$HOSTNAME/g" Caddyfile > /etc/caddy/Caddyfile
+
+# Επανεκκίνηση του Caddy για να εφαρμοστούν οι αλλαγές
+systemctl restart caddy
+
+# Ξεκινάμε τον server σαν pm2 process — τρέχει ήδη από μέσα από apps/stream (το cd
+# μετά το clone παραπάνω), γιατί όλα τα σχετικά paths του κώδικα (./config.json,
+# ./media, ./data) υπολογίζονται ως προς το cwd, όχι ως προς το αρχείο.
+pm2 start app.js --name stream
+
+# Επιβίωση μετά από reboot — το αντίστοιχο του restart policy του compose. Το
+# startup στήνει το systemd unit (τρέχουμε ως root), το save γράφει τη λίστα των
+# process που θα ξαναπιάσει· χωρίς το save το unit σηκώνεται άδειο.
+pm2 startup systemd -u root --hp "$HOME"
+pm2 save
+
+# Μήνυμα ολοκλήρωσης
+echo "Ο streaming server εγκαταστάθηκε και ξεκίνησε επιτυχώς!"

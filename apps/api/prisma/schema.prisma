@@ -1,0 +1,176 @@
+// Ελάχιστο μοντέλο: πελάτες, πλάνα, συνδρομές, paths, servers, χρήστες. Το
+// ιστορικό (θεατές, bitrate) μένει στο sqlite κάθε stream server — εδώ κρατάμε
+// μόνο ό,τι χρειάζεται το panel για να αποφασίζει «ποιος εκπέμπει πού».
+//
+// Η **συνδρομή** (Subscription) είναι η μονάδα των πάντων: ένα αγορασμένο πλάνο,
+// με δικό του server, δικό του όριο θεατών και δικά του paths. Ο πελάτης είναι
+// σκέτος πελάτης με 0..Χ συνδρομές — δεν έχει ούτε server ούτε όρια, και τίποτα
+// δεν αθροίζεται μεταξύ συνδρομών.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Server {
+  id            Int            @id @default(autoincrement())
+  host          String         @unique
+  // Bearer token που στέλνει ο stream server στο POST /servers/:host/sync.
+  token         String
+  adminUrl      String
+  adminUser     String
+  adminPass     String
+  lastSeen      DateTime?
+  plans         Plan[]
+  subscriptions Subscription[]
+  paths         Path[]
+}
+
+model Client {
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  disabled      Boolean        @default(false)
+  users         User[]
+  subscriptions Subscription[]
+}
+
+// Ο κατάλογος: ό,τι πουλάμε, με τα όριά του. Τα νούμερα είναι ≥1 — «πλάνο του
+// μηδενός» δεν πουλάει κανείς, και το 0 έχει ήδη τη σημασία «χωρίς όριο» σε όλη
+// τη διαδρομή ως τον stream server.
+model Plan {
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  // Ταυτόχρονοι θεατές της ΣΥΝΔΡΟΜΗΣ — δύο συνδρομές του ίδιου πλάνου έχουν από
+  // 50 η καθεμία, όχι 100 μαζί.
+  maxViewers    Int
+  // Μετράει paths, δηλαδή πόσα streams μπορεί να ΕΧΕΙ η συνδρομή — όχι πόσα
+  // εκπέμπουν ταυτόχρονα. Επιβάλλεται στο POST /clients/:id/paths.
+  maxStreams    Int
+  // Πού πέφτουν οι ΝΕΕΣ συνδρομές αυτού του πλάνου — «το basic πουλάει σήμερα
+  // stream2». Αλλάζοντάς το δεν μετακομίζει κανείς: η κάθε συνδρομή κρατάει τον
+  // δικό της server. Έτσι γεμίζει ένα μηχάνημα και ο επόμενος πελάτης πάει στο
+  // επόμενο, χωρίς να πειραχτεί ο προηγούμενος.
+  serverId      Int
+  // Οι αναλύσεις που πουλάει το πλάνο (csv από ύψη, φθίνουσα: "720,480").
+  // Ζει εδώ και όχι στον server επειδή το ABR είναι κάτι που ΠΟΥΛΙΕΤΑΙ, όπως το
+  // όριο θεατών — ο server λέει μόνο με τι το βγάζει (config.hls.encoder). Δες
+  // PLAN-transcoding.md. Περιγράφει **μόνο τα σκαλοπάτια κάτω από την πηγή**: η
+  // κορυφή είναι πάντα η ίδια η πηγή σε copy, γιατί το re-encode της θα
+  // διπλασίαζε το κόστος για μηδέν κέρδος. null = καθόλου transcoding.
+  ladder        String?
+  // Πόσους εξωτερικούς προορισμούς (YouTube, Facebook, Twitch...) επιτρέπει το
+  // πλάνο **ανά stream**. Προσοχή: εδώ το 0 σημαίνει «καθόλου αναδιανομή» και
+  // ΟΧΙ «χωρίς όριο», αντίθετα από τα maxViewers/maxStreams παραπάνω. Ο λόγος
+  // είναι ότι κάθε προορισμός είναι ένα ακόμα αντίγραφο της εκπομπής προς τα
+  // έξω: «απεριόριστοι» δεν είναι κάτι που μπορεί να πουληθεί, ενώ «κανένας»
+  // είναι η σωστή προεπιλογή για κάθε πλάνο που υπάρχει ήδη.
+  maxRelays     Int            @default(0)
+  server        Server         @relation(fields: [serverId], references: [id])
+  subscriptions Subscription[]
+}
+
+// Μία αγορά ενός πλάνου. Τα όρια ΔΕΝ αντιγράφονται εδώ: διαβάζονται από το πλάνο,
+// οπότε μια αλλαγή στον κατάλογο περνάει σε όλες τις συνδρομές του (σκόπιμα — δες
+// README). Ο server όμως είναι στιγμιότυπο, γι' αυτό και υπάρχει ως πεδίο.
+model Subscription {
+  id       Int    @id @default(autoincrement())
+  // Φιλικό όνομα της αγοράς — «Εκκλησία Αγ. Νικολάου», «Δημαρχείο». Το ορίζει ο
+  // admin ή ο ίδιος ο πελάτης, και είναι ο ΜΟΝΟΣ τρόπος να ξεχωρίσει κανείς δύο
+  // συνδρομές του ίδιου πλάνου: το όνομα του πλάνου είναι και στις δύο «basic»,
+  // και το id είναι εσωτερικό. null = δεν το έχει ονομάσει κανείς ακόμα, οπότε
+  // το panel πέφτει πίσω στο όνομα του πλάνου και στη σειρά.
+  label    String?
+  // Αναστολή **της συνδρομής**, ξεχωριστά από το `Client.disabled`: ένας πελάτης
+  // με τρία πλάνα μπορεί να έχει λήξει μόνο το ένα. Ο stream server δεν μαθαίνει
+  // τίποτα καινούργιο — η εγγραφή απλώς λείπει από το clients.json, δηλαδή τα
+  // paths της γίνονται άγνωστα και η εκπομπή πέφτει σε ≤10s.
+  disabled Boolean @default(false)
+  clientId Int
+  // Cascade: σβήνοντας πελάτη φεύγουν οι συνδρομές του, και μαζί τους τα paths.
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  planId   Int
+  plan     Plan   @relation(fields: [planId], references: [id])
+  serverId Int
+  server   Server @relation(fields: [serverId], references: [id])
+  paths    Path[]
+}
+
+model Path {
+  id             Int          @id @default(autoincrement())
+  path           String
+  // Τυχαίο κλειδί εκπομπής (≥16 chars, base64url) — δες clients.service.ts.
+  key            String
+  // Το path ανήκει στη ΣΥΝΔΡΟΜΗ, όχι στον πελάτη: από εκεί παίρνει και τον server
+  // και το όριο θεατών που θα επιβάλει ο stream server. Χωρίς αυτό, το όριο μιας
+  // συνδρομής δεν θα επιβαλλόταν πουθενά.
+  subscriptionId Int
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  // Denormalized από τη συνδρομή, μόνο για το unique: το Prisma δεν φτιάχνει
+  // περιορισμό πάνω σε πεδίο συσχέτισης. Δύο πελάτες του ίδιου server δεν
+  // μπορούν να διεκδικήσουν το ίδιο path.
+  serverId       Int
+  server         Server       @relation(fields: [serverId], references: [id])
+  destinations   Destination[]
+
+  @@unique([serverId, path])
+}
+
+// Ένας εξωτερικός προορισμός αναδιανομής: πού αλλού πάει η ίδια εκπομπή. Κρέμεται
+// από το **path** και όχι από τη συνδρομή, γιατί κάθε κάμερα πάει σε άλλο κανάλι
+// — δύο streams της ίδιας εκκλησίας δεν μοιράζονται λογαριασμό YouTube.
+//
+// Ο stream server δεν ξέρει τίποτα από «πλατφόρμες»: το sync του δίνει έτοιμο
+// `rtmp://.../<key>` και εκείνος σηκώνει έναν ffmpeg (apps/stream/relay.js).
+// Γι' αυτό μια νέα πλατφόρμα δεν χρειάζεται καμία αλλαγή πουθενά — αρκεί να
+// δέχεται RTMP.
+model Destination {
+  id      Int     @id @default(autoincrement())
+  // «YouTube», «Facebook εκκλησίας». Ταξιδεύει ως το snapshot του stream server:
+  // όταν ένας προορισμός δεν συνδέεται, το όνομα είναι το μόνο που τον ξεχωρίζει.
+  name    String
+  // Το ingest URL της πλατφόρμας, ΧΩΡΙΣ το κλειδί (rtmp://a.rtmp.youtube.com/live2).
+  url     String
+  // Το stream key της πλατφόρμας. Χωριστό πεδίο και όχι κολλημένο στο url: αυτό
+  // είναι το μυστικό, άρα αυτό — και μόνο αυτό — κρύβει το panel. Βολεύει και
+  // τον πελάτη, γιατί έτσι ακριβώς τα δίνουν οι πλατφόρμες, σε δύο πεδία.
+  key     String
+  // Προσωρινό κλείσιμο χωρίς να χαθεί το κλειδί: η εγγραφή λείπει από το
+  // clients.json και ο stream server δεν σηκώνει relay γι' αυτήν. Σε αντίθεση με
+  // την αναστολή συνδρομής, ΔΕΝ πέφτει σε ≤10s: οι προορισμοί διαβάζονται μία
+  // φορά, στην αρχή της εκπομπής (δες apps/stream/app.js#postPublish), οπότε
+  // ισχύει από την επόμενη.
+  enabled Boolean @default(true)
+  pathId  Int
+  // Cascade: σβήνοντας το stream φεύγουν και οι προορισμοί του.
+  path    Path    @relation(fields: [pathId], references: [id], onDelete: Cascade)
+}
+
+// Κλειδί για εξωτερική υπηρεσία (provisioning): ό,τι κάνει ένας admin, χωρίς
+// login και χωρίς λήξη. Δεν είναι User — ο χρήστης έχει κωδικό που αλλάζει από
+// το /account και 12ωρο JWT· εδώ θέλουμε το αντίστροφο, μόνιμο μυστικό που
+// ανακαλείται με μία διαγραφή, χωρίς να πειραχτεί το JWT_SECRET (θα έπεφταν
+// έξω όλοι οι συνδεδεμένοι).
+model ApiKey {
+  id       Int       @id @default(autoincrement())
+  // Ποιος το κρατάει — για να ξέρεις τι ακυρώνεις όταν το ακυρώσεις.
+  name     String
+  // sha256 του κλειδιού, όχι το ίδιο το κλειδί (ούτε scrypt: το verify τρέχει σε
+  // ΚΑΘΕ αίτημα, και το scrypt είναι σκόπιμα αργό — δες auth/password.ts).
+  hash     String    @unique
+  lastUsed DateTime?
+}
+
+model User {
+  id       Int     @id @default(autoincrement())
+  username String  @unique
+  // scryptSync hash, μορφή "salt:hash" (δες auth/password.ts) — όχι bcrypt,
+  // ώστε να μη χρειάζεται native dependency στο image.
+  password String
+  role     String // "admin" | "customer"
+  // null για admin· ο customer βλέπει μόνο τα streams του δικού του πελάτη.
+  clientId Int?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}

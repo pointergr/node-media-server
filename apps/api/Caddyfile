@@ -1,0 +1,79 @@
+# Ίδιο σχήμα με apps/stream/Caddyfile: το DOMAIN έρχεται από .env, ο Caddy
+# βγάζει μόνος του certificate (Cloudflare SSL mode Full, όχι Flexible).
+{$DOMAIN} {
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy {$API_HOST:localhost}:3000
+	}
+
+	# Bare root/file_server (εκτός handle) ακολουθούν τη σταθερή σειρά
+	# directives του Caddy, όχι τη σειρά του αρχείου — θα πρόλαβαν το /api/*
+	# πριν καν φτάσει στο handle παραπάνω. Γι' αυτό το catch-all μπαίνει κι
+	# αυτό σε handle: πολλαπλά handle συγκρίνονται top-to-bottom, πρώτο match
+	# κερδίζει, ίδια λογική με τα route directives του nms.
+	handle {
+		# Το Nuxt panel: στατικά αρχεία (nuxt generate), τα κουβαλάει το ίδιο
+		# image του Caddy (apps/panel/Dockerfile) στο /srv. Το SPA κάνει
+		# client-side routing, οπότε κάθε άγνωστο path (π.χ. refresh στο
+		# /admin/clients) πρέπει να πέφτει στο index.html — χωρίς το
+		# try_files εδώ θα ήταν 404 του Caddy.
+		root * /srv
+		encode gzip
+
+		# Ίδιο σκεπτικό με τα .m3u8/.ts του apps/stream/Caddyfile — δες εκεί
+		# το σχόλιο για το γιατί χρειάζεται defer. Τα _nuxt/* είναι hashed
+		# στο όνομα (νέο build = νέο filename), οπότε ασφαλώς immutable· το
+		# index.html είναι πάντα το ίδιο filename και πρέπει να ξαναφέρνεται
+		# σε κάθε deploy.
+		@nuxt path /_nuxt/*
+		header @nuxt {
+			Cache-Control "public, max-age=31536000, immutable"
+			defer
+		}
+		@shell not path /_nuxt/*
+		header @shell {
+			Cache-Control "no-store"
+			defer
+		}
+
+		try_files {path} /index.html
+		file_server
+	}
+
+	log
+}
+
+# Ένα VPS για panel και stream server μαζί: δύο Caddy δεν χωράνε στο 80/443,
+# οπότε αυτός εδώ σερβίρει και το stream domain. Αντίγραφο του
+# apps/stream/Caddyfile (δεν γίνεται import: εκείνο δεσμεύει το {$DOMAIN}, που
+# εδώ είναι το panel). Το STREAM_DOMAIN και το δίκτυο του stream stack τα δίνει
+# το docker-compose.override.yml — χωρίς αυτό το default μένει αδρανές
+# (.localhost: ο Caddy βγάζει εσωτερικό cert, δεν χτυπάει Let's Encrypt).
+{$STREAM_DOMAIN:stream.localhost}, rtmp.{$STREAM_DOMAIN:stream.localhost} {
+	handle /admin* {
+		reverse_proxy {$STREAM_HOST:stream}:8001
+	}
+
+	handle {
+		reverse_proxy {$STREAM_HOST:stream}:8000
+	}
+
+	@m3u8 path *.m3u8
+	@ts path *.ts
+	@hls path *.m3u8 *.ts
+
+	header @m3u8 {
+		Cache-Control "no-store"
+		defer
+	}
+	header @ts {
+		Cache-Control "public, max-age=31536000, immutable"
+		defer
+	}
+	header @hls {
+		Access-Control-Allow-Origin "*"
+		defer
+	}
+
+	log
+}
