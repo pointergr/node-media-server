@@ -120,6 +120,12 @@ export const RANGES: Record<string, string> = {
 export const xWindow = (from: number, now = Math.floor(Date.now() / 1000)) =>
   from > 0 ? { min: from, max: now } : {}
 
+// Ο stream server σερβίρει το HLS από το ίδιο hostname με το οποίο δηλώνεται
+// στο panel (config.panel.host == το domain του Caddy του) — δες apps/stream/install.
+// Εδώ και όχι σε κάθε σελίδα: το ζητάνε τρεις (dashboard, player, πελάτης).
+export const hlsUrl = (host: string, stream: string) =>
+  `https://${host}/${stream.replace(/^\//, '')}/index.m3u8`
+
 export const clock = (ts: number) => new Date(ts * 1000)
   .toLocaleString('el-GR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 

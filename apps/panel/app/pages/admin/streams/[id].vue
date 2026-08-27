@@ -4,14 +4,14 @@
 // `/admin/streams/<encodeURIComponent(stream)>?host=<host>`) — ο vue-router το
 // αποκωδικοποιεί μόνος του. Ο server έρχεται από το query, γιατί το ίδιο path
 // μπορεί να υπάρχει σε δύο stream servers.
+import { hlsUrl } from '~/utils/dash'
+
 const route = useRoute()
 
 const stream = computed(() => String(route.params.id ?? ''))
 const host = computed(() => String(route.query.host ?? ''))
 
-// Ίδιος κανόνας με το dashboard: ο stream server σερβίρει το HLS από το hostname
-// με το οποίο δηλώνεται στο panel.
-const src = computed(() => `https://${host.value}/${stream.value.replace(/^\//, '')}/index.m3u8`)
+const src = computed(() => hlsUrl(host.value, stream.value))
 </script>
 
 <template>

@@ -2,7 +2,7 @@
 // Ρητά imports και όχι auto-import: οι helpers χρησιμοποιούνται και μέσα στο
 // template, όπου μόνο τα bindings του <script setup> είναι σίγουρα ορατά.
 import {
-  bps, bytes, clock, colorOf, dur, lineChart, RANGES,
+  bps, bytes, clock, colorOf, dur, hlsUrl, lineChart, RANGES,
   type Line, type LiveEntry, type PastRow, type Series,
 } from '~/utils/dash'
 
@@ -18,7 +18,9 @@ const live = ref<LiveEntry[]>([])
 const past = ref<PastRow[]>([])
 const pastLimit = ref(15) // το API δίνει 100· δείχνουμε λίγες και ξεδιπλώνει ο χρήστης
 const range = ref('24h')
-const selected = ref('') // host του server που τροφοδοτεί charts/ιστορικό/restart
+// host του server που τροφοδοτεί charts/ιστορικό/restart. Από το query όταν
+// έρχεσαι από τη λίστα των servers — αλλιώς ο πρώτος, με το πρώτο /live.
+const selected = ref(String(useRoute().query.host ?? ''))
 const restarting = ref(false)
 const error = ref('')
 
@@ -57,11 +59,6 @@ const tiles = computed(() => [
   { label: `Uptime ${selected.value}`, value: current.value ? dur(current.value.snapshot.server.uptime) : '—', unit: '' },
   { label: `Μνήμη ${selected.value}`, value: current.value ? String(current.value.snapshot.server.rss_mb) : '—', unit: 'MB' },
 ])
-
-// Ο stream server σερβίρει το HLS από το ίδιο hostname με το οποίο δηλώνεται στο
-// panel (config.panel.host == το domain του Caddy του) — δες apps/stream/install.
-const hlsUrl = (host: string, stream: string) =>
-  `https://${host}/${stream.replace(/^\//, '')}/index.m3u8`
 
 // Ο player ζει σε modal και όχι μέσα στη σελίδα: ο διαχειριστής θέλει να δει ότι
 // παίζει και να το κλείσει. Με το κλείσιμο το PlayerStage φεύγει από το DOM και
