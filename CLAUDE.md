@@ -21,7 +21,7 @@ npm run generate-passwords <hostname>  # γράφει κωδικούς σε apps
 npm run seed -w apps/api            # φτιάχνει τον πρώτο admin χρήστη του κεντρικού panel
 npm run seed -w apps/api force      # ...ή ξαναγράφει τον κωδικό του (χαμένος κωδικός admin)
 docker compose exec api node dist/src/seed.js force   # το ίδιο σε Docker, από apps/api/
-node dist/src/apikey.js <όνομα>|list|revoke <id>      # API keys για εξωτερικές υπηρεσίες (apps/api/README.md)
+node dist/src/apikey.js <όνομα>|list|revoke <id>      # API keys — το ίδιο κάνει και η οθόνη /admin/apikeys
 npm run dev -w apps/panel           # Nuxt dev server, με devProxy /api -> localhost:3000 (χρειάζεται το apps/api να τρέχει)
 npm run generate -w apps/panel      # nuxt generate -> apps/panel/.output/public, τα στατικά που σερβίρει ο Caddy
 ```
@@ -234,7 +234,11 @@ sha256) για εξωτερικές υπηρεσίες που κάνουν provi
 server μόνο για το `POST /servers/:host/sync` — ο stream server δεν συνδέεται ποτέ σαν
 χρήστης. Το API key το αναγνωρίζει ο **ίδιος** guard από το πρόθεμα και γράφει το ίδιο
 `req.user` με `role: "admin"`: έτσι `@Roles`, `/me` και ό,τι άλλο διαβάζει το `req.user`
-δεν ξέρουν καν ότι υπάρχει δεύτερος τρόπος εισόδου. Πάνω σε αυτά, το `POST
+δεν ξέρουν καν ότι υπάρχει δεύτερος τρόπος εισόδου. Τα ίδια τα κλειδιά τα διαχειρίζεται
+και οθόνη (`/admin/apikeys` → `apikeys.controller.ts`, ίδια `newKey`/`hashKey` με το CLI),
+με τη μία διαφορά που δεν έχει το shell: το `humanOnly` κόβει τα `pk_` από αυτά τα
+endpoints (το `sub` τους είναι αρνητικό), αλλιώς ένα κλειδί που διέρρευσε γεννάει
+διαδόχους και η ανάκληση δεν τελειώνει ποτέ. Πάνω σε αυτά, το `POST
 /auth/login-link` δίνει **link σύνδεσης** για το billing (redirect του πελάτη στο panel
 χωρίς κωδικούς): βραχύβιο (5') JWT μιας χρήσης με `once: true`, που το `POST
 /auth/exchange` ανταλλάσσει με κανονική 12ωρη συνεδρία — δύο tokens, γιατί ένα θα ήταν ή
@@ -255,7 +259,7 @@ proxy σε αυτό, δεν το αντιγράφει κεντρικά.
 Nuxt SPA, `ssr: false` + `nuxt generate` → στατικά αρχεία (δες `apps/panel/Dockerfile`,
 `apps/api/Caddyfile`) — κανένα Node runtime για το UI, το build τρέχει μόνο στο image του
 Caddy. Τα SVG γραφήματα του `/admin` (`app/utils/dash.ts`) είναι μεταφορά αυτούσια από το
-παλιό `admin/dashboard.html`. Κάλυψη admin (`/admin/*`: servers, clients,
+παλιό `admin/dashboard.html`. Κάλυψη admin (`/admin/*`: servers, clients, API keys,
 live streams όλων των servers) και customer (`/`: τα streams του πελάτη **ομαδοποιημένα ανά
 συνδρομή** — το όριο θεατών ανήκει στη συνδρομή, οπότε στέκεται στην κεφαλίδα της
 ομάδας και όχι δίπλα σε κάθε stream· ο τίτλος είναι το `label` της, με fallback

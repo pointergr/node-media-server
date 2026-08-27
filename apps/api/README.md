@@ -91,6 +91,9 @@ username θα προήγαγε σιωπηλά πελάτη σε admin.
 
 ### API keys
 
+Από το panel: **/admin/apikeys** (δημιουργία, λίστα με την τελευταία χρήση,
+ανάκληση). Ή από shell στον host, που δουλεύει και με χαμένο κωδικό admin:
+
 ```bash
 docker compose exec api node dist/src/apikey.js "e-shop"     # τυπώνει το κλειδί ΜΙΑ φορά
 docker compose exec api node dist/src/apikey.js list         # ποια υπάρχουν, πότε χρησιμοποιήθηκαν
@@ -191,6 +194,7 @@ endpoint και γιατί έτσι. Για όποιον καλεί το API α�
 | `GET /auth/me` | οποιοσδήποτε συνδεδεμένος | `{username, role, clientId}` — ό,τι δεν χωράει στο JWT. Το username **δεν** μπαίνει στο payload επίτηδες: μετά από αλλαγή θα έδειχνε το παλιό μέχρι την επόμενη σύνδεση. API key → **401** (δεν έχει λογαριασμό) |
 | `PATCH /auth/me` | οποιοσδήποτε συνδεδεμένος | `{currentPassword, username?, password?}` — αλλάζει τα **δικά του** στοιχεία (το id βγαίνει από το token, ποτέ από το σώμα). Λάθος `currentPassword` → **401**, username που υπάρχει → **409**. Το token μένει έγκυρο: το payload δεν αλλάζει |
 | `POST /servers/:host/sync` | `Bearer <Server.token>` | σώμα = snapshot του stream server, απάντηση = clients.json — **μία εγγραφή ανά συνδρομή** αυτού του server (κλειδί `όνομαΠελάτη#idΣυνδρομής`), με το `limit` του πλάνου της και τα δικά της paths. Οι disabled πελάτες λείπουν. Πλάνο με ladder προσθέτει `"ladder": [720, 480]` (array από αριθμούς)· χωρίς ladder το κλειδί **λείπει εντελώς**, ώστε το αρχείο των σημερινών πελατών να μένει byte-για-byte ίδιο. Ίδια σύμβαση για την αναδιανομή: `"relays": {"/live/x": [{"name":"YouTube","url":"rtmp://…/<key>"}]}` — μόνο οι **ενεργοί** προορισμοί, με το κλειδί της πλατφόρμας ήδη ενωμένο στο URL |
+| `GET /apikeys` / `POST /apikeys` / `DELETE /apikeys/:id` | admin **χρήστης** | τα κλειδιά των εξωτερικών υπηρεσιών. Η λίστα δίνει `{id, name, lastUsed}` — ποτέ το hash. Το `POST {name}` επιστρέφει `{id, name, key}` και είναι η **μόνη** φορά που φεύγει η τιμή· κενό `name` → **400**. Με `Bearer pk_…` και τα τρία απαντούν **403**: ένα key που διέρρευσε δεν πρέπει να γεννάει διαδόχους |
 | `GET /live` | admin | τελευταίο snapshot όλων των servers, από τη μνήμη· `online: false` αν `ts` > 30s |
 | `GET /servers` / `POST /servers` | admin | CRUD server· το `token` παράγεται μόνο του αν δεν δοθεί |
 | `GET/PATCH/DELETE /servers/:id` | admin | |

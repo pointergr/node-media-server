@@ -15,6 +15,7 @@ const items = computed<NavigationMenuItem[]>(() => [
         { label: 'Πελάτες', icon: 'i-lucide-users', to: '/admin/clients' },
         { label: 'Πλάνα', icon: 'i-lucide-package', to: '/admin/plans' },
         { label: 'Servers', icon: 'i-lucide-server', to: '/admin/servers' },
+        { label: 'API keys', icon: 'i-lucide-key-round', to: '/admin/apikeys' },
       ]
     : [{ label: 'Τα streams μου', icon: 'i-lucide-radio', to: '/' }]),
   // Τελευταία και για τους δύο ρόλους: οι οδηγίες τις διαβάζει και ο admin (τις

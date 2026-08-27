@@ -725,7 +725,8 @@ panel θα έπρεπε να κρατάει ουρά. Αν το panel είναι
 
 - **Ο admin** βλέπει `/admin/servers` (προσθήκη/διαγραφή stream server, εδώ παράγεται και το
   `panel: {...}` block για το `config.json` κάθε server), `/admin/plans` (ο κατάλογος με τα
-  πλάνα), `/admin/clients` (πελάτες, συνδρομές, streams, κλειδιά) και `/admin` (live streams
+  πλάνα), `/admin/clients` (πελάτες, συνδρομές, streams, κλειδιά), `/admin/apikeys` (τα
+  API keys των εξωτερικών υπηρεσιών) και `/admin` (live streams
   **όλων** των servers, θεατές, bitrate, restart — ισοδύναμο του παλιού
   `admin/dashboard.html` αλλά συγκεντρωτικό).
 - **Ο πελάτης** βλέπει μόνο τα δικά του streams (`/`): stream key έτοιμο για αντιγραφή στο
@@ -747,7 +748,9 @@ docker compose exec api node dist/src/apikey.js "<υπηρεσία>"   # μόν�
 ```
 
 Το API key είναι για **μηχανές**: `Authorization: Bearer pk_…` στα ίδια admin endpoints,
-χωρίς login και χωρίς λήξη, με ανάκληση σε μία εντολή (`apikey.js revoke`). Πλήρης αναφορά
+χωρίς login και χωρίς λήξη, με ανάκληση σε μία εντολή (`apikey.js revoke`) ή από την
+οθόνη `/admin/apikeys` του panel — η γραμμή εντολών μένει γιατί δουλεύει και με χαμένο
+κωδικό admin. Πλήρης αναφορά
 του API — σώματα, απαντήσεις, σφάλματα, ροή provisioning — στο
 [`apps/api/API.md`](apps/api/API.md).
 

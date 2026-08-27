@@ -1014,6 +1014,46 @@ test('api key: άκυρο -> 401', async () => {
   assert.equal(res.status, 401);
 });
 
+// Η οθόνη /admin/apikeys: μέχρι τώρα τα κλειδιά τα έδινε μόνο shell στον server
+// (src/apikey.ts). Ο έλεγχος που ΔΕΝ έχει η γραμμή εντολών: ένα key δεν φτιάχνει
+// άλλα keys — αλλιώς ένα κλειδί που διέρρευσε αυτοσυντηρείται και η ανάκληση δεν
+// τελειώνει ποτέ. Στο shell το ισοδύναμο είναι ότι έχεις ήδη root στο μηχάνημα.
+test('/apikeys: ο admin τα διαχειρίζεται από το panel, το ίδιο το key όχι', async () => {
+  const auth = await adminAuth();
+  const res = await post(auth, '/apikeys', { name: 'panel-key' });
+  assert.equal(res.status, 201);
+  const created = (await res.json()) as { id: number; name: string; key: string };
+  assert.match(created.key, /^pk_/, 'η τιμή δίνεται μία φορά, στη δημιουργία');
+
+  type Row = { id: number; name: string; lastUsed: string | null };
+  const list = (await (await fetch(`${base}/apikeys`, { headers: auth })).json()) as Row[];
+  const row = list.find(k => k.name === 'panel-key');
+  assert.ok(row, 'το κλειδί φαίνεται στη λίστα');
+  assert.ok(!JSON.stringify(list).includes(created.key), 'η λίστα δεν ξαναδίνει την τιμή');
+  assert.ok(!JSON.stringify(list).includes('hash'), 'ούτε το hash — δεν έχει λόγο να φύγει από τη βάση');
+
+  // Το κλειδί δουλεύει κανονικά για provisioning...
+  const keyAuth = { authorization: `Bearer ${created.key}`, 'content-type': 'application/json' };
+  assert.equal((await fetch(`${base}/clients`, { headers: keyAuth })).status, 200);
+  // ...αλλά όχι για να γεννήσει ή να σβήσει κλειδιά.
+  assert.equal((await post(keyAuth, '/apikeys', { name: 'apogonos' })).status, 403);
+  assert.equal(
+    (await fetch(`${base}/apikeys/${row.id}`, { method: 'DELETE', headers: keyAuth })).status,
+    403,
+  );
+  // Ούτε ο πελάτης, φυσικά.
+  const customer = { authorization: `Bearer ${await login('usera', 'passa')}` };
+  assert.equal((await fetch(`${base}/apikeys`, { headers: customer })).status, 403);
+
+  assert.equal((await post(auth, '/apikeys', { name: '  ' })).status, 400, 'το όνομα είναι υποχρεωτικό');
+
+  // Ανάκληση από την οθόνη: το key σταματάει αμέσως, οι χρήστες δεν θίγονται.
+  const del = await fetch(`${base}/apikeys/${row.id}`, { method: 'DELETE', headers: auth });
+  assert.equal(del.status, 200);
+  assert.equal((await fetch(`${base}/clients`, { headers: keyAuth })).status, 401);
+  assert.equal((await fetch(`${base}/apikeys`, { headers: auth })).status, 200);
+});
+
 // Το username δεν είναι στο JWT (payload: sub/role/clientId), οπότε η οθόνη
 // «Ο λογαριασμός μου» δεν έχει άλλο τρόπο να δείξει ποιος είναι συνδεδεμένος.
 test('GET /auth/me: τα στοιχεία του συνδεδεμένου, χωρίς hash κωδικού', async () => {
