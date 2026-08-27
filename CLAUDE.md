@@ -332,7 +332,12 @@ Series/sessions/restart είναι πάντα **ανά server** (`GET /servers/:
 
 ## Deploy
 
-Ένα `apps/stream/install <hostname> [--docker]` για bare metal (caddy + volta + pm2) και Docker (compose με caddy container). Με `--panel <url> --key <pk_…>` δηλώνει και μόνο του τον server στο κεντρικό panel (`POST /servers` με το provisioning API key) και γράφει το `panel: {...}` block με το token της απάντησης — τα δύο flags είναι προαιρετικά, χωρίς αυτά το install τελειώνει όπως πάντα. Ένα `Caddyfile` και για τα δύο — το `STREAM_HOST` πέφτει σε `localhost` χωρίς Docker. Τα `header` directives θέλουν **`defer`**, αλλιώς προστίθεται από πάνω το `Cache-Control` του `express.static` και βγαίνουν δύο τιμές στην ίδια απόκριση.
+Ένα `apps/stream/install <hostname> [--docker]` για bare metal (caddy + volta + pm2) και Docker (compose με caddy container). Με `--panel <url> --key <pk_…>` δηλώνει και μόνο του τον server στο κεντρικό panel (`POST /servers` με το provisioning API key) και γράφει το `panel: {...}` block με το token της απάντησης — τα δύο flags είναι προαιρετικά, χωρίς αυτά το install τελειώνει όπως πάντα. Με
+`--cf-token <token> --cf-zone <id>` φτιάχνει και τα δύο A records στο Cloudflare
+(`cloudflare_dns`) — **πριν** από οτιδήποτε σηκώνει Caddy, αλλιώς το ACME χτυπάει σε
+hostname που δεν υπάρχει ακόμα. Το `install` γίνεται `source` με `INSTALL_LIB=1` για να
+φορτωθούν μόνο οι συναρτήσεις του — έτσι το `test-install.js` δοκιμάζει τι ζητάει από το
+Cloudflare με ψεύτικο `curl` στο PATH, χωρίς δίκτυο και χωρίς μηχάνημα. Ένα `Caddyfile` και για τα δύο — το `STREAM_HOST` πέφτει σε `localhost` χωρίς Docker. Τα `header` directives θέλουν **`defer`**, αλλιώς προστίθεται από πάνω το `Cache-Control` του `express.static` και βγαίνουν δύο τιμές στην ίδια απόκριση.
 
 Ό,τι αφορά **μόνο ένα** μηχάνημα (GPU devices, `NVIDIA_DRIVER_CAPABILITIES`, ο iHD driver
 μέσω του build arg `EXTRA_PKGS` του Dockerfile) ζει σε `apps/stream/docker-compose.override.yml`,

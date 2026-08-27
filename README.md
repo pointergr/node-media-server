@@ -17,7 +17,8 @@ cd apps/stream
 
 # ...ή όλα μαζί, μαζί με τη δήλωση στο κεντρικό panel:
 ./install server.example.com --docker \
-  --panel https://panel.example.com/api --key pk_<provisioning key>
+  --panel https://panel.example.com/api --key pk_<provisioning key> \
+  --cf-token <cloudflare token> --cf-zone <zone id>
 ```
 
 | Παράμετρος | Τι κάνει |
@@ -26,11 +27,14 @@ cd apps/stream
 | `--docker` | Docker + compose αντί για caddy/volta/pm2 στο μηχάνημα |
 | `--panel <url>` | το **API** του κεντρικού panel, δηλαδή `https://panel.example.com/api` |
 | `--key pk_…` | provisioning API key του panel (`apikey.js`) — μόνο μαζί με το `--panel` |
+| `--cf-token <token>` | Cloudflare API token με **Zone · DNS · Edit** στο zone — φτιάχνει [τα δύο A records](#dns) |
+| `--cf-zone <id>` | το Zone ID του domain (sidebar του Cloudflare dashboard) — μόνο μαζί με το `--cf-token` |
 
 Με τη σειρά, το script: ζώνη ώρας Europe/Athens και `apt upgrade` → `ufw` (22, 80, 443,
-1935) → clone, αν δεν τρέχει ήδη μέσα στο repo, και `config.json` από το example →
-Docker ή caddy + volta/node 24 + pm2 → `generate-passwords` → [δήλωση στο panel](#σύνδεση-με-το-κεντρικό-panel),
-αν δόθηκαν τα δύο flags → σηκώνει τον server.
+1935) → [DNS records](#dns), αν δόθηκαν τα δύο cf flags → clone, αν δεν τρέχει ήδη μέσα
+στο repo, και `config.json` από το example → Docker ή caddy + volta/node 24 + pm2 →
+`generate-passwords` → [δήλωση στο panel](#σύνδεση-με-το-κεντρικό-panel), αν δόθηκαν τα
+δύο flags → σηκώνει τον server.
 
 Χωρίς `--docker` στήνεται στο μηχάνημα (caddy + volta/node 24 + pm2). Με `--docker`
 εγκαθιστά τον Docker και σηκώνει το compose· τα κοινά (ζώνη ώρας, ufw, clone,
@@ -149,6 +153,7 @@ docker compose exec stream npm run generate-passwords stream.example.com force
 Πρέπει να έχεις ένα πραγματικό URL που να δείχνει στον server (A Record).
 Παρακάτω θα χρησιμοποιήσουμε το υποθετικό `stream.example.com`.
 
+<a id="dns"></a>
 Χρειάζονται **δύο** A Records στην ίδια IP, με διαφορετικό ρόλο το καθένα:
 
 | Record | Ρόλος | Cloudflare |
@@ -165,6 +170,15 @@ docker compose exec stream npm run generate-passwords stream.example.com force
 
 Αν λείπει το `rtmp.` record, ο Caddy δεν μπορεί να βγάλει certificate γι' αυτό και
 γεμίζει τα logs με ACME errors.
+
+Και τα δύο τα φτιάχνει μόνο του το `install` με `--cf-token <token> --cf-zone <id>`
+(token με **Zone · DNS · Edit**, zone id από το sidebar του dashboard). Την IP τη
+ρωτάει από το `api.ipify.org` — ο ίδιος ο server βλέπει μόνο τη διεύθυνση της κάρτας
+του. Record που υπάρχει ήδη δεν πειράζεται (ώστε το install να ξανατρέχει και να
+μη σβήνει ρύθμιση που έγινε με το χέρι)· οτιδήποτε άλλο απορρίψει το Cloudflare
+σταματάει το install, γιατί χωρίς DNS ο Caddy δεν βγάζει certificate και ο server
+θα «εγκαθίστατο επιτυχώς» χωρίς να σηκώνει ούτε εκπομπή ούτε θεατή. Το token δεν
+γράφεται πουθενά — ζει όσο τρέχει το curl, όπως και το provisioning key.
 
 ### Εγκατάσταση πακέτων στο λειτουργικό
 ```bash
