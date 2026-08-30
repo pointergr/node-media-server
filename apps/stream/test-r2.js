@@ -10,21 +10,21 @@ assert.deepEqual(
   "μόνο τα segments, χωρίς τα directives, χωρίς το base url"
 );
 
-// Ο ffmpeg γράφει στο ff/ με τα τελικά ονόματα, το r2.js δημοσιεύει τα ίδια
-// ονόματα ένα επίπεδο πάνω, αφού ανέβουν τα segments που δείχνουν.
+// Ο ffmpeg γράφει στο ff/ με τα τελικά ονόματα. Το r2.js δημοσιεύει το πρώτο
+// αμέσως από το origin και μετά κρατάει το live edge έναν κύκλο πίσω από τα PUT.
 const dir = fs.mkdtempSync(`${os.tmpdir()}/r2-test-`);
 fs.mkdirSync(`${dir}/ff`);
 const dst = `${dir}/index.m3u8`;
 const puts = [];
-let publishedTooEarly = false;
 
 let failing = null; // segment που το R2 απορρίπτει
 let attempts = 0;
 let hold = null; // κρατάει το PUT ανοιχτό, για να δοκιμαστεί το stop() στη μέση
+let activePuts = 0;
+let peakPuts = 0;
+let abortedPuts = 0;
 
 globalThis.fetch = async (req) => {
-  // Το playlist δεν πρέπει να υπάρχει όσο ανεβαίνει το πρώτο segment
-  if (!puts.length && fs.existsSync(dst)) publishedTooEarly = true;
   const name = new URL(req.url).pathname.split("/").pop();
   if (Array.isArray(failing) ? failing.includes(name) : name === failing) {
     attempts++;
@@ -33,10 +33,19 @@ globalThis.fetch = async (req) => {
   // Το κρατημένο PUT σέβεται την προθεσμία του r2.js, όπως ο undici: αλλιώς μια
   // κολλημένη σύνδεση δεν θα ξεκολλούσε ποτέ μέσα στο test.
   if (hold) {
-    await Promise.race([
-      hold,
-      new Promise((_, reject) => req.signal?.addEventListener("abort", () => reject(req.signal.reason))),
-    ]);
+    activePuts++;
+    peakPuts = Math.max(peakPuts, activePuts);
+    try {
+      await Promise.race([
+        hold,
+        new Promise((_, reject) => req.signal?.addEventListener("abort", () => {
+          abortedPuts++;
+          reject(req.signal.reason);
+        })),
+      ]);
+    } finally {
+      activePuts--;
+    }
   }
   puts.push(name);
   return new Response("", { status: 200 });
@@ -70,60 +79,279 @@ const stop = startR2Sync(dir, "/live/s", {
   publicUrl: "https://cdn",
 }, null, (name) => fallen.push(name));
 
-write("1-0.ts", "1-1.ts");
+write("1-0.ts");
 assert.ok(await until(() => fs.existsSync(dst)), "το playlist δημοσιεύτηκε");
-assert.deepEqual([...puts].sort(), ["1-0.ts", "1-1.ts"], "ανέβηκαν και τα δύο segments");
-assert.ok(!publishedTooEarly, "το playlist γράφεται μόνο αφού ανέβουν τα segments");
-assert.equal(fs.readFileSync(dst, "utf8"), playlist("1-0.ts", "1-1.ts"));
+assert.deepEqual(puts, [], "το πρώτο segment δεν περιμένει ούτε ανεβαίνει στο R2");
+assert.equal(fs.readFileSync(dst, "utf8"), lines(origin("1-0.ts")));
 
-// Νέο segment στο παράθυρο: ξαναανεβαίνει μόνο αυτό
-write("1-1.ts", "1-2.ts");
-assert.ok(await until(() => puts.length === 3), "ανέβηκε το νέο segment");
-assert.deepEqual([...puts].sort(), ["1-0.ts", "1-1.ts", "1-2.ts"], "κανένα segment δεν ξαναανεβαίνει");
+// Νέο segment στο παράθυρο: ανεβαίνει μόνο αυτό
+write("1-0.ts", "1-1.ts");
+assert.ok(await until(() => puts.length === 1), "ανέβηκε το νέο segment");
+assert.deepEqual(puts, ["1-1.ts"], "το πρώτο segment μένει στο origin και δεν ξανανεβαίνει");
 
 // Αποτυχημένο PUT: το playlist προχωράει ούτως ή άλλως, με το segment να δείχνει
 // στο origin. Το R2 είναι βελτιστοποίηση, όχι εξάρτηση της αναπαραγωγής — ένα PUT
 // που δεν προλαβαίνει κοστίζει λίγη κίνηση από τον δικό μας server, ποτέ παγωμένο
 // playlist: εκεί ακριβώς έσπαγε, γιατί ο επόμενος γύρος έβρισκε ένα segment
 // παραπάνω και αργούσε κι άλλο.
-failing = "1-3.ts";
-write("1-2.ts", "1-3.ts");
-assert.ok(await until(() => attempts >= 3), "το aws4fetch ξαναπροσπάθησε (retries: 2)");
-assert.ok(
-  await until(() => fs.readFileSync(dst, "utf8") === lines(r2url("1-2.ts"), origin("1-3.ts"))),
-  "το segment που απέτυχε δημοσιεύεται από το origin, το playlist δεν παγώνει"
-);
-
-// ...και μία προσπάθεια ανά segment, τέλος. Το segment που έφυγε στο origin δεν
-// ξαναδοκιμάζεται στον επόμενο γύρο: ακριβώς όταν το R2 δεν προλαβαίνει, ο κάθε
-// γύρος θα ξανάστελνε bytes που πια κανείς δεν πρόκειται να ζητήσει από εκεί —
-// τρώγοντας το uplink που χρειάζεται τώρα το origin για να τα σερβίρει. Έτσι το
-// backlog δεν πολλαπλασιάζεται: ο γύρος βλέπει μόνο ό,τι γέννησε ο ffmpeg από
-// τον προηγούμενο και μετά.
+failing = "1-2.ts";
+write("1-1.ts", "1-2.ts");
+assert.ok(await until(() => attempts >= 1), "έγινε μία προσπάθεια PUT");
+await new Promise((r) => setTimeout(r, 100));
+assert.equal(attempts, 1, "ένα live segment δεν ξαναδοκιμάζεται μετά από αποτυχία");
 failing = null;
+write("1-2.ts", "1-3.ts");
+assert.ok(
+  await until(() => fs.readFileSync(dst, "utf8") === lines(r2url("1-1.ts"), origin("1-2.ts"))),
+  "στην επόμενη αλλαγή το αποτυχημένο segment δημοσιεύεται από το origin"
+);
+assert.ok(await until(() => puts.includes("1-3.ts")), "το επόμενο segment ανέβηκε κανονικά");
+
+// Μία προσπάθεια ανά segment και τέλος. Αμετάβλητο source playlist δεν μετακινεί
+// το live edge και δεν ξαναβάζει το origin segment στην ουρά.
 const tried = puts.length;
 fs.writeFileSync(`${dir}/ff/index.m3u8`, playlist("1-2.ts", "1-3.ts"));
 await new Promise((r) => setTimeout(r, 100));
 assert.equal(puts.length, tried, "το segment που πήγε στο origin δεν ξαναανεβαίνει");
 assert.equal(
   fs.readFileSync(dst, "utf8"),
-  lines(r2url("1-2.ts"), origin("1-3.ts")),
-  "και μένει στο origin όσο είναι στο παράθυρο"
+  lines(r2url("1-1.ts"), origin("1-2.ts")),
+  "και μένει στο origin όσο δεν αλλάζει το source playlist"
 );
-// Και αναφέρθηκε ακριβώς μία φορά, στον γύρο που δεν πρόλαβε — όχι ξανά σε κάθε
-// γύρο που το ξαναβλέπει στο παράθυρο.
-assert.deepEqual(fallen, ["1-3.ts"], "το segment που έφυγε στο origin αναφέρεται μία φορά");
+assert.deepEqual(fallen, ["1-2.ts"], "το segment που έφυγε στο origin αναφέρεται μία φορά");
 
-// Το επόμενο segment συνεχίζει κανονικά στο R2: η αναδίπλωση είναι του segment
-// που δεν πρόλαβε, όχι της εκπομπής. Αλλιώς μια στιγμιαία αναλαμπή του R2 θα
-// γύριζε όλη την υπόλοιπη εκπομπή στο origin.
-failing = null;
+// Η αναδίπλωση αφορά μόνο το segment που απέτυχε.
 write("1-3.ts", "1-4.ts");
 assert.ok(
-  await until(() => fs.readFileSync(dst, "utf8") === lines(origin("1-3.ts"), r2url("1-4.ts"))),
+  await until(() => fs.readFileSync(dst, "utf8") === lines(origin("1-2.ts"), r2url("1-3.ts"))),
   "μετά την αποτυχία, το επόμενο segment ξαναπάει στο R2"
 );
 
+// Το ολοκληρωμένο PUT δεν σπρώχνει μόνο του το live edge: το segment είχε έναν
+// ολόκληρο κύκλο για να ανέβει και δημοσιεύεται στην *επόμενη* αλλαγή του
+// playlist. Έτσι η καθυστέρηση είναι σταθερά ένα segment, όχι όσο έκανε το R2.
+{
+  const staged = fs.mkdtempSync(`${os.tmpdir()}/r2-staged-`);
+  fs.mkdirSync(`${staged}/ff`);
+  const body = (...segs) =>
+    `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/staged/${s}\n`).join("")}`;
+  const writeStaged = (...segs) => {
+    for (const s of segs) fs.writeFileSync(`${staged}/ff/${s}`, "x".repeat(100));
+    fs.writeFileSync(`${staged}/ff/index.m3u8`, body(...segs));
+  };
+
+  const stopStaged = startR2Sync(staged, "/live/staged", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+  writeStaged("11-0.ts");
+  await until(() => fs.existsSync(`${staged}/index.m3u8`));
+
+  let releaseStaged;
+  hold = new Promise((r) => (releaseStaged = r));
+  writeStaged("11-0.ts", "11-1.ts");
+  await new Promise((r) => setTimeout(r, 50));
+  releaseStaged();
+  hold = null;
+  await new Promise((r) => setTimeout(r, 50));
+
+  const afterUpload = fs.readFileSync(`${staged}/index.m3u8`, "utf8");
+  stopStaged();
+  fs.rmSync(staged, { recursive: true, force: true });
+
+  assert.equal(
+    afterUpload,
+    "#EXTM3U\n#EXTINF:2.0,\nff/11-0.ts\n",
+    "το uploaded segment περιμένει την επόμενη αλλαγή του source playlist"
+  );
+}
+
+// Αν το προηγούμενο PUT τρέχει ακόμα όταν γεννηθεί το επόμενο segment, το live
+// edge προχωράει αμέσως μέσω origin. Η ουρά upload δεν είναι πια και ουρά
+// δημοσίευσης.
+{
+  const nonblocking = fs.mkdtempSync(`${os.tmpdir()}/r2-nonblocking-`);
+  fs.mkdirSync(`${nonblocking}/ff`);
+  const body = (...segs) =>
+    `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/nonblocking/${s}\n`).join("")}`;
+  const writeNonblocking = (...segs) => {
+    for (const s of segs) fs.writeFileSync(`${nonblocking}/ff/${s}`, "x".repeat(100));
+    fs.writeFileSync(`${nonblocking}/ff/index.m3u8`, body(...segs));
+  };
+
+  const stopNonblocking = startR2Sync(nonblocking, "/live/nonblocking", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+  writeNonblocking("12-0.ts");
+  await until(() => fs.existsSync(`${nonblocking}/index.m3u8`));
+
+  let releaseNonblocking;
+  hold = new Promise((r) => (releaseNonblocking = r));
+  writeNonblocking("12-0.ts", "12-1.ts");
+  await new Promise((r) => setTimeout(r, 50));
+  writeNonblocking("12-0.ts", "12-1.ts", "12-2.ts");
+
+  const advanced = await until(
+    () => fs.readFileSync(`${nonblocking}/index.m3u8`, "utf8").includes("ff/12-1.ts"),
+    25
+  );
+  const published = fs.readFileSync(`${nonblocking}/index.m3u8`, "utf8");
+  releaseNonblocking();
+  hold = null;
+  stopNonblocking();
+  fs.rmSync(nonblocking, { recursive: true, force: true });
+
+  assert.ok(advanced, "το playlist προχωράει πριν ολοκληρωθεί το προηγούμενο PUT");
+  assert.equal(
+    published,
+    "#EXTM3U\n#EXTINF:2.0,\nff/12-0.ts\n#EXTINF:2.0,\nff/12-1.ts\n",
+    "το segment που δεν πρόλαβε δημοσιεύεται από το origin"
+  );
+}
+// Το ABR γεννά πολλά αρχεία στο ίδιο tick, αλλά ποτέ δεν επιτρέπεται να ανοίξει
+// περισσότερα από τέσσερα PUT ταυτόχρονα.
+{
+  const bounded = fs.mkdtempSync(`${os.tmpdir()}/r2-bounded-`);
+  fs.mkdirSync(`${bounded}/ff`);
+  const body = (...segs) =>
+    `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/bounded/${s}\n`).join("")}`;
+  const writeBounded = (...segs) => {
+    for (const s of segs) fs.writeFileSync(`${bounded}/ff/${s}`, "x".repeat(100));
+    fs.writeFileSync(`${bounded}/ff/index.m3u8`, body(...segs));
+  };
+
+  const stopBounded = startR2Sync(bounded, "/live/bounded", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+  writeBounded("13-0.ts");
+  await until(() => fs.existsSync(`${bounded}/index.m3u8`));
+
+  let releaseBounded;
+  hold = new Promise((r) => (releaseBounded = r));
+  peakPuts = 0;
+  writeBounded("13-0.ts", "13-1.ts", "13-2.ts", "13-3.ts", "13-4.ts", "13-5.ts", "13-6.ts");
+  await new Promise((r) => setTimeout(r, 100));
+  const observedPeak = peakPuts;
+
+  releaseBounded();
+  hold = null;
+  await new Promise((r) => setTimeout(r, 50));
+  stopBounded();
+  fs.rmSync(bounded, { recursive: true, force: true });
+
+  assert.equal(observedPeak, 4, "το upload queue κρατάει το concurrency ακριβώς στο 4");
+}
+
+// Αν το watcher αργήσει και το πρώτο playlist έχει ήδη περισσότερα segments,
+// μόνο το πρώτο βγαίνει αμέσως από το origin. Τα νεότερα μπαίνουν κανονικά στο
+// upload-ahead αντί να χαθεί ολόκληρο το αρχικό παράθυρο στο origin.
+{
+  const delayed = fs.mkdtempSync(`${os.tmpdir()}/r2-delayed-start-`);
+  fs.mkdirSync(`${delayed}/ff`);
+  const stopDelayed = startR2Sync(delayed, "/live/delayed", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+  for (const name of ["15-0.ts", "15-1.ts"]) {
+    fs.writeFileSync(`${delayed}/ff/${name}`, "x".repeat(100));
+  }
+  fs.writeFileSync(
+    `${delayed}/ff/index.m3u8`,
+    "#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/delayed/15-0.ts\n#EXTINF:2.0,\nhttps://cdn/live/delayed/15-1.ts\n"
+  );
+
+  await until(() => fs.existsSync(`${delayed}/index.m3u8`));
+  await new Promise((r) => setTimeout(r, 100));
+  const initial = fs.readFileSync(`${delayed}/index.m3u8`, "utf8");
+  const uploadedNewer = puts.includes("15-1.ts");
+  stopDelayed();
+  fs.rmSync(delayed, { recursive: true, force: true });
+
+  assert.equal(
+    initial,
+    "#EXTM3U\n#EXTINF:2.0,\nff/15-0.ts\n",
+    "η καθυστερημένη πρώτη ανάγνωση δημοσιεύει μόνο το πρώτο segment"
+  );
+  assert.ok(uploadedNewer, "τα νεότερα segments της πρώτης ανάγνωσης ανεβαίνουν στο R2");
+}
+
+// --- Segment που χάθηκε κάτω από τα πόδια του γύρου --------------------------
+// Ανάμεσα στο διάβασμα του playlist και στο διάβασμα του segment μεσολαβεί το
+// rmSync του respawn: το αρχείο μπορεί να λείπει. Ένας γύρος που σκάει εκεί δεν
+// δημοσιεύει *κανένα* playlist — μία χαμένη ανάγνωση σταματούσε και τα variants
+// που δεν έφταιγαν σε τίποτα. Αντιμετωπίζεται σαν PUT που δεν πρόλαβε: το
+// segment φεύγει στο origin (μία φορά, όπως όλα) και ο γύρος προχωράει.
+{
+  const gone = fs.mkdtempSync(`${os.tmpdir()}/r2-gone-`);
+  fs.mkdirSync(`${gone}/ff`);
+  const goneLogs = [];
+  const goneWarn = console.warn;
+  console.warn = (m) => goneLogs.push(m);
+  const stopGone = startR2Sync(gone, "/live/g", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+
+  // Το 8-0 υπάρχει στο playlist αλλά όχι στον δίσκο· το 8-1 κανονικά.
+  fs.writeFileSync(`${gone}/ff/8-1.ts`, "x".repeat(100));
+  fs.writeFileSync(
+    `${gone}/ff/index.m3u8`,
+    "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:8\n#EXTINF:2.0,\nhttps://cdn/live/g/8-0.ts\n#EXTINF:2.0,\nhttps://cdn/live/g/8-1.ts\n"
+  );
+
+  assert.ok(await until(() => fs.existsSync(`${gone}/index.m3u8`)), "το playlist δημοσιεύτηκε παρά το χαμένο αρχείο");
+  assert.equal(
+    fs.readFileSync(`${gone}/index.m3u8`, "utf8"),
+    "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:9\n#EXT-X-DISCONTINUITY\n#EXTINF:2.0,\nff/8-1.ts\n",
+    "το χαμένο segment αφαιρείται και το επόμενο ξεκινάει με discontinuity"
+  );
+  assert.ok(!puts.includes("8-1.ts"), "το πρώτο υπαρκτό segment βγαίνει αμέσως από το origin");
+  assert.ok(!puts.includes("8-0.ts"), "για το χαμένο δεν έγινε ποτέ PUT");
+  assert.ok(
+    goneLogs.find((l) => l.includes("λείπει"))?.includes("ENOENT"),
+    "η γραμμή της μετάβασης λέει γιατί: το αρχείο έλειπε"
+  );
+
+  console.warn = goneWarn;
+  stopGone();
+  fs.rmSync(gone, { recursive: true, force: true });
+}
+
+// Το stop κλείνει και τα PUT που βρίσκονται ήδη στο δίκτυο· δεν αρκεί να
+// σταματήσει μόνο το watcher, γιατί το προηγούμενο stream μπορεί να συνεχίσει
+// να καταναλώνει uplink μετά το reconnect.
+{
+  const cancelled = fs.mkdtempSync(`${os.tmpdir()}/r2-cancelled-`);
+  fs.mkdirSync(`${cancelled}/ff`);
+  const body = (...segs) =>
+    `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/cancelled/${s}\n`).join("")}`;
+  const writeCancelled = (...segs) => {
+    for (const s of segs) fs.writeFileSync(`${cancelled}/ff/${s}`, "x".repeat(100));
+    fs.writeFileSync(`${cancelled}/ff/index.m3u8`, body(...segs));
+  };
+
+  const stopCancelled = startR2Sync(cancelled, "/live/cancelled", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+  writeCancelled("14-0.ts");
+  await until(() => fs.existsSync(`${cancelled}/index.m3u8`));
+
+  let releaseCancelled;
+  hold = new Promise((r) => (releaseCancelled = r));
+  abortedPuts = 0;
+  writeCancelled("14-0.ts", "14-1.ts");
+  await until(() => activePuts > 0);
+  stopCancelled();
+  const aborted = await until(() => abortedPuts === 1, 25);
+
+  releaseCancelled();
+  hold = null;
+  fs.rmSync(cancelled, { recursive: true, force: true });
+  assert.ok(aborted, "το stop() ακυρώνει αμέσως το ενεργό PUT");
+}
 // Ο περιοδικός γύρος, χωρίς κανένα event από το fs.watch: τα αρχεία εδώ υπάρχουν
 // ήδη *πριν* στηθεί το watch, οπότε τίποτα δεν πρόκειται να το ξυπνήσει. Χωρίς
 // τον γύρο του interval, ένα inotify watch που πεθαίνει σιωπηλά — όριο
@@ -146,18 +374,12 @@ assert.ok(
   fs.rmSync(quiet, { recursive: true, force: true });
 }
 
-// stop() στη μέση ενός γύρου: μέχρι να τελειώσει το PUT, ο φάκελος μπορεί να
-// ανήκει ήδη στην επόμενη εκπομπή (ίδιο path, νέα segments) — το καθυστερημένο
-// playlist θα δημοσίευε τα segments της προηγούμενης, που υπάρχουν ακόμα στο R2.
-// Χωρίς αναμονή σε συνθήκη εδώ: το ζητούμενο είναι ακριβώς ότι δεν γράφεται τίποτα.
+// Μετά το stop() ο ίδιος φάκελος μπορεί να ανήκει αμέσως στην επόμενη εκπομπή.
+// Καμία μεταγενέστερη αλλαγή του source playlist δεν επιτρέπεται να ξαναγράψει
+// το δημοσιευμένο αρχείο της προηγούμενης.
 const published = fs.readFileSync(dst, "utf8");
-let release;
-hold = new Promise((r) => (release = r));
-write("1-4.ts", "1-5.ts");
-await new Promise((r) => setTimeout(r, 50));
 stop();
-release();
-hold = null;
+write("1-4.ts", "1-5.ts");
 await new Promise((r) => setTimeout(r, 50));
 assert.equal(fs.readFileSync(dst, "utf8"), published, "μετά το stop() δεν δημοσιεύεται playlist");
 
@@ -177,8 +399,8 @@ fs.rmSync(dir, { recursive: true, force: true });
   const variant = (...segs) =>
     `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/abr/${s}\n`).join("")}`;
 
-  // Τα PUT μένουν ανοιχτά: όσο δεν έχει δημοσιευτεί variant, το master υπόσχεται
-  // αρχεία που δεν υπάρχουν και οι πρώτοι 2-4s της εκπομπής βγάζουν 404.
+  // Στην εκκίνηση τα πρώτα variants βγαίνουν αμέσως από το DNS-only origin:
+  // κανένα PUT δεν επιτρέπεται να κρατήσει κρυμμένο το master.
   let release2;
   hold = new Promise((r) => (release2 = r));
 
@@ -192,67 +414,76 @@ fs.rmSync(dir, { recursive: true, force: true });
   fs.writeFileSync(`${abr}/ff/v720.m3u8`, variant("2-720-0.ts"));
   fs.writeFileSync(`${abr}/ff/index.m3u8`, master);
 
-  await new Promise((r) => setTimeout(r, 100));
-  assert.ok(!fs.existsSync(`${abr}/index.m3u8`), "το master δεν δημοσιεύεται πριν από το πρώτο variant");
+  assert.ok(await until(() => fs.existsSync(`${abr}/index.m3u8`)), "το master δημοσιεύτηκε αμέσως");
+  assert.equal(fs.readFileSync(`${abr}/index.m3u8`, "utf8"), master, "το master αντιγράφεται αυτούσιο");
+  assert.equal(
+    fs.readFileSync(`${abr}/vsrc.m3u8`, "utf8"),
+    "#EXTM3U\n#EXTINF:2.0,\nff/2-src-0.ts\n",
+    "το πρώτο variant της πηγής βγαίνει από το origin"
+  );
+  assert.equal(
+    fs.readFileSync(`${abr}/v720.m3u8`, "utf8"),
+    "#EXTM3U\n#EXTINF:2.0,\nff/2-720-0.ts\n",
+    "και το πρώτο σκαλοπάτι βγαίνει από το origin"
+  );
+  assert.deepEqual(puts.slice(before), [], "κανένα πρώτο segment δεν ανεβαίνει χωρίς λόγο");
   release2();
   hold = null;
-
-  assert.ok(await until(() => fs.existsSync(`${abr}/index.m3u8`)), "το master δημοσιεύτηκε");
-  assert.equal(fs.readFileSync(`${abr}/index.m3u8`, "utf8"), master, "το master αντιγράφεται αυτούσιο");
-  assert.equal(fs.readFileSync(`${abr}/vsrc.m3u8`, "utf8"), variant("2-src-0.ts"), "το variant της πηγής");
-  assert.equal(fs.readFileSync(`${abr}/v720.m3u8`, "utf8"), variant("2-720-0.ts"), "και του σκαλοπατιού");
-  assert.deepEqual(
-    puts.slice(before).sort(),
-    ["2-720-0.ts", "2-src-0.ts"],
-    "ανέβηκαν τα segments και των δύο variants — και μόνο αυτά, ποτέ playlist"
-  );
 
   stop2();
   fs.rmSync(abr, { recursive: true, force: true });
 }
 
-// --- Προθεσμία: ένα PUT που κρέμεται δεν παγώνει το playlist -----------------
-// Η προθεσμία είναι όσο ένα segment: ό,τι δεν πρόλαβε φεύγει από το origin και ο
-// γύρος κλείνει στην ώρα του. Με τα 5s του παλιού timeout, μία κολλημένη σύνδεση
-// κρατούσε το index.m3u8 δυόμισι segments πίσω — σε κάθε γύρο, σωρευτικά.
+// --- Προθεσμία: ένα κολλημένο PUT ελευθερώνει τη θέση του -------------------
+// Το background upload δεν επηρεάζει το live edge, αλλά ούτε επιτρέπεται να
+// κρατάει για πάντα μία από τις τέσσερις θέσεις της ουράς.
 {
   const slow = fs.mkdtempSync(`${os.tmpdir()}/r2-slow-`);
   fs.mkdirSync(`${slow}/ff`);
-  let releaseSlow;
-  hold = new Promise((r) => (releaseSlow = r));
+  const body = (...segs) =>
+    `#EXTM3U\n${segs.map((s) => `#EXTINF:2.0,\nhttps://cdn/live/slow/${s}\n`).join("")}`;
+  const writeSlow = (...segs) => {
+    for (const s of segs) fs.writeFileSync(`${slow}/ff/${s}`, "x".repeat(100));
+    fs.writeFileSync(`${slow}/ff/index.m3u8`, body(...segs));
+  };
 
   const stopSlow = startR2Sync(slow, "/live/slow", {
     endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
     publicUrl: "https://cdn",
   });
+  writeSlow("4-0.ts");
+  await until(() => fs.existsSync(`${slow}/index.m3u8`));
 
-  fs.writeFileSync(`${slow}/ff/4-0.ts`, "x".repeat(100));
-  fs.writeFileSync(`${slow}/ff/index.m3u8`, "#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/slow/4-0.ts\n");
-
+  let releaseSlow;
+  hold = new Promise((r) => (releaseSlow = r));
+  const abortedBefore = abortedPuts;
+  writeSlow("4-0.ts", "4-1.ts");
   assert.ok(
-    await until(() => fs.existsSync(`${slow}/index.m3u8`), 150),
-    "το playlist δημοσιεύτηκε μέσα σε μία προθεσμία segment, με το PUT ακόμα κρεμασμένο"
+    await until(() => abortedPuts === abortedBefore + 1, 150),
+    "το κολλημένο PUT ακυρώνεται μέσα σε μία διάρκεια segment"
   );
   assert.equal(
     fs.readFileSync(`${slow}/index.m3u8`, "utf8"),
     "#EXTM3U\n#EXTINF:2.0,\nff/4-0.ts\n",
-    "και το segment δείχνει στο origin"
+    "η προθεσμία του PUT δεν μετακινεί μόνη της το playlist"
   );
 
   releaseSlow();
   hold = null;
+  writeSlow("4-0.ts", "4-1.ts", "4-2.ts");
+  assert.ok(
+    await until(() => fs.readFileSync(`${slow}/index.m3u8`, "utf8").includes("ff/4-1.ts")),
+    "στον επόμενο κύκλο το εκπρόθεσμο segment δημοσιεύεται από το origin"
+  );
+
   stopSlow();
   fs.rmSync(slow, { recursive: true, force: true });
 }
 
-// --- Συγχώνευση της ουράς ---------------------------------------------------
-// Όσα events κι αν έρθουν όσο τρέχει ένας γύρος, ακολουθεί *ένας* γύρος — όχι
-// ένας ανά event. Με ABR ο ffmpeg γράφει ένα playlist ανά variant σε κάθε
-// segment, οπότε η ουρά γέμιζε πιο γρήγορα απ' όσο άδειαζε και κάθε
-// καθυστερημένος, άχρηστος γύρος έσπρωχνε πιο πίσω τον επόμενο πραγματικό.
-// Το watch listener καλείται εδώ κατευθείαν: πόσα events δίνει το λειτουργικό
-// για ένα γράψιμο είναι δική του υπόθεση, το ζητούμενο είναι τι κάνουμε εμείς
-// με αυτά.
+// --- Συγχώνευση των watch events --------------------------------------------
+// Τα rename events που φτάνουν στο ίδιο event-loop tick δίνουν μία ανάγνωση του
+// directory. Με ABR ο ffmpeg αλλάζει πολλά variant playlists μαζί· δεν υπάρχει
+// λόγος να ξαναδιαβάσουμε ακριβώς την ίδια κατάσταση για καθένα.
 {
   const many = fs.mkdtempSync(`${os.tmpdir()}/r2-queue-`);
   fs.mkdirSync(`${many}/ff`);
@@ -283,8 +514,14 @@ fs.rmSync(dir, { recursive: true, force: true });
   });
   fs.writeFileSync(`${many}/ff/5-0.ts`, "x".repeat(100));
   fs.writeFileSync(`${many}/ff/index.m3u8`, "#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/q3/5-0.ts\n");
-
-  fire(); // ο γύρος ξεκινάει και κρέμεται στο PUT
+  fire(); // ο πρώτος γύρος δημοσιεύει αμέσως από το origin
+  await until(() => fs.existsSync(`${many}/index.m3u8`));
+  fs.writeFileSync(`${many}/ff/5-1.ts`, "x".repeat(100));
+  fs.writeFileSync(
+    `${many}/ff/index.m3u8`,
+    "#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/q3/5-0.ts\n#EXTINF:2.0,\nhttps://cdn/live/q3/5-1.ts\n"
+  );
+  fire(); // ο επόμενος γύρος ξεκινάει background PUT
   await new Promise((r) => setTimeout(r, 30));
   rounds = 0; // ό,τι μετρηθεί από δω και πέρα είναι η ουρά
   for (let i = 0; i < 5; i++) fire();
@@ -381,81 +618,50 @@ fs.rmSync(dir, { recursive: true, force: true });
     publicUrl: "https://cdn",
   });
 
+  show("7-0.ts");
+  assert.ok(await until(() => fs.existsSync(`${win}/index.m3u8`)), "το πρώτο segment δημοσιεύτηκε");
   show("7-0.ts", "7-1.ts");
-  await until(() => puts.includes("7-1.ts"));
-
-  // Το 7-0 βγαίνει από το παράθυρο: ο γύρος που δεν το βλέπει πια το ξεχνάει.
+  assert.ok(await until(() => puts.includes("7-1.ts")), "το δεύτερο segment ανέβηκε");
   show("7-1.ts", "7-2.ts");
-  await until(() => puts.includes("7-2.ts"));
+  assert.ok(await until(() => puts.includes("7-2.ts")), "το τρίτο segment ανέβηκε");
 
+  // Με upload-ahead, το προηγούμενο source playlist είναι επίσης live state.
+  // Χρειάζονται δύο διαδοχικά παράθυρα χωρίς το 7-0 για να ξεχαστεί.
+  show("7-2.ts", "7-3.ts");
+  assert.ok(await until(() => puts.includes("7-3.ts")), "το παράθυρο προχώρησε δύο φορές");
   const seen = puts.filter((n) => n === "7-0.ts").length;
-  show("7-2.ts", "7-0.ts");
+  show("7-3.ts", "7-0.ts");
   assert.ok(
     await until(() => puts.filter((n) => n === "7-0.ts").length === seen + 1),
-    "όνομα που βγήκε από το παράθυρο ξεχνιέται — αν ξαναφανεί, ξανανεβαίνει"
+    "όνομα που βγήκε από source και staged παράθυρο ξανανεβαίνει"
   );
 
-  // Το ίδιο και για όσα έφυγαν στο origin: εκτός παραθύρου, το όνομα ξεχνιέται
-  // και μια επανεμφάνισή του ξαναδοκιμάζει το R2.
-  failing = "7-3.ts";
-  show("7-0.ts", "7-3.ts");
-  await until(() => fs.readFileSync(`${win}/index.m3u8`, "utf8").includes("ff/7-3.ts"));
+  // Το ίδιο και για κατάσταση origin: δύο παράθυρα την κλαδεύουν και μια
+  // μεταγενέστερη επανεμφάνιση ξαναδοκιμάζει το R2.
+  failing = "7-4.ts";
+  attempts = 0;
+  show("7-0.ts", "7-4.ts");
+  await until(() => attempts === 1);
   failing = null;
   show("7-4.ts", "7-5.ts");
-  await until(() => puts.includes("7-5.ts"));
-  show("7-5.ts", "7-3.ts");
   assert.ok(
-    await until(() => puts.includes("7-3.ts")),
-    "και το fromOrigin κλαδεύεται: το ξεχασμένο όνομα ξαναδοκιμάζεται"
+    await until(() => fs.readFileSync(`${win}/index.m3u8`, "utf8").includes("ff/7-4.ts")),
+    "το αποτυχημένο segment δημοσιεύτηκε από το origin"
+  );
+  show("7-5.ts", "7-6.ts");
+  await until(() => puts.includes("7-6.ts"));
+  show("7-6.ts", "7-7.ts");
+  await until(() => puts.includes("7-7.ts"));
+  show("7-7.ts", "7-4.ts");
+  assert.ok(
+    await until(() => puts.includes("7-4.ts")),
+    "και το ξεχασμένο origin segment ξαναδοκιμάζεται"
   );
 
   stopWin();
   fs.rmSync(win, { recursive: true, force: true });
 }
 
-// --- Segment που χάθηκε κάτω από τα πόδια του γύρου --------------------------
-// Ανάμεσα στο διάβασμα του playlist και στο διάβασμα του segment μεσολαβεί το
-// rmSync του respawn: το αρχείο μπορεί να λείπει. Ένας γύρος που σκάει εκεί δεν
-// δημοσιεύει *κανένα* playlist — μία χαμένη ανάγνωση σταματούσε και τα variants
-// που δεν έφταιγαν σε τίποτα. Αντιμετωπίζεται σαν PUT που δεν πρόλαβε: το
-// segment φεύγει στο origin (μία φορά, όπως όλα) και ο γύρος προχωράει.
-{
-  const gone = fs.mkdtempSync(`${os.tmpdir()}/r2-gone-`);
-  fs.mkdirSync(`${gone}/ff`);
-  const goneLogs = [];
-  const goneWarn = console.warn;
-  console.warn = (m) => goneLogs.push(m);
-  const stopGone = startR2Sync(gone, "/live/g", {
-    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
-    publicUrl: "https://cdn",
-  });
-
-  // Το 8-0 υπάρχει στο playlist αλλά όχι στον δίσκο· το 8-1 κανονικά.
-  fs.writeFileSync(`${gone}/ff/8-1.ts`, "x".repeat(100));
-  fs.writeFileSync(
-    `${gone}/ff/index.m3u8`,
-    "#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/g/8-0.ts\n#EXTINF:2.0,\nhttps://cdn/live/g/8-1.ts\n"
-  );
-
-  assert.ok(await until(() => fs.existsSync(`${gone}/index.m3u8`)), "το playlist δημοσιεύτηκε παρά το χαμένο αρχείο");
-  assert.equal(
-    fs.readFileSync(`${gone}/index.m3u8`, "utf8"),
-    "#EXTM3U\n#EXTINF:2.0,\nff/8-0.ts\n#EXTINF:2.0,\nhttps://cdn/live/g/8-1.ts\n",
-    "το χαμένο segment δείχνει στο origin, το υπαρκτό ανέβηκε κανονικά"
-  );
-  assert.ok(puts.includes("8-1.ts"), "το υπαρκτό segment ανέβηκε");
-  assert.ok(!puts.includes("8-0.ts"), "για το χαμένο δεν έγινε ποτέ PUT");
-  // Το log του επεισοδίου πρέπει να λέει την αιτία — «(undefined)» δεν βοηθάει
-  // κανέναν, ακριβώς την ώρα που τα logs πρέπει να διαβαστούν.
-  assert.ok(
-    goneLogs.find((l) => l.includes("origin"))?.includes("ENOENT"),
-    "η γραμμή της μετάβασης λέει γιατί: το αρχείο έλειπε"
-  );
-
-  console.warn = goneWarn;
-  stopGone();
-  fs.rmSync(gone, { recursive: true, force: true });
-}
 
 // --- Τι γράφεται στα logs ---------------------------------------------------
 // Όταν το R2 δεν προλαβαίνει, αποτυγχάνει *κάθε* segment: μια γραμμή ανά segment
@@ -505,5 +711,41 @@ fs.rmSync(dir, { recursive: true, force: true });
   stopNoisy();
   fs.rmSync(noisy, { recursive: true, force: true });
 }
+
+// --- Upload-ahead: το playlist δεν περιμένει το PUT -------------------------
+// Το πρώτο segment βγαίνει αμέσως από το DNS-only origin. Το PUT μπορεί να
+// συνεχίζεται στο παρασκήνιο, αλλά δεν βρίσκεται πια στο κρίσιμο μονοπάτι της
+// αναπαραγωγής.
+{
+  const ahead = fs.mkdtempSync(`${os.tmpdir()}/r2-ahead-`);
+  fs.mkdirSync(`${ahead}/ff`);
+  let releaseAhead;
+  hold = new Promise((r) => (releaseAhead = r));
+
+  const stopAhead = startR2Sync(ahead, "/live/ahead", {
+    endpoint: "https://r2.test", bucket: "b", accessKeyId: "k", secretAccessKey: "s",
+    publicUrl: "https://cdn",
+  });
+  fs.writeFileSync(`${ahead}/ff/10-0.ts`, "x".repeat(100));
+  fs.writeFileSync(
+    `${ahead}/ff/index.m3u8`,
+    "#EXTM3U\n#EXTINF:2.0,\nhttps://cdn/live/ahead/10-0.ts\n"
+  );
+
+  const publishedImmediately = await until(() => fs.existsSync(`${ahead}/index.m3u8`), 25);
+  const published = publishedImmediately ? fs.readFileSync(`${ahead}/index.m3u8`, "utf8") : "";
+  releaseAhead();
+  hold = null;
+  stopAhead();
+  fs.rmSync(ahead, { recursive: true, force: true });
+
+  assert.ok(publishedImmediately, "το πρώτο playlist δημοσιεύεται χωρίς να περιμένει το PUT");
+  assert.equal(
+    published,
+    "#EXTM3U\n#EXTINF:2.0,\nff/10-0.ts\n",
+    "το πρώτο segment σερβίρεται αμέσως από το DNS-only origin"
+  );
+}
+
 
 console.log("r2.js OK");
