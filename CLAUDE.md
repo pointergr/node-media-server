@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git flow — υποχρεωτικό preflight
+
+Κάθε νέα εργασία, feature, bug fix ή refactor ξεκινά σε δικό της feature branch. Πριν από οποιοδήποτε edit ή εντολή που μπορεί να γράψει στο repository:
+
+1. Φόρτωσε και ακολούθησε το `gh-flow` skill.
+2. Έλεγξε το τρέχον branch με `git branch --show-current`.
+3. Εντόπισε το integration branch και το feature prefix από τη ρύθμιση του repository.
+4. Αν βρίσκεσαι ήδη σε feature branch που αντιστοιχεί στην ίδια εργασία, συνέχισε εκεί.
+5. Διαφορετικά, δημιούργησε και κάνε checkout σε νέο feature branch από το integration branch. Μην αλλάξεις ή διαγράψεις υπάρχουσες μη αποθηκευμένες αλλαγές για να το κάνεις.
+
+Η απευθείας εργασία στο `main` ή `master` απαγορεύεται πάντα. Η μόνη εξαίρεση είναι ρητή εντολή του χρήστη να δουλέψεις απευθείας στο `develop`. Η απλή αναφορά σε εργασία, η παρουσία του branch ή η απουσία branch name δεν θεωρείται ρητή εντολή.
+
 ## Γλώσσα
 
 Τα σχόλια στον κώδικα, το README και τα μηνύματα των commits είναι **στα ελληνικά**. Κράτα το ίδιο ύφος: το σχόλιο εξηγεί *γιατί*, όχι *τι*.
